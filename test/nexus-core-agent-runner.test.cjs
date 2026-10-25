@@ -27,7 +27,7 @@ const { hostsSha256 } = loadTs('src/runner/hostEgressProxy.ts');
 
 const ROOT = path.resolve(__dirname, '..');
 const IMAGES = path.join(ROOT, 'infra', 'images');
-const FAKE_CLI = path.join(__dirname, 'fixtures', 'agent', 'proc-cli.cjs');
+const FAKE_CLI = path.join(__dirname, 'fixtures', 'agent', 'fake-cli.cjs');
 
 const NOW = 1_781_000_000_000;
 const BOOT = newId(NOW);
@@ -480,7 +480,7 @@ test('I1 the run request handed to the runtime names the real container', async 
 
 test('I2 a turn that completes while its CLI hangs on leaves no process and no pidfile', async () => {
   let spawned = null;
-  const w = await world({ agentRuntime: { agentBin: process.execPath, agentEnv: { ELECTRON_RUN_AS_NODE: '1', PROC_CLI_COMPLETE_HANG: '1' }, agentArgvPrefix: [FAKE_CLI],
+  const w = await world({ agentRuntime: { agentBin: process.execPath, agentEnv: { ELECTRON_RUN_AS_NODE: '1', FAKE_CLI_COMPLETE_HANG: '1' }, agentArgvPrefix: [FAKE_CLI],
     onSpawned: (info) => { spawned = info; } } });
   const plan = agentPlan(w, { kind: 'cli-agent' });
   await startAgent(w, plan);
@@ -494,7 +494,7 @@ test('I2 a turn that completes while its CLI hangs on leaves no process and no p
 
 test('I2 a CLI that exits on its own leaves no pidfile behind', async () => {
   let spawned = null;
-  const w = await world({ agentRuntime: { agentBin: process.execPath, agentEnv: { ELECTRON_RUN_AS_NODE: '1', PROC_CLI_QUICK: '1' }, agentArgvPrefix: [FAKE_CLI],
+  const w = await world({ agentRuntime: { agentBin: process.execPath, agentEnv: { ELECTRON_RUN_AS_NODE: '1', FAKE_CLI_QUICK: '1' }, agentArgvPrefix: [FAKE_CLI],
     onSpawned: (info) => { spawned = info; } } });
   const plan = agentPlan(w, { kind: 'cli-agent' });
   await startAgent(w, plan);
@@ -613,6 +613,37 @@ test('CONSENT hosts without a valid consent hash are refused bad_plan; an empty 
   await startAgent(w, ok);
   await w.waitOp('attempt.exited', ok.attemptId, 'exited');
   assert.equal(w.one('attempt.exited', ok.attemptId).exit.code, 0);
+});
+
+// ---------- Task 13: the cli-agent adapter's environment and proxy, through the runner ----------
+
+test('AT-env a cli-agent turn runs with the allow-list environment, the own proxy of the turn and its own bearer, never the environment of the runner; the bearer is redacted in what the engine says', async () => {
+  const keep = { k: process.env.ANTHROPIC_API_KEY, t: process.env.GITHUB_TOKEN, c: process.env.NODE_EXTRA_CA_CERTS, h: process.env.HTTP_PROXY };
+  Object.assign(process.env, { ANTHROPIC_API_KEY: 'sk-ant-RUNNER-OWN', GITHUB_TOKEN: 'ghp_RUNNER_OWN', NODE_EXTRA_CA_CERTS: 'C:\runner-ca.pem', HTTP_PROXY: 'http://runner-own.invalid:1' });
+  try {
+    const w = await world({ agentRuntime: { agentBin: process.execPath, agentEnv: { ELECTRON_RUN_AS_NODE: '1' }, agentArgvPrefix: [FAKE_CLI, '--fake-dump-env'] } });
+    const plan = agentPlan(w, { kind: 'cli-agent' });
+    await startAgent(w, plan);
+    await w.waitOp('attempt.exited', plan.attemptId, 'exited');
+    assert.equal(w.one('attempt.exited', plan.attemptId).exit.code, 0);
+    const delta = w.of('attempt.runtime', plan.attemptId).map((m) => m.event).find((e) => e.t === 'message.delta');
+    const env = JSON.parse(delta.text);
+    assert.match(env.HTTPS_PROXY, /^http:\/\/127\.0\.0\.1:\d+$/, 'the loopback proxy of the turn');
+    assert.equal(env.NO_PROXY, '127.0.0.1');
+    for (const k of ['ANTHROPIC_API_KEY', 'GITHUB_TOKEN', 'NODE_EXTRA_CA_CERTS', 'HTTP_PROXY', 'CLAUDE_CONFIG_DIR']) assert.equal(env[k], undefined, `${k} is never handed on`);
+    // Exactly the allow-list (plus the test seam's own name). Windows itself adds four non-secret names to ANY process started
+    // with an explicit environment (a plain node child shows them too); they are not the adapter's doing.
+    const OS_ADDED = ['LOGONSERVER', 'SYSTEMDRIVE', 'USERDOMAIN', 'USERNAME'];
+    const ALLOW = ['SystemRoot', 'windir', 'PATH', 'USERPROFILE', 'HOMEDRIVE', 'HOMEPATH', 'APPDATA', 'LOCALAPPDATA', 'TEMP', 'TMP', 'LANG', 'HTTPS_PROXY', 'NO_PROXY',
+      'NEXUS_MCP_TOKEN', 'DISABLE_AUTOUPDATER', 'DISABLE_TELEMETRY', 'DISABLE_ERROR_REPORTING', 'CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC', 'ELECTRON_RUN_AS_NODE'];
+    const names = Object.keys(env).map((k) => k.toLowerCase()).filter((k) => !OS_ADDED.map((x) => x.toLowerCase()).includes(k)).sort();
+    assert.deepEqual(names, ALLOW.map((k) => k.toLowerCase()).sort());
+    assert.ok(!JSON.stringify(w.got).includes(plan.runtime.token), 'the bearer is in no frame');
+    assert.ok(!fs.readFileSync(plan.logPath, 'utf8').includes(plan.runtime.token), 'nor in the attempt log');
+    assert.ok(env.NEXUS_MCP_TOKEN && env.NEXUS_MCP_TOKEN !== plan.runtime.token, 'the engine said it, and the relay redacted it');
+  } finally {
+    for (const [k, v] of [['ANTHROPIC_API_KEY', keep.k], ['GITHUB_TOKEN', keep.t], ['NODE_EXTRA_CA_CERTS', keep.c], ['HTTP_PROXY', keep.h]]) { if (v === undefined) delete process.env[k]; else process.env[k] = v; }
+  }
 });
 
 // ---------- the posture pin this task adds (sanity: taskkill is resolved, never a bare command) ----------

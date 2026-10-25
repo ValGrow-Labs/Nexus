@@ -129,9 +129,10 @@ export interface RunnerDeps {
   /** The git resolver (tests inject one); default: src/main/gitBinary.ts (a found binary is kept, a miss asked again). */
   resolveGit?: () => Promise<string | null>;
   /**
-   * B2b Task 11: how an agent turn's runtime is built. Production never sets `agentBin` (no `cli-agent` turn runs in
-   * this build yet); tests use it for the `cli-agent` kind's process-tree behavior (the fake CLI stand-in), and
-   * `scriptFor` for the in-process `scripted` kind's fixture.
+   * B2b Tasks 11 and 13: how an agent turn's runtime is built. Production sets none of this: the `cli-agent` adapter
+   * resolves the engine's native executable itself and builds its environment from an allow-list. Tests use
+   * `agentBin`, `agentArgvPrefix` and `agentEnv` to run a stand-in executable through that same adapter (the process-tree
+   * behavior), and `scriptFor` for the in-process `scripted` kind's fixture.
    */
   agentRuntime?: {
     scriptFor?: (plan: AgentPlan) => readonly ScriptedStep[];
@@ -1111,11 +1112,17 @@ stderr: ${r.stderr}` : ''}`
     if (!(await noLinkUnder(this.fs, this.paths!.root, plan.runtime.request.configDir)) || !(await noLinkUnder(this.fs, this.paths!.root, plan.worktree.hostPath))) {
       return this.refuse(a, 'bad_plan', 'a link stands in the turn\'s config or worktree folder');
     }
+    // The turn's host egress proxy URL, known once agentAttempt has started the proxy: the cli-agent runtime reads it
+    // through `egressProxyUrl` and never starts without one.
+    const egress: { url: string | null } = { url: null };
+    const startProxy = this.deps.agentRuntime?.startProxy ?? startHostEgressProxy;
     let runtime: AgentRuntime;
     try {
       runtime = this.deps.agentRuntime?.makeRuntime?.(plan) ?? runtimeFor(plan.runtime.kind, {
         token: plan.runtime.token,
         mcpUrl: this.mcpServer?.url ?? '',
+        egressProxyUrl: () => egress.url,
+        caps: plan.caps,
         steps: this.deps.agentRuntime?.scriptFor?.(plan) ?? [],
         fetchImpl: this.deps.agentRuntime?.fetchImpl,
         agentBin: this.deps.agentRuntime?.agentBin,
@@ -1153,7 +1160,7 @@ stderr: ${r.stderr}` : ''}`
       bindAgentTurn: (bearer, attemptId, containerId) => this.bindAgentTurn(bearer, attemptId, containerId),
       unbindAgentTurn: (bearer) => this.unbindAgentTurn(bearer),
       runtime,
-      startHostEgressProxy: this.deps.agentRuntime?.startProxy ?? startHostEgressProxy,
+      startHostEgressProxy: async (o) => { const proxy = await startProxy(o); egress.url = proxy.url; return proxy; },
       imagesDir: this.deps.imagesDir,
       guardRefusal: () => a.agentGuardRefusal ?? null,
       signal: a.abort.signal

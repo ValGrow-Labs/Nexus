@@ -85,12 +85,13 @@ test('the only programs spawned under src/runner and src/main/nexusExec are dock
   }
   // Besides docker and git (both by their RESOLVED absolute paths): the runner itself (utilityProcess.fork of
   // out/main/runner.js, pinned exactly below); `taskkill.exe` (src/runner/procTree.ts), the runner's own cleanup of an
-  // agent turn's process tree, resolved to `%SystemRoot%\System32\taskkill.exe`; and an agent turn's own CLI
-  // (src/runner/runtimes/registry.ts), by the caller's already-resolved `agentBin` (the test CLI stand-in in this
-  // build). Never spawn('git' (Windows would run a git.exe planted in the cwd).
+  // agent turn's process tree, resolved to `%SystemRoot%\System32\taskkill.exe`; and an agent turn's own CLI, the ONE
+  // site of the engine's executable (src/runner/runtimes/cliAgent/adapter.ts, B2b Task 13: health runs and turns alike),
+  // by its resolved native executable `bin`, with the environment of `agentEnv` and nothing else (pinned below). The
+  // registry spawns nothing. Never spawn('git' (Windows would run a git.exe planted in the cwd).
   assert.deepEqual(sites.map((s) => `${s.file} ${s.fn}(${s.first}`).sort(),
     ['src/runner/proc.ts spawn(gitBin', 'src/runner/proc.ts spawn(dockerBin', 'src/runner/procTree.ts spawn(taskkillBin',
-      'src/runner/runtimes/registry.ts spawn(agentBin', 'src/main/nexusExec/runnerHost.ts fork(join(__dirname'].sort());
+      'src/runner/runtimes/cliAgent/adapter.ts spawn(bin', 'src/main/nexusExec/runnerHost.ts fork(join(__dirname'].sort());
   const { isGitBinary } = loadTs('src/main/gitBinary.ts');
   assert.equal(isGitBinary('C:\\Program Files\\Git\\cmd\\git.exe', 'win32'), true);
   for (const bad of ['git', 'git.exe', 'C:\\repo\\git.cmd', 'C:\\repo\\git.bat', 'C:\\x\\git.exe.bat']) assert.equal(isGitBinary(bad, 'win32'), false, bad);
@@ -100,6 +101,37 @@ test('the only programs spawned under src/runner and src/main/nexusExec are dock
   assert.equal(isDockerBinary('/usr/bin/docker'), true);
   for (const bad of ['docker', 'C:\\Windows\\System32\\cmd.exe', '/bin/sh', '/usr/bin/python3', 'C:\\x\\docker.exe.bat', '']) assert.equal(isDockerBinary(bad), false, bad);
   return assert.rejects(runDocker('/bin/sh', ['-c', 'echo'], { env: {}, timeoutMs: 1000, maxStdout: 10, maxStderr: 10 }), /only the resolved docker binary/);
+});
+
+test('the agent CLI is spawned only by cliAgent/adapter.ts, with no shell, and with an environment built from the allow-list (agentEnv), never the runner\'s own', () => {
+  const adapter = code(path.join(ROOT, 'src/runner/runtimes/cliAgent/adapter.ts'));
+  // The one spawn call: the resolved binary, never a shell, an explicit `env` (no inheritance), the turn's own cwd.
+  assert.match(adapter, /spawn\(bin, \[\.\.\.\(this\.o\.argvPrefix \?\? \[\]\), \.\.\.args\], \{ cwd, env, windowsHide: true, shell: false, stdio: \['pipe', 'pipe', 'pipe'\] \}\)/);
+  assert.equal([...adapter.matchAll(/\bspawn\s*\(/g)].length, 1, 'one spawn site');
+  // A health run and a turn each build the environment with agentEnv; nothing spreads the runner's environment into it.
+  assert.equal([...adapter.matchAll(/\bagentEnv\(/g)].length, 2, 'two builds, both through agentEnv');
+  for (const f of ts('src/runner/runtimes')) {
+    assert.doesNotMatch(code(f), /\.\.\.\s*process\.env|env\s*:\s*process\.env|shell\s*:\s*true/, rel(f));
+    if (rel(f) !== 'src/runner/runtimes/cliAgent/adapter.ts') assert.doesNotMatch(code(f), /node:child_process|['"]child_process['"]/, `${rel(f)} launches nothing`);
+  }
+  // The builder itself: the allow-list only, the turn's proxy, no HTTP_PROXY, no inherited ANTHROPIC_*, CLAUDE_*, *_API_KEY, *_TOKEN or CA bundle.
+  const { agentEnv } = loadTs('src/runner/runtimes/cliAgent/env.ts');
+  const dirty = { SystemRoot: 'C:\\Windows', USERPROFILE: 'C:\\Users\\u', HOMEDRIVE: 'C:', HOMEPATH: '\\Users\\u', APPDATA: 'C:\\a', LOCALAPPDATA: 'C:\\l', TEMP: 'C:\\t',
+    ANTHROPIC_API_KEY: 'k', ANTHROPIC_BASE_URL: 'u', CLAUDE_CONFIG_DIR: 'c', CLAUDE_CODE_OAUTH_TOKEN: 'o', OPENAI_API_KEY: 'k', GITHUB_TOKEN: 't', NODE_EXTRA_CA_CERTS: 'ca',
+    HTTP_PROXY: 'http://x:1', HTTPS_PROXY: 'http://y:2', NO_PROXY: 'z', NEXUS_MCP_TOKEN: 'inherited', PATH: 'C:\\evil' };
+  const env = agentEnv(dirty, { proxyUrl: 'http://127.0.0.1:4242', token: 'the-turn-token', tempDir: 'C:\\job\\tmp' });
+  assert.deepEqual(Object.keys(env).sort(), ['APPDATA', 'CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC', 'DISABLE_AUTOUPDATER', 'DISABLE_ERROR_REPORTING', 'DISABLE_TELEMETRY',
+    'HOMEDRIVE', 'HOMEPATH', 'HTTPS_PROXY', 'LANG', 'LOCALAPPDATA', 'NEXUS_MCP_TOKEN', 'NO_PROXY', 'PATH', 'SystemRoot', 'TEMP', 'TMP', 'USERPROFILE', 'windir'].sort());
+  assert.equal(env.HTTPS_PROXY, 'http://127.0.0.1:4242');
+  assert.equal(env.NO_PROXY, '127.0.0.1');
+  assert.equal(env.NEXUS_MCP_TOKEN, 'the-turn-token');
+  assert.ok(!env.PATH.includes('evil'));
+  assert.throws(() => agentEnv(dirty, { proxyUrl: 'http://example.com:3128' }), /loopback proxy/);
+  assert.throws(() => agentEnv(dirty, { proxyUrl: '' }), /loopback proxy/);
+  // The binary is the native executable by its exact name, absolute, like taskkill.
+  const { isAgentBinary } = loadTs('src/runner/runtimes/cliAgent/binary.ts');
+  assert.equal(isAgentBinary('C:\\Users\\u\\.local\\bin\\claude.exe', 'win32'), true);
+  for (const bad of ['claude.exe', 'C:\\x\\claude.cmd', 'C:\\x\\claude.exe.bat', 'C:\\Windows\\System32\\cmd.exe', '']) assert.equal(isAgentBinary(bad, 'win32'), false, bad);
 });
 
 test('utilityProcess and MessageChannelMain appear only in src/main/nexusExec/runnerHost.ts', () => {
