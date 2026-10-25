@@ -29,6 +29,9 @@
  *     back to queued (nothing ran; the count is kept, so the next lease is n + 1), a dev deployment or a running job to
  *     retry_scheduled or interrupted;
  *   - an attempt with a recorded container: left for phase B (`pending`; its job reads `waiting:runner`).
+ *   B2b Task 9 (accept reconcile, its own block after the jobs): a `changeset.accept` job that ended (interrupted, failed, timed out,
+ *   cancelled) without an accept row, whose `accept.prepared` event exists and that did not end on a git refusal, gets one
+ *   `changeset.accept_rollback { from: new, to: old }` (idempotent by key). An accept is never retried and never merged later.
  *   Then pending approvals past `expires_at` that no waiting job holds (image preparation) expire, and image builds left
  *   `running` are `interrupted` (RC17: a leftover row would block `requestImage` until its deadline).
  *   Hold mode: on a v9 database whose execution is off (v9 not enabled, held, or its shape failed), only jobs WITHOUT a
@@ -114,6 +117,7 @@ import { PlatformError } from '../errors';
 import { redactedErrorJson, type JobRow, type JobService } from '../jobs/jobService';
 import { adoptAttemptTx, attemptRow, liveAttemptOf, transitionAttemptTx, type AttemptRow } from './attempts';
 import { appendJobEventTx } from './events';
+import { endedAcceptJobIds, enqueueAcceptRollbackTx, rollbackNeeded } from '../repo/acceptRollback';
 
 /**
  * The runner's side of restart recovery: what B2a Task 11 (the runner host, `src/runner/reconcile.ts`, the main-side
@@ -189,7 +193,7 @@ export interface ReconcileResult {
 
 export type RecoveryDecision =
   | 'requeue' | 'retry' | 'interrupt' | 'reown' | 'expire' | 'adopt' | 'finalize' | 'fail' | 'exit_lost' | 'image_interrupted'
-  | 'orphans' | 'unknown_resources' | 'unreconciled';
+  | 'orphans' | 'unknown_resources' | 'unreconciled' | 'accept_rollback';
 
 export interface PhaseAReport {
   /** Execution is off on this v9 database: only jobs without a live attempt were recovered (B1's rule). */
@@ -705,10 +709,24 @@ export function recoverPhaseA(host: RecoveryHost, system: Principal, bootId: str
   // Pending approvals past their time that no waiting job held (image preparation; any other leftover).
   const due = db.prepare("SELECT id FROM approvals WHERE status = 'pending' AND expires_at <= ? ORDER BY expires_at, id").all(now) as { id: string }[];
   for (const { id } of due) decide(host, c, 'an approval', () => expireApprovalTx(host, system, id, now));
+  // B2b Task 9, accept reconcile (a clearly separate block): an accept job that ended without an accept row, whose
+  // `accept.prepared` was reported, is answered with `changeset.accept_rollback { from: new, to: old }`, never retried.
+  for (const id of endedAcceptJobIds(db)) decide(host, c, 'an accept', () => acceptReconcileTx(host, system, id, now));
   // A `docker build` client dies with the runner: a build left running can never report.
   const builds = db.prepare("SELECT id FROM image_builds WHERE status = 'running' ORDER BY started_at, id").all() as { id: string }[];
   for (const { id } of builds) decide(host, c, 'an image build', () => interruptBuildTx(host, system, id, now));
   return report(c, false);
+}
+
+/** B2b Task 9: one ended accept job's rollback (see the module header). Null when nothing is owed. */
+function acceptReconcileTx(host: RecoveryHost, system: Principal, jobId: string, now: number): Outcome | null {
+  const n = rollbackNeeded(host.db, jobId);
+  if (!n) return null;
+  const rollbackJob = enqueueAcceptRollbackTx(host.db, host.jobs, system, now, { jobId: n.job.id, projectId: n.job.project_id,
+    workspaceId: n.job.workspace_id, branch: n.branch, versionId: n.versionId, move: n.move });
+  recordTx(host, system, { decision: 'accept_rollback', reason: 'accept_unfinished', job: jobRow(host.db, n.job.id), attemptN: null,
+    summary: 'an accept that did not finish is rolled back; it is never retried or merged later', data: { rollbackJob } }, now);
+  return { decision: 'accept_rollback', count: null };
 }
 
 function report(c: Counters, held: boolean): PhaseAReport {

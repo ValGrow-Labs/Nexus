@@ -169,9 +169,9 @@ test('I-E5 B2A_IMPL equals main\'s registered recipe, validator and ingest maps 
   assert.deepEqual(sorted([...m.ingest, ...m.notIngested]), sorted(B2B_IMPL.recipes), 'every recipe is ingested or named as never ingested');
   assert.deepEqual(m.ingest.filter((x) => m.notIngested.includes(x)), [], 'never both');
   // Fix round 1 (the ruled defect): a dependency install has its own evidence rule; only the dev deployment is never
-  // ingested at B2a. Task 8 lands changeset.collect's and changeset.merge_check's ingest; changeset.accept and repo.ff
-  // still land in Task 9: a finished job of one is refused (`ingest_unavailable`) rather than completed in the meantime.
-  assert.deepEqual(sorted(m.notIngested), sorted(['sde.preview.start', 'changeset.accept', 'repo.ff']));
+  // ingested at B2a. Task 8 lands changeset.collect's and changeset.merge_check's ingest; Task 9 lands changeset.accept's
+  // and repo.ff's, so only the dev deployment is left never ingested (the ratchet only shrinks).
+  assert.deepEqual(sorted(m.notIngested), sorted(['sde.preview.start']));
   assert.ok(m.ingest.includes('sde.deps.node') && m.ingest.includes('sde.deps.python'));
   assert.ok(m.validators.includes('sde.deps.lock_matches'));
   assert.deepEqual(implementationProblems(), []);

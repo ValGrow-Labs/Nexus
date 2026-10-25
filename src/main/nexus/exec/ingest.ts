@@ -47,6 +47,10 @@
  *   once the worktree does (task 2's ruling). A row already recorded for the session with the same identity is the
  *   answer (idempotent); one with another identity is refused.
  * - a rollback of an unfinished accept (B2b Task 7, the `gitFacts` rule): its facts re-validated; the job completes.
+ * - an accept and a fast-forward (B2b Task 9, acceptIngest.ts): `changeset.accept` promotes the version by the user, writes the
+ *   accept row and the accept-time advisory `git.applies_cleanly` in one transaction, or (that failing) queues the rollback
+ *   in the same transaction and fails `accept_rolled_back`; `repo.ff` writes the `repo_merges` row. A rollback and a
+ *   merge row are a durable record, not a version: `durableRecord` stands in for evidence for those git recipes only.
  *
  * A recipe without an ingest rule here is refused with `ingest_unavailable` / `no_ingest_rule`: unfinished work is never
  * completed.
@@ -80,12 +84,16 @@ import * as secretScan from '../validation/validators/secretScan';
 import * as secretEntropyNotes from '../validation/validators/secretEntropyNotes';
 import * as appliesCleanly from '../validation/validators/appliesCleanly';
 import * as csTestsPass from '../validation/validators/csTestsPass';
+import type { JobService } from '../jobs/jobService';
+import { acceptIngestTx, forwardIngestTx, rollbackIngestTx, type AcceptIngestDeps } from './acceptIngest';
 
 export type { AttemptExited };
 
 export interface IngestDeps {
   artifacts: ArtifactService;
   validation: ValidationService;
+  /** B2b Task 9: the accept rule enqueues the rollback job in its own transaction (null: an unfinished accept then throws). */
+  jobs?: JobService | null;
   blobs: BlobIndex | null;
   now: () => number;
   /** main's own async commit resolution in the project folder (src/main/git.ts resolveCommit). */
@@ -103,6 +111,8 @@ interface VersionRow { id: string; artifact_id: string; status: string; content_
 interface InputRow { version_id: string; role: string; status: string; storage_ref_json: string; metadata_json: string; kind: string }
 
 const ok: IngestDecision = { ok: true };
+/** The ingest wrote its own durable record of the result (a worktree row): the evidence backstop accepts it for these git recipes only. */
+const DURABLE: IngestDecision = { ok: true, durableRecord: true };
 const refuse = (outcome: string, code: string, message: string): IngestDecision => ({ ok: false, outcome, error: { code, message } });
 const secretRefusal = (what: string): IngestDecision =>
   refuse('invalid_output', 'secret_in_output', `the ${what} holds a secret-shaped value; nothing was stored`);
@@ -115,12 +125,14 @@ export const MAX_TREE_FILES = 5000;
 
 /** The ingest rule of each recipe: the one dispatch table of `ingestTx` (B2a Task 13 pins it to the registry's B2A_IMPL). */
 export const INGEST_RULES: Readonly<Record<string, 'snapshot' | 'discovery' | 'testRun' | 'build' | 'assemble' | 'diagnose' | 'deps' | 'worktree'
-  | 'gitFacts' | 'changeSet' | 'mergeCheck'>> = Object.freeze({
+  | 'gitFacts' | 'changeSet' | 'mergeCheck' | 'accept' | 'forward'>> = Object.freeze({
   'repo.snapshot': 'snapshot', 'sde.test.discover': 'discovery', 'sde.test.node': 'testRun', 'sde.test.pytest': 'testRun',
   'sde.build.node': 'build', 'sde.build.python': 'build', 'sde.app.assemble': 'assemble', 'sde.diagnose': 'diagnose',
   'sde.deps.node': 'deps', 'sde.deps.python': 'deps',
   // B2b Task 7: the session worktree row, and an accept's rollback.
   'repo.worktree': 'worktree', 'changeset.accept_rollback': 'gitFacts',
+  // B2b Task 9: the accept (promotion, accept row, rollback on failure) and the dialog-confirmed fast-forward (merge row).
+  'changeset.accept': 'accept', 'repo.ff': 'forward',
   // B2b Task 8: a draft change_set with its lineage and register validators, and the git.applies_cleanly candidate check.
   'changeset.collect': 'changeSet', 'changeset.merge_check': 'mergeCheck'
 });
@@ -129,11 +141,7 @@ export const INGEST_RULES: Readonly<Record<string, 'snapshot' | 'discovery' | 't
  * `app.preview_health`, recorded while it runs).
  */
 export const NOT_INGESTED: Readonly<Record<string, string>> = Object.freeze({
-  'sde.preview.start': 'a service: its evidence is app.preview_health',
-  // B2b Task 9 plans and runs these; what their facts become is recorded by the accept service. Until that ingest
-  // lands, a finished job of these recipes is refused (`ingest_unavailable`): unfinished work never completes.
-  'changeset.accept': 'its promotion and accept row are recorded by the accept service in one transaction with a rollback (B2b Task 9)',
-  'repo.ff': 'its repo_merges row is recorded by the accept service after the dialog-confirmed merge (B2b Task 9)'
+  'sde.preview.start': 'a service: its evidence is app.preview_health'
 });
 /**
  * The validators an ingest rule records that are not run through `runPure` (the registry check derives main's dispatched
@@ -221,6 +229,8 @@ export class IngestService implements IngestPort {
       case 'deps': return this.depsInstall(ctx);
       case 'worktree': return this.worktree(ctx);
       case 'gitFacts': return this.rollbackFacts(ctx);
+      case 'accept': return acceptIngestTx(this.acceptDeps(), ctx);
+      case 'forward': return forwardIngestTx(this.acceptDeps(), ctx);
       case 'changeSet': return this.changeSet(ctx);
       case 'mergeCheck': return this.mergeCheckIngest(ctx);
       default: return refuse('ingest_unavailable', 'no_ingest_rule', `outputs of ${ctx.recipe.id} are not ingested in this build`);
@@ -338,7 +348,7 @@ export class IngestService implements IngestPort {
     const prior = this.db.prepare('SELECT * FROM session_worktrees WHERE session_id = ?').get(sessionId) as
       { rel_path: string; ref: string; integration_ref: string; base_commit: string; removed_at: number | null } | undefined;
     if (prior) {
-      if (prior.removed_at === null && prior.rel_path === want.worktree && prior.ref === want.ref && prior.integration_ref === want.integrationRef) return ok;
+      if (prior.removed_at === null && prior.rel_path === want.worktree && prior.ref === want.ref && prior.integration_ref === want.integrationRef) return DURABLE;
       return refuse('invalid_output', 'worktree_recorded', 'the session already has another worktree record');
     }
     const now = this.deps.now();
@@ -348,17 +358,15 @@ export class IngestService implements IngestPort {
       sessionId, projectId: job.project_id, workspaceId: job.workspace_id, entityType: 'worktree', entityId: sessionId, action: 'repo.worktree',
       status: 'succeeded', details: { worktree: want.worktree, ref: want.ref, integrationRef: want.integrationRef, base: f.base,
         integrationHead: f.integrationHead, integrationCreated: f.integrationCreated === true, reused: f.reused === true, locked: true } }, now);
-    return ok;
+    return DURABLE;
   }
 
   /** `changeset.accept_rollback`: the facts must name the move the job was queued for. */
-  private rollbackFacts(ctx: IngestContext): IngestDecision {
-    const f = this.gitFacts(ctx);
-    const params = parse(ctx.job.params_json);
-    if (!f || !isObj(params) || f.from !== params.from || f.to !== params.to || typeof f.to !== 'string' || !COMMIT_RE.test(f.to)) {
-      return refuse('invalid_output', 'parser_contract', 'the rollback facts do not match the job');
-    }
-    return ok;
+  private rollbackFacts(ctx: IngestContext): IngestDecision { return rollbackIngestTx(this.acceptDeps(), ctx); }
+
+  /** What the accept, rollback and fast-forward rules (acceptIngest.ts) need. */
+  private acceptDeps(): AcceptIngestDeps {
+    return { db: this.db, artifacts: this.deps.artifacts, validation: this.deps.validation, jobs: this.deps.jobs ?? null, now: this.deps.now };
   }
 
   /**
@@ -391,6 +399,8 @@ export class IngestService implements IngestPort {
       : null;
     const paths = isObj(f) && Array.isArray(f.paths) ? f.paths.filter((x): x is string => typeof x === 'string') : null;
     const pathsTruncated = isObj(f) && f.pathsTruncated === true;
+    // Fail closed: only an explicit `scanTruncated: false` says the runner's patch scan saw every added line.
+    const scanTruncated = !(isObj(f) && f.scanTruncated === false);
     const secretHits = isObj(f) && Array.isArray(f.secretHits) ? (f.secretHits as unknown[]) : [];
     const entropyHits = isObj(f) && Array.isArray(f.entropyHits) ? (f.entropyHits as unknown[]) : [];
     if (!sessionId || !branch || !head || !COMMIT_RE.test(head) || !base || !COMMIT_RE.test(base) || !tree || !ref || !diffstat || !paths) {
@@ -399,8 +409,6 @@ export class IngestService implements IngestPort {
     if (ref !== jobRefFor(sessionId)) return refuse('invalid_output', 'parser_contract', 'the collect facts do not match the session');
     if (job.participation_id === null) return refuse('invalid_output', 'bad_input', 'the collect job has no participation');
     const scope = isObj(params) && Array.isArray(params.scope) ? params.scope.filter((x): x is string => typeof x === 'string') : [];
-    // Fail closed: only an explicit `scanTruncated: false` says the runner's patch scan saw every added line.
-    const scanTruncated = !(isObj(f) && f.scanTruncated === false);
     const title = isObj(params) && typeof params.title === 'string' ? params.title : 'Agent change';
     const summary = isObj(params) && typeof params.summary === 'string' ? params.summary : '';
     const requirementIds = isObj(params) && Array.isArray(params.requirementVersionIds)
@@ -456,14 +464,6 @@ export class IngestService implements IngestPort {
     const params = parse(job.params_json);
     const versionId = isObj(params) && typeof params.versionId === 'string' ? params.versionId : null;
     const head = isObj(params) && typeof params.head === 'string' ? params.head : null;
-    if (!f || !versionId || !head || typeof f.clean !== 'boolean' || typeof f.integrationHead !== 'string' || !COMMIT_RE.test(f.integrationHead)) {
-      return refuse('invalid_output', 'parser_contract', 'the merge-check facts were not usable');
-    }
-    const outcome = appliesCleanly.run({ head, integrationHead: f.integrationHead, clean: f.clean } satisfies appliesCleanly.AppliesCleanlyFacts);
-    this.deps.validation.recordOutcomeTx(versionId, appliesCleanly.ID, outcome, { jobId: job.id, attemptN: ctx.attempt.n });
-    this.deps.validation.finalizeIfReady(system, versionId);
-    return ok;
-  }
     // A refused merge check ({ok:false, code}: the integration ref moved, the commit is unknown, git failed) is a
     // check that could not run, never a verdict on the change: recorded `error` (the draft stays; Revalidate re-runs it).
     const raw = ctx.exited.parsed.find((p) => p.parser === 'git-facts')?.normalized;
@@ -472,6 +472,14 @@ export class IngestService implements IngestPort {
         errored('merge_check_refused', `Checks could not run: the merge check was refused (${/^[a-z_]{1,40}$/.test(raw.code) ? raw.code : 'refused'}).`), { jobId: job.id, attemptN: ctx.attempt.n });
       return ok;
     }
+    if (!f || !versionId || !head || typeof f.clean !== 'boolean' || typeof f.integrationHead !== 'string' || !COMMIT_RE.test(f.integrationHead)) {
+      return refuse('invalid_output', 'parser_contract', 'the merge-check facts were not usable');
+    }
+    const outcome = appliesCleanly.run({ head, integrationHead: f.integrationHead, clean: f.clean } satisfies appliesCleanly.AppliesCleanlyFacts);
+    this.deps.validation.recordOutcomeTx(versionId, appliesCleanly.ID, outcome, { jobId: job.id, attemptN: ctx.attempt.n });
+    this.deps.validation.finalizeIfReady(system, versionId);
+    return ok;
+  }
 
   // ---------- repository snapshot (engine) ----------
 
@@ -588,6 +596,13 @@ export class IngestService implements IngestPort {
     const settled = this.deps.validation.finalizeIfReady(system, v.id);
     if (settled === 'draft' && this.registerPassed(v.id)) {
       this.deps.validation.enqueueCandidate(system, v.id, { parentJobId: job.id });
+    } else if (settled === 'failed' && changeSetVersionId) {
+      // No tests were found (or the list was refused): the suite's own check will never run, so the change set's
+      // cs.tests_pass fails here (CS6) rather than waiting for a result that cannot come.
+      const failedSuite = failed('discovery_failed', 'No usable tests were discovered at the head of the change.', []);
+      this.deps.validation.recordOutcomeTx(changeSetVersionId, csTestsPass.ID, csTestsPass.mirrorEvidence(failedSuite, { versionId: v.id, contentHash }),
+        { jobId: job.id, attemptN: attempt.n });
+      this.deps.validation.finalizeIfReady(system, changeSetVersionId);
     }
     return ok;
   }
@@ -596,13 +611,6 @@ export class IngestService implements IngestPort {
 
   private testRun(ctx: IngestContext): IngestDecision {
     const { job, attempt, system } = ctx;
-    } else if (settled === 'failed' && changeSetVersionId) {
-      // No tests were found (or the list was refused): the suite's own check will never run, so the change set's
-      // cs.tests_pass fails here (CS6) rather than waiting for a result that cannot come.
-      const failedSuite = failed('discovery_failed', 'No usable tests were discovered at the head of the change.', []);
-      this.deps.validation.recordOutcomeTx(changeSetVersionId, csTestsPass.ID, csTestsPass.mirrorEvidence(failedSuite, { versionId: v.id, contentHash }),
-        { jobId: job.id, attemptN: attempt.n });
-      this.deps.validation.finalizeIfReady(system, changeSetVersionId);
     let suiteId: string | null = null;
     if (job.kind === 'validate') {
       const params = parse(job.params_json);

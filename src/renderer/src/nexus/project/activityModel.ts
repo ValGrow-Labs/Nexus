@@ -44,7 +44,10 @@ export const ACTIVITY_ACTIONS: readonly string[] = Object.freeze([
   // B2b Task 4: the agent's network permission, and its per-turn capability tokens (counts only, never the token).
   'agent.consent', 'token.mint', 'token.revoke',
   // B2b Task 7: a job's git worktree was prepared (never the worktree's own path, which is never in details).
-  'repo.worktree'
+  'repo.worktree',
+  // B2b Task 9: a user's review decision, an accepted change set (or an accept that was rolled back), the undo of an
+  // accept that did not finish, and "Merge accepted work" (never a path, a sha or a comment: only the decision word).
+  'review.decide', 'changeset.accept', 'changeset.rollback', 'repo.merge'
 ]);
 
 /** Plain words for an action a person may be refused (every platform action). */
@@ -105,6 +108,7 @@ const ACTION_WORDS: Record<string, string> = {
   'changeset.accept': 'accept a change set',
   'repo.merge': 'merge accepted work',
   'repo.worktree': "prepare the agent's working copy",
+  'changeset.rollback': 'undo an accept that did not finish',
   'agent.consent': "change the agent's network permission",
   'token.mint': "issue the agent's turn permission",
   'token.revoke': "end the agent's turn permission",
@@ -231,7 +235,8 @@ const RECOVER_WORDS: Record<string, string> = {
   unreconciled: 'Job failed: the sandbox runner did not pick it up again within 10 minutes of a restart',
   unknown_resources: 'Sandbox resources naming a job this app does not know were found after a restart and left in place',
   image_interrupted: 'Sandbox image preparation was interrupted by a restart',
-  orphans: 'Leftover sandbox resources from before a restart were found and set for removal'
+  orphans: 'Leftover sandbox resources from before a restart were found and set for removal',
+  accept_rollback: 'An accept that had not finished when the app stopped is being undone; it is never retried'
 };
 /** A job restart recovery failed from what its stopped container showed (the `status` of a `fail` decision). */
 const RECOVER_FAIL_WORDS: Record<string, string> = {
@@ -356,6 +361,16 @@ function sentence(row: ActivityView, ctx: ActivityContext): string | null {
     case 'repo.worktree':
       return detail(row, 'reused') === true ? "The agent's job reused its working copy of the repository"
         : "A working copy of the repository was prepared for the agent's job";
+    case 'review.decide': {
+      const d = detail(row, 'decision');
+      if (d === 'approve') return 'The change was approved';
+      if (d === 'request_changes') return 'Changes were requested on the change';
+      if (d === 'reject') return 'The change was rejected';
+      return 'A review was recorded';
+    }
+    case 'changeset.accept': return 'The change was accepted; it waits on the Nexus branch until you merge it';
+    case 'changeset.rollback': return 'An accept that did not finish was undone; the Nexus branch is back as it was';
+    case 'repo.merge': return 'The accepted work was merged into your branch';
     case 'project_workspace.primary_synced': {
       const ws = workspacePhrase(detail(row, 'workspaceId'), ctx);
       return ws ? `Main workspace set to ${ws}, from the project's domain` : "Main workspace set from the project's domain";

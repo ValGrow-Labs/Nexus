@@ -45,6 +45,7 @@ import { PlatformError } from '../nexus/errors';
 import { PREVIEW_MAX_OBJECT_BYTES, type PreviewPartId, type PreviewRow } from '../nexus/exec/execQueries';
 import { sendNexusHint, type HintTarget } from '../nexusIpc/registerNexusIpc';
 import { resolveDataHome, satisfiesLogPathCheck, type DataHome } from './dataHome';
+import type { MergeConfirmInfo } from '../nexus/repo/acceptService';
 import { startRunnerHost, type ForkRunner, type HostTimers, type RunnerHost } from './runnerHost';
 
 export const TICK_MS = 1_000;
@@ -103,6 +104,12 @@ export interface ExecutionHandle extends ExecIpcPort {
   readLog(logRel: string, q: { fromOffset: number; maxBytes: number }): Promise<LogPage | null>;
   /** A page of a stored object's bytes (previews), or null when it is not there. */
   readObject(sha256: string, q: { offset: number; maxBytes: number }): Promise<{ bytes: Buffer; nextOffset: number; eof: boolean } | null>;
+  /**
+   * The "Merge accepted work" dialog (B2b Task 9): main's own confirmation of the commits to be merged, handed to
+   * `AcceptService.mergeAccepted` as its `confirm`. True only when the user said yes in the dialog; with no dialog wired,
+   * or when it throws, it answers false (a merge is never confirmed on the user's behalf).
+   */
+  confirmMerge(info: MergeConfirmInfo): Promise<boolean>;
   /** App quit, bounded at 5 s. */
   stop(): Promise<void>;
 }
@@ -377,7 +384,9 @@ export function execIpcPort(platform: NexusPlatform, home: HomeReads, opts: { re
 export async function startExecution(o: { platform: NexusPlatform; userData: string; log: (line: string) => void;
   fork?: ForkRunner; timers?: WiringTimers; now?: () => number;
   /** The renderers the nexus:hint push goes to (main: its live web contents), read at each hint. */
-  hintTargets?: () => readonly (HintTarget | null | undefined)[] }): Promise<ExecutionHandle | null> {
+  hintTargets?: () => readonly (HintTarget | null | undefined)[];
+  /** B2b Task 9: main's native dialog for "Merge accepted work" (index.ts); omitted, every merge answers cancelled. */
+  mergeDialog?: (info: MergeConfirmInfo) => Promise<boolean> }): Promise<ExecutionHandle | null> {
   const p = o.platform;
   const log = o.log;
   if (!p.executionAvailable) { log('[nexus] execution not started: execution is not available on this database'); return null; }
@@ -486,6 +495,10 @@ export async function startExecution(o: { platform: NexusPlatform; userData: str
       return r ? { bytes: r.bytes, nextOffset: r.nextOffset, eof: r.eof } : null;
     },
     logs: port.logs, preview: port.preview, blobsGc: port.blobsGc,
+    async confirmMerge(info) {
+      if (!o.mergeDialog) return false;
+      try { return (await o.mergeDialog(info)) === true; } catch (e) { log(`[nexus] the merge dialog failed (${(e as Error)?.name ?? 'error'}); nothing was merged`); return false; }
+    },
     async stop() {
       if (stopped) return;
       stopped = true;

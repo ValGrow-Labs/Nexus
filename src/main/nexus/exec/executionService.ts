@@ -238,7 +238,16 @@ export interface IngestContext {
   facts?: unknown;
 }
 /** What ingest decided inside its transaction. `ok` completes the job; anything else fails it. */
-export type IngestDecision = { ok: true; outcome?: string } | { ok: false; outcome: string; error: { code: string; message: string } };
+export type IngestDecision =
+  /**
+   * `durableRecord` (B2b Task 9): the ingest wrote its own durable record of this job's result (a worktree, a merge, a
+   * rollback's activity row). It stands in for a version or validation row ONLY for the git recipes that produce no
+   * version (RECORD_ONLY_RECIPES); anywhere else it changes nothing and the evidence backstop still applies.
+   */
+  | { ok: true; outcome?: string; durableRecord?: true }
+  | { ok: false; outcome: string; error: { code: string; message: string } };
+/** The git recipes whose result is a record, not a version: a worktree row, a rollback, a merge row (B2b). */
+export const RECORD_ONLY_RECIPES: readonly string[] = Object.freeze(['repo.worktree', 'changeset.accept_rollback', 'repo.ff']);
 /**
  * Ingest (Task 8). After the exit is durable (phase `collecting` and an `attempt.output` event, in their own
  * transaction), `prepare` may gather facts main observes itself (async, outside any transaction), then `ingestTx`
@@ -1048,7 +1057,8 @@ export class ExecutionService {
           ingestThrew = e ?? new Error('ingest threw');
           throw e;                                   // rolls back everything ingest wrote; recorded below
         }
-        if (d.ok && !this.hasEvidence(j.id, cur.n)) {
+        const recordOnly = d.ok && d.durableRecord === true && RECORD_ONLY_RECIPES.includes(recipe.id);
+        if (d.ok && !recordOnly && !this.hasEvidence(j.id, cur.n)) {
           // Constraint 4 in the core: an ingest that reports success but bound nothing to this attempt completes nothing.
           d = { ok: false, outcome: 'no_evidence', error: { code: 'no_evidence', message: 'ingest bound no version or validation to the attempt' } };
         }

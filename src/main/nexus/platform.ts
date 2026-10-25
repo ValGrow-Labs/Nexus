@@ -63,6 +63,11 @@ import { ContextResolver } from './agents/contextResolver';
 import { Skills } from './agents/skills';
 import { McpGateway } from './agents/mcpGateway';
 import type { RunnerPort } from './exec/runnerPort';
+import { parseRunnerMessage } from '../../shared/nexus/runnerProtocol';
+import { PlatformError } from './errors';
+import { GitRead } from './repo/gitRead';
+import { AcceptService } from './repo/acceptService';
+import { ReviewService, type TurnStarter } from './review/reviewService';
 
 export interface NexusPlatform {
   principals: PrincipalResolver;
@@ -117,6 +122,12 @@ export interface NexusPlatform {
   contextResolver: ContextResolver | null;
   /** B2b Task 5: writes the turn's skill bundle; null unless agents are available. */
   skills: Skills | null;
+  /** B2b Task 9: the bounded git reads through the runner (status, diff); null unless execution is available. */
+  gitRead: GitRead | null;
+  /** B2b Task 9: user review decisions on change-set candidates; null unless agents are available. */
+  reviews: ReviewService | null;
+  /** B2b Task 9: accept (merge-tree, CAS, rollback), the integration-ref status and "Merge accepted work"; null unless agents are available. */
+  accepts: AcceptService | null;
   startup(): NexusStartupReport;
 }
 
@@ -172,6 +183,11 @@ export interface NexusPlatformOptions {
   randomBytes?: (n: number) => Buffer;
   /** B2b Task 5: the app's `resources` folder (a skill's file is `<dir>/skills/<id>/SKILL.md`); null, Skills.write refuses. */
   skillsResourcesDir?: string | null;
+  /**
+   * B2b Task 9: starts the next agent turn for a review that asked for changes (Task 10's agent service). Omitted, a safe stub
+   * answers `agents_unavailable`, so a request for changes records nothing until the real one is wired.
+   */
+  turns?: TurnStarter;
 }
 
 /**
@@ -228,7 +244,7 @@ export function createNexusPlatform(db: Database.Database, opts?: NexusPlatformO
     resolveCommit: opts?.resolveCommit ?? null, acceptFsRoot: opts?.acceptFsRoot ?? null, appVersion: opts?.appVersion ?? null }) : null;
   if (validation) artifactHooks.recordInlineRegisterTx = (versionId, kind, content) => validation.recordInlineRegisterTx(versionId, kind, content);
   const ingest: IngestPort | null = opts?.ingest !== undefined ? opts.ingest
-    : validation ? new IngestService(db, { artifacts, validation, blobs, now, resolveCommit: opts?.resolveCommit ?? null, faults: opts?.ingestFaults ?? null,
+    : validation ? new IngestService(db, { artifacts, validation, jobs, blobs, now, resolveCommit: opts?.resolveCommit ?? null, faults: opts?.ingestFaults ?? null,
       // An install's lock.sha256 is read back from the blob store through the data home (fix round 1).
       objects: typeof opts?.dataHome?.readObjectBytes === 'function' ? { readObjectBytes: (sha, max) => opts.dataHome!.readObjectBytes!(sha, max) } : null })
       : null;
@@ -267,9 +283,19 @@ export function createNexusPlatform(db: Database.Database, opts?: NexusPlatformO
       system: principals.system(), now, log })
     : null;
   exec.bindMcpGateway(mcpGateway);
+  // B2b Task 9: the git reads (status for the accept service, diffs for the viewer) go through the runner; its answers are
+  // routed to them below, at the runner port. Built with execution: a read writes nothing and runs as no job.
+  const gitRead = executionAvailable ? new GitRead({ send: (m) => exec.sendToRunner(m), now }) : null;
+  const turns: TurnStarter = opts?.turns ?? {
+    continueWith(): never { throw new PlatformError('unavailable', 'agents are not available yet', { reason: 'agents_unavailable' }); }
+  };
+  const reviews = agentsAvailable ? new ReviewService(db, { auth, principals, turns, now }) : null;
+  const accepts = agentsAvailable && validation
+    ? new AcceptService(db, { auth, principals, artifacts, jobs, validation, gitRead, system: principals.system(), now, acceptFsRoot: opts?.acceptFsRoot ?? null })
+    : null;
   // What the gateway keeps in memory for a turn (retried-call replies, call count, pending execs) goes with its tokens.
   if (tokens && mcpGateway) tokens.onRevoked((jobId) => { if (jobId === null) mcpGateway.evictAll(); else mcpGateway.evictJob(jobId); });
-  if (tokens) {
+  if (tokens || gitRead) {
     // Every runner `ready` is a new runner process (it answers the one `hello` of its port): its MCP server is new, and
     // no token of an earlier runner may reach it. The revocation runs before the execution core sees the message.
     const attach = exec.attachRunner.bind(exec);
@@ -279,7 +305,15 @@ export function createNexusPlatform(db: Database.Database, opts?: NexusPlatformO
         state: () => port.state(),
         send: (m) => port.send(m),
         onMessage: (fn) => port.onMessage((raw) => {
-          if ((raw as { op?: unknown } | null)?.op === 'ready') {
+          const op = (raw as { op?: unknown } | null)?.op;
+          // B2b Task 9: a `git.read.result` answers a waiting read; the execution core never sees it.
+          if (op === 'git.read.result' && gitRead) {
+            const m = parseRunnerMessage(raw);
+            if (m && m.op === 'git.read.result') gitRead.handle({ reqId: m.reqId, result: m.result });
+            return;
+          }
+          if (op === 'ready' && gitRead) gitRead.failAll('the runner restarted before it answered');
+          if (op === 'ready' && tokens) {
             try {
               const n = tokens.revokeLiveAgentTokens(principals.system(), 'runner_restart');
               if (n > 0) log(`[nexus] agent tokens revoked at runner ready: ${n}`);
@@ -294,7 +328,7 @@ export function createNexusPlatform(db: Database.Database, opts?: NexusPlatformO
   return {
     principals, auth, activity, workspaces, projects, artifacts, lineage, jobs, sessions, handoffs, handoffsAvailable, executionAvailable,
     exec, blobs, validation, approvals, deployments, repo, queries, registry: { valid: registryValid, problems: problems.length }, bootId,
-    agentsAvailable, tokens, budget, mcpGateway, contextResolver, skills,
+    agentsAvailable, tokens, budget, mcpGateway, contextResolver, skills, gitRead, reviews, accepts,
     startup(): NexusStartupReport {
       // The seeded principals must resolve; a missing one throws platform_unavailable.
       principals.localUser();
