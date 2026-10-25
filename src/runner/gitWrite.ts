@@ -37,6 +37,8 @@ import {
 import { gitPrefix, inertSignatureArgs, COMMIT_RE } from './git';
 import { runGit, toolEnv, type RunResult } from './proc';
 import { walk, type GuardFs, type GuardRefusal } from './worktreeGuard';
+import { isLockfilePath } from '../shared/nexus/changeSet';
+import { PRIVATE_KEY_HEADER, hasProviderKey, looksSecret } from '../shared/nexus/secretShape';
 
 export const GIT_WRITE_CONFIG: readonly string[] = Object.freeze([
   '-c', 'commit.gpgsign=false', '-c', 'tag.gpgsign=false', '-c', 'core.symlinks=false', '-c', 'core.longpaths=true',
@@ -320,6 +322,52 @@ export async function isLocked(g: HardenedGit, repo: string, n: Neutral, p: stri
 export interface CollectFacts {
   ok: true; changed: boolean; parent: string; head: string; tree: string; base: string; ref: string;
   diffstat: { files: number; insertions: number; deletions: number }; paths: string[]; pathsTruncated: boolean;
+  /** An added line holding a provider key or a private-key header (`diffLineSecret`): path and line only, never the text. */
+  secretHits: { path: string; line: number; rule: 'provider_key' | 'private_key' }[];
+  /** Advisory: an added line outside a lockfile that looks high-entropy (`looksSecret`): path and line only. */
+  entropyHits: { path: string; line: number; rule: 'high_entropy' }[];
+}
+/** The most hits of each kind a collect reports (the count itself, and every `location` evidence item, stay bounded). */
+export const COLLECT_MAX_HITS = 500;
+
+/**
+ * Scans a zero-context unified diff (`git diff -U0`) for added lines, classifying each by `diffLineSecret` (blocking)
+ * and, outside a lockfile, `looksSecret` (advisory). Only the path and the 1-based line number of a hit are kept: the
+ * line's text is read here and discarded; it is never returned, logged or stored (D-B14).
+ */
+export function scanAddedLines(patch: string): { secretHits: CollectFacts['secretHits']; entropyHits: CollectFacts['entropyHits'] } {
+  const secretHits: CollectFacts['secretHits'] = [];
+  const entropyHits: CollectFacts['entropyHits'] = [];
+  let currentPath: string | null = null;
+  let newLine = 0;
+  for (const raw of patch.split('\n')) {
+    const line = raw.endsWith('\r') ? raw.slice(0, -1) : raw;
+    if (line.startsWith('+++ ')) {
+      const p = line.slice(4).trim();
+      currentPath = p === '/dev/null' ? null : p.startsWith('b/') ? p.slice(2) : p;
+      continue;
+    }
+    if (line.startsWith('@@ ')) {
+      const m = /^@@ -\d+(?:,\d+)? \+(\d+)(?:,\d+)? @@/.exec(line);
+      newLine = m ? Number(m[1]) : newLine;
+      continue;
+    }
+    if (line.startsWith('+') && !line.startsWith('+++')) {
+      const text = line.slice(1);
+      const path = currentPath;
+      const at = newLine;
+      newLine++;
+      if (!path) continue;
+      if (PRIVATE_KEY_HEADER.test(text) || hasProviderKey(text)) {
+        if (secretHits.length < COLLECT_MAX_HITS) secretHits.push({ path, line: at, rule: PRIVATE_KEY_HEADER.test(text) ? 'private_key' : 'provider_key' });
+      }
+      if (!isLockfilePath(path) && looksSecret(text)) {
+        if (entropyHits.length < COLLECT_MAX_HITS) entropyHits.push({ path, line: at, rule: 'high_entropy' });
+      }
+    }
+    // A '-' (removed) line never advances the new-file line count; with -U0 there is no context line to handle.
+  }
+  return { secretHits, entropyHits };
 }
 
 /**
@@ -399,7 +447,12 @@ export async function collect(g: HardenedGit, t: { repoPath: string; worktreePat
     diffstat.deletions += m[2] === '-' ? 0 : Number(m[2]);
     if (paths.length < COLLECT_MAX_PATHS) paths.push(m[3]); else pathsTruncated = true;
   }
-  return { ok: true, changed, parent, head, tree, base, ref: t.ref, diffstat, paths, pathsTruncated };
+  // F29/D-B14: a zero-context patch of the same base..head, scanned for secret- and entropy-shaped added lines. The
+  // patch text is read only here, inside this function, and discarded; `scanAddedLines` returns path:line only.
+  const patch = must(await g.run(repo, ['-c', 'core.quotePath=false', 'diff', ...SAFE_DIFF_ARGS, '--no-renames', '-U0', base, head],
+    { neutral: n, signal: o.signal, maxStdout: 16 * 2 ** 20 }), 'diff -U0');
+  const { secretHits, entropyHits } = scanAddedLines(patch.stdout);
+  return { ok: true, changed, parent, head, tree, base, ref: t.ref, diffstat, paths, pathsTruncated, secretHits, entropyHits };
 }
 
 // ---------- changeset.merge_check, changeset.accept, changeset.accept_rollback ----------

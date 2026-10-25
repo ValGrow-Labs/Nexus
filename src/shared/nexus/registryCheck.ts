@@ -81,16 +81,16 @@ export const B2B_IMPL: RegistryImpl = deepFreeze({
 });
 
 /**
- * The ids B2B_IMPL declares that main does not implement yet: B2b Task 7 (the git engine recipes), Task 8 (the
- * register validators and cs.tests_pass) and Task 9 (git.applies_cleanly) each remove what they land, and Task 16
- * asserts this empty. Main's startup check leaves exactly these out of its comparison and reports one that main does
- * implement while it is still listed here (src/main/nexus/registryImpl.ts). The agent flows stay unavailable
+ * The ids B2B_IMPL declares that main does not implement yet. B2b Task 7 landed the six git engine recipes; Task 8
+ * lands all six change-set validators (the register validators, `cs.tests_pass` and `git.applies_cleanly`'s own
+ * candidate check; Task 9 adds its advisory re-check at accept, over the same pure validator). Task 16 asserts this
+ * empty. Main's startup check leaves exactly these out of its comparison and reports one that main does implement
+ * while it is still listed here (src/main/nexus/registryImpl.ts). The agent flows stay unavailable
  * (`agents_unavailable`) while the agents part is off, so nothing pending can be started.
  */
 export const B2B_PENDING: { recipes: readonly string[]; validators: readonly string[] } = deepFreeze({
-  // B2b Task 7 landed the six git engine recipes (planBuilder plans each; ingest rules or NOT_INGESTED name each).
   recipes: [],
-  validators: ['git.diff_nonempty', 'git.paths_in_scope', 'sec.secret_scan', 'sec.entropy_notes', 'cs.tests_pass', 'git.applies_cleanly']
+  validators: []
 });
 
 /** An end-to-end test id: `e2e.<domain>.<step>`. */

@@ -23,7 +23,8 @@ export const MAX_CASE_TEXT = 200;
 const SHA256_RE = /^[0-9a-f]{64}$/;
 const COMMIT_RE = /^[0-9a-f]{40}$/;
 const NUMBER_OPS = ['>=', '<=', '==', '<', '>'] as const;
-const GIT_CHECKS = ['resolves', 'ancestor', 'merge_tree_clean', 'paths_in_scope'] as const;
+const GIT_CHECKS = ['resolves', 'ancestor', 'merge_tree_clean', 'paths_in_scope', 'diff_nonempty'] as const;
+const LOCATION_RULES = ['provider_key', 'private_key', 'high_entropy'] as const;
 
 export type EvidenceCheck = { ok: true; value: Evidence[] } | { ok: false; reason: 'bad_evidence'; message: string };
 
@@ -124,6 +125,13 @@ function item(x: unknown): Evidence {
       if (!isText(x.name, MAX_CASE_TEXT) || !isText(x.classname, MAX_CASE_TEXT) || !(x.file === null || isText(x.file, MAX_CASE_TEXT))
         || (x.outcome !== 'failed' && x.outcome !== 'errored')) no('a case item is malformed');
       return { type: 'case', name: x.name as string, classname: x.classname as string, file: x.file as string | null, outcome: x.outcome as 'failed' | 'errored' };
+    case 'location':
+      // Where a change set's secret scan or entropy note hit (B2b): path and line only, never the line's text.
+      keys(x, ['type', 'path', 'line', 'rule']);
+      if (!isText(x.path, MAX_TEXT, 1) || !isCount(x.line) || x.line < 1 || !(LOCATION_RULES as readonly unknown[]).includes(x.rule)) {
+        no('a location item is malformed');
+      }
+      return { type: 'location', path: x.path as string, line: x.line as number, rule: x.rule as (typeof LOCATION_RULES)[number] };
     default:
       return no('an evidence item has an unknown type');
   }

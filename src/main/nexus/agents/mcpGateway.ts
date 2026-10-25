@@ -44,6 +44,7 @@ import type { TokenService } from './tokenService';
 import type { BudgetService } from './budgetService';
 import type { ArtifactService } from '../artifact/artifactService';
 import type { JobService } from '../jobs/jobService';
+import type { ChangeSetService } from '../repo/changeSetService';
 import type { ExecutionService, ExecDataHome } from '../exec/executionService';
 import type { ExecQueries } from '../exec/execQueries';
 import { liveAttemptOf, type AttemptRow } from '../exec/attempts';
@@ -70,6 +71,8 @@ export interface McpGatewayDeps {
   budget: BudgetService;
   artifacts: ArtifactService;
   jobs: JobService;
+  /** B2b Task 8; left unset until the platform composes it (Task 10): `changeset_register` answers `not_in_this_build`. */
+  changeSets?: ChangeSetService | null;
   exec: ExecutionService;
   queries: ExecQueries;
   /** main's own data home (the same object ExecutionService was built with): blob reads and attempt log reads. */
@@ -262,7 +265,7 @@ export class McpGateway {
       case 'job_request': return this.toolJobRequest(claims, args, callId, now);
       case 'requirement_draft': return this.toolRequirementDraft(claims, args, now);
       case 'review_request': return this.toolReviewRequest(claims, args, now);
-      case 'changeset_register': return fail('not_in_this_build', 'change-set registration arrives in a later phase');
+      case 'changeset_register': return this.toolChangesetRegister(claims, args);
       default: return fail('unknown_tool', 'unknown tool');
     }
   }
@@ -378,6 +381,18 @@ export class McpGateway {
     const finalized = created && version.status === 'draft'
       ? this.deps.artifacts.finalize(this.deps.system, version.id, 'candidate') : version;
     return ok({ versionId: finalized.id, status: finalized.status, created });
+  }
+
+  /** B2b Task 8: `changeset_register`. Waits up to the service's configured timeout for ingest, else `{pending}`. */
+  private async toolChangesetRegister(claims: CapabilityClaims, args: Record<string, unknown>): Promise<McpReplyResult> {
+    if (!this.deps.changeSets) return fail('not_in_this_build', 'change-set registration arrives in a later phase');
+    const answer = await this.deps.changeSets.register(claims, {
+      title: args.title as string, summary: args.summary as string,
+      requirementVersionIds: Array.isArray(args.requirementVersionIds) ? (args.requirementVersionIds as string[]) : undefined,
+      reviseArtifactId: typeof args.reviseArtifactId === 'string' ? args.reviseArtifactId : undefined,
+      clientKey: args.clientKey as string
+    });
+    return ok('pending' in answer ? { pending: answer.pending } : { versionId: answer.versionId, artifactId: answer.artifactId, status: answer.status });
   }
 
   private toolReviewRequest(claims: CapabilityClaims, args: Record<string, unknown>, now: number): McpReplyResult {

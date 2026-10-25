@@ -1,0 +1,30 @@
+/**
+ * `sec.secret_scan` v1 (change_set, register, blocking). Pure. Fails on any `secretHits` the collect reported (a
+ * provider-key shape or a private-key header on an added line, `diffLineSecret`, computed in the runner over the
+ * diff). The evidence holds the path and line only (`location` evidence): the secret text itself never leaves the
+ * runner process and never reaches a validation row, activity row, job event or log (D-B14).
+ */
+import { COMMIT_RE, errored, failed, passed, type ValidatorOutcome } from '../normalized';
+
+export const ID = 'sec.secret_scan';
+export const VERSION = '1';
+/** The most hits named as `location` evidence (the count is still exact; the rest are just not listed). */
+export const MAX_LISTED = 100;
+
+export interface SecretHit { path: string; line: number; rule: 'provider_key' | 'private_key' }
+export interface SecretScanFacts { head: string; secretHits: SecretHit[] }
+
+const isHit = (x: unknown): x is SecretHit => !!x && typeof x === 'object'
+  && typeof (x as SecretHit).path === 'string' && Number.isSafeInteger((x as SecretHit).line) && (x as SecretHit).line >= 1
+  && ((x as SecretHit).rule === 'provider_key' || (x as SecretHit).rule === 'private_key');
+
+export function run(f: SecretScanFacts): ValidatorOutcome {
+  if (!f || typeof f.head !== 'string' || !COMMIT_RE.test(f.head) || !Array.isArray(f.secretHits) || !f.secretHits.every(isHit)) {
+    return errored('parser_contract', 'Checks could not run: the secret scan facts were not usable.');
+  }
+  const evidence = f.secretHits.slice(0, MAX_LISTED).map((h) => ({ type: 'location' as const, path: h.path, line: h.line, rule: h.rule }));
+  if (f.secretHits.length > 0) {
+    return failed('secret_shaped_line', `${f.secretHits.length} added line(s) hold a provider key or a private-key header.`, evidence);
+  }
+  return passed('No added line holds a provider key or a private-key header.', evidence);
+}

@@ -86,9 +86,15 @@ export const MCP_TOOLS: readonly McpToolDef[] = deepFreeze([
       recipeId: { type: 'string', maxLength: 64, enum: JOB_REQUEST_RECIPES },
       inputs: { type: 'array', items: id, maxItems: 20 }
     }, ['recipeId']) },
+  // B2b Task 8 (the change-set register contract supersedes the earlier `message`-only placeholder).
   { name: 'changeset_register', capability: 'artifact.register', mutates: true, resultMaxBytes: 16 * KIB,
-    args: schema({ message: { type: 'string', maxLength: 2000 }, clientKey: { type: 'string', maxLength: 64, pattern: '^[A-Za-z0-9_-]{1,64}$' } },
-      ['message', 'clientKey']) },
+    args: schema({
+      title: { type: 'string', maxLength: 200 },
+      summary: { type: 'string', maxLength: 4000 },
+      requirementVersionIds: { type: 'array', items: id, maxItems: 5 },
+      reviseArtifactId: id,
+      clientKey: { type: 'string', maxLength: 64, pattern: '^[A-Za-z0-9_-]{1,64}$' }
+    }, ['title', 'summary', 'clientKey']) },
   { name: 'requirement_draft', capability: 'artifact.register', mutates: true, resultMaxBytes: 8 * KIB,
     args: schema({
       title: { type: 'string', maxLength: 200 },

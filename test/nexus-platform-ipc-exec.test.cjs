@@ -159,18 +159,19 @@ test('I-E5 B2A_IMPL equals main\'s registered recipe, validator and ingest maps 
   const sorted = (xs) => [...xs].sort();
   // B2b Task 1 (the registry flip): main checks the registry against B2B_IMPL; the B2b ids its later tasks land
   // (B2B_PENDING) are left out of the comparison. Task 7 landed the six git engine recipes and emptied
-  // B2B_PENDING.recipes (it can only shrink), so recipes now equal B2B_IMPL in full; the register validators
-  // (Task 8) and git.applies_cleanly (Task 9) are still pending, so validators still equal exactly B2A_IMPL.
+  // B2B_PENDING.recipes (it can only shrink); Task 8 lands all six change-set validators (the register validators,
+  // cs.tests_pass and git.applies_cleanly's own candidate check), emptying B2B_PENDING.validators too, so both now
+  // equal B2B_IMPL in full.
   assert.deepEqual(sorted(B2B_IMPL.recipes.filter((r) => !B2B_PENDING.recipes.includes(r))), sorted(B2B_IMPL.recipes), 'no recipe is still pending');
-  assert.deepEqual(sorted(B2B_IMPL.validators.filter((v) => !B2B_PENDING.validators.includes(v))), sorted(B2A_IMPL.validators));
+  assert.deepEqual(sorted(B2B_IMPL.validators.filter((v) => !B2B_PENDING.validators.includes(v))), sorted(B2B_IMPL.validators), 'no validator is still pending');
   assert.deepEqual(sorted(m.recipes), sorted(B2B_IMPL.recipes), 'recipes main can plan');
-  assert.deepEqual(sorted(m.validators), sorted(B2A_IMPL.validators), 'validators main runs');
+  assert.deepEqual(sorted(m.validators), sorted(B2B_IMPL.validators), 'validators main runs');
   assert.deepEqual(sorted([...m.ingest, ...m.notIngested]), sorted(B2B_IMPL.recipes), 'every recipe is ingested or named as never ingested');
   assert.deepEqual(m.ingest.filter((x) => m.notIngested.includes(x)), [], 'never both');
   // Fix round 1 (the ruled defect): a dependency install has its own evidence rule; only the dev deployment is never
-  // ingested at B2a. Task 7 adds four git-write recipes whose ingest lands in Task 8/9: a finished job of one is
-  // refused (`ingest_unavailable`) rather than completed, so unfinished work never completes in the meantime.
-  assert.deepEqual(sorted(m.notIngested), sorted(['sde.preview.start', 'changeset.collect', 'changeset.merge_check', 'changeset.accept', 'repo.ff']));
+  // ingested at B2a. Task 8 lands changeset.collect's and changeset.merge_check's ingest; changeset.accept and repo.ff
+  // still land in Task 9: a finished job of one is refused (`ingest_unavailable`) rather than completed in the meantime.
+  assert.deepEqual(sorted(m.notIngested), sorted(['sde.preview.start', 'changeset.accept', 'repo.ff']));
   assert.ok(m.ingest.includes('sde.deps.node') && m.ingest.includes('sde.deps.python'));
   assert.ok(m.validators.includes('sde.deps.lock_matches'));
   assert.deepEqual(implementationProblems(), []);
@@ -199,14 +200,14 @@ test('I-E5b the dispatched validators are derived from the dispatch tables the c
   const { DEPLOYMENT_VALIDATORS } = loadTs('src/main/nexus/deployments/deploymentService.ts');
   const { VALIDATORS } = loadTs('src/shared/nexus/validators.ts');
   assert.deepEqual([...DISPATCHED_VALIDATORS].sort(), [...Object.keys(INGEST_RECORDED_VALIDATORS), ...RUNNER_VALIDATORS, ...DEPLOYMENT_VALIDATORS].sort());
-  assert.deepEqual([...DISPATCHED_VALIDATORS].sort(), ['app.preview_health', 'blob.integrity', 'sde.tests_pass']);
+  assert.deepEqual([...DISPATCHED_VALIDATORS].sort(), ['app.preview_health', 'blob.integrity', 'cs.tests_pass', 'git.applies_cleanly', 'sde.tests_pass']);
   // Each table names exactly the validators of its executor in the registry.
   const by = (ex) => VALIDATORS.filter((v) => v.executes === ex).map((v) => v.id).sort();
   assert.deepEqual([...RUNNER_VALIDATORS].sort(), by('runner'));
   assert.deepEqual([...DEPLOYMENT_VALIDATORS].sort(), by('deployment'));
-  // B2b Task 1: the change-set child-job validators (cs.tests_pass, git.applies_cleanly) are pending until B2b Tasks 8 and 9.
+  // B2b Task 8 lands both change-set child-job validators (cs.tests_pass, git.applies_cleanly): none is pending.
   assert.deepEqual(Object.keys(INGEST_RECORDED_VALIDATORS).sort(), by('child-job').filter((id) => !B2B_PENDING.validators.includes(id)));
-  assert.deepEqual(by('child-job').filter((id) => B2B_PENDING.validators.includes(id)), ['cs.tests_pass', 'git.applies_cleanly']);
+  assert.deepEqual(by('child-job').filter((id) => B2B_PENDING.validators.includes(id)), []);
   // registryImpl holds no validator id of its own; the dispatch code reads the tables it exports.
   const impl = read('src/main/nexus/registryImpl.ts');
   for (const v of VALIDATORS) assert.ok(!impl.includes(`'${v.id}'`), `registryImpl names ${v.id}`);

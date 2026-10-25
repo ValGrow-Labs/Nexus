@@ -60,6 +60,12 @@ import * as build from './validators/buildChecks';
 import * as appManifest from './validators/appManifestSchema';
 import * as diag from './validators/diagSchema';
 import * as depsLock from './validators/depsLockMatches';
+import * as diffNonempty from './validators/diffNonempty';
+import * as pathsInScope from './validators/pathsInScope';
+import * as secretScan from './validators/secretScan';
+import * as secretEntropyNotes from './validators/secretEntropyNotes';
+import * as csTestsPass from './validators/csTestsPass';
+import * as appliesCleanly from './validators/appliesCleanly';
 
 export { VERIFY_TIMEOUT_MS, type ResolveCommit } from './checkRunner';
 
@@ -78,7 +84,12 @@ export const PURE_VALIDATORS: Readonly<Record<string, (facts: unknown) => Valida
   [build.MANIFEST_PRESENT]: (f: unknown) => build.manifestPresent(f as Parameters<typeof build.manifestPresent>[0]),
   [build.OUTPUT_HASHED]: (f: unknown) => build.outputHashed(f as Parameters<typeof build.outputHashed>[0]),
   // B2a Task 13 fix round 1: a dependency install's evidence (advisory, on the repository version), run at its ingest.
-  [depsLock.ID]: (f: unknown) => depsLock.run(f as depsLock.DepsLockFacts)
+  [depsLock.ID]: (f: unknown) => depsLock.run(f as depsLock.DepsLockFacts),
+  // B2b Task 8: the change-set register validators, run inline over the runner's collect facts (ingest.ts).
+  [diffNonempty.ID]: (f: unknown) => diffNonempty.run(f as diffNonempty.DiffNonemptyFacts),
+  [pathsInScope.ID]: (f: unknown) => pathsInScope.run(f as pathsInScope.PathsInScopeFacts),
+  [secretScan.ID]: (f: unknown) => secretScan.run(f as secretScan.SecretScanFacts),
+  [secretEntropyNotes.ID]: (f: unknown) => secretEntropyNotes.run(f as secretEntropyNotes.SecretEntropyNotesFacts)
 });
 export const MAX_EVIDENCE_CHARS = 65_536;
 export const MAX_SUMMARY_CHARS = 500;
@@ -267,12 +278,17 @@ export class ValidationService {
 
   // ---------- register validators ----------
 
-  /** The blocking register validators of a kind, run over the facts given (by validator id); every result recorded. */
+  /**
+   * Every register validator of a kind (blocking and advisory alike: B2b's `sec.entropy_notes` is the first
+   * advisory register validator, F15), run over the facts given (by validator id); every result recorded.
+   * `recordOutcomeTx` itself stamps `blocking`/`advisory` from each validator's own definition, so an advisory
+   * row is recorded but never gates (`blockingValidatorsFor` only ever reads the blocking ones).
+   */
   runRegisterTx(system: Principal, versionId: string, facts: Record<string, unknown>, bind: { jobId?: string | null; attemptN?: number | null } = {}): ValidationResult[] {
     if (!this.isSystem(system)) throw new PlatformError('denied', 'register validators are run by the system', { reason: 'system_only' });
     const v = this.versionFacts(versionId);
     if (!v) throw new PlatformError('not_found', 'version not found');
-    const defs = VALIDATORS.filter((d) => d.blocking && d.stage === 'register' && d.kinds.includes(v.kind));
+    const defs = VALIDATORS.filter((d) => d.stage === 'register' && d.kinds.includes(v.kind));
     return defs.map((d) => {
       const f = Object.prototype.hasOwnProperty.call(facts, d.id) ? facts[d.id] : undefined;
       const o = f === undefined ? errored('facts_missing', 'Checks could not run: the facts for this check were not recorded.') : this.runPure(d.id, f);
@@ -367,6 +383,11 @@ export class ValidationService {
         ORDER BY rowid DESC LIMIT 1`);
       for (const d of defs) {
         if (!d.kinds.includes(v.kind) || d.executes === 'deployment') continue;
+        // B2b Task 8: a change set's two child-job candidate checks are not the generic single-recipe shape (their
+        // jobs need a session/participation and task params no other validator's child job needs), so they are
+        // enqueued here directly rather than through the generic recipe-matching branch below.
+        if (d.id === csTestsPass.ID) { const id = this.enqueueChangeSetDiscoverTx(by, v, o.parentJobId); if (id) out.push(id); continue; }
+        if (d.id === appliesCleanly.ID) { const id = this.enqueueChangeSetMergeCheckTx(by, v, o.parentJobId); if (id) out.push(id); continue; }
         const recipe = d.executes === 'child-job' ? testRecipeFor(parse(v.metadata_json), d) : null;
         if (d.executes === 'child-job' && !recipe) continue;
         // Bounded: while a check of this (version, validator) is still waiting or running, it is the answer.
@@ -396,6 +417,92 @@ export class ValidationService {
       }
       return out;
     });
+  }
+
+  /**
+   * The agent session a change set's version was produced in, and its (project, workspace): null when it has none.
+   * `artifact_versions.produced_by_session_id` is never set by `insertSystemVersionTx` (it names the producing JOB
+   * only), so this reads the producing job's own `session_id` instead.
+   */
+  private changeSetSession(v: VersionFacts): { sessionId: string; projectId: string; workspaceId: string } | null {
+    if (!v.produced_by_job_id) return null;
+    const j = this.db.prepare('SELECT session_id, project_id, workspace_id FROM jobs WHERE id = ?').get(v.produced_by_job_id) as
+      { session_id: string | null; project_id: string; workspace_id: string } | undefined;
+    return j && j.session_id ? { sessionId: j.session_id, projectId: j.project_id, workspaceId: j.workspace_id } : null;
+  }
+
+  /**
+   * B2b Task 8: `cs.tests_pass`'s first child job, `sde.test.discover` at the change set's own head commit. A draft
+   * version cannot be a `job_inputs` row (`JobService.requireInputVersion`: candidate or active only), so, like
+   * `git.applies_cleanly`'s `changeset.merge_check`, this is a `validate`-kind job carrying no job_inputs and
+   * `params.versionId` instead; `discovery()` (ingest.ts) reads that param for a `validate`-kind job exactly as
+   * `testRun()` already does, and `planInputs()` (executionService.ts) already synthesizes the one input slot of a
+   * recipe-less-input `validate` job from the same param, so planBuilder stages the change set's own commit (its
+   * storage is `{kind:'git', commit: head}`, exactly what a repository input would carry) unmodified. Idempotent by
+   * key: a repeat (restart recovery, a second enqueue) answers the same job. Once the suite `discovery()` derives
+   * from it reaches its own `sde.tests_pass` result, ingest.ts mirrors it onto this change set's `cs.tests_pass` row.
+   */
+  private enqueueChangeSetDiscoverTx(by: Principal, v: VersionFacts, _parentJobId: string | null): string | null {
+    void _parentJobId;
+    const s = this.changeSetSession(v);
+    const recipe = getRecipe('sde.test.discover');
+    if (!s || !recipe) return null;
+    const meta = parse(v.metadata_json);
+    const profile = isObj(meta) && typeof meta.profile === 'string' && recipe.profiles.includes(meta.profile as never) ? meta.profile : recipe.profiles[0];
+    let res: { job: { id: string }; created: boolean };
+    try {
+      // No sessionId and no parentJobId: the suite's own sde.tests_pass (the generic recipe-matching branch above)
+      // is itself created session-less and parent-less, and JobService.requireParentJob requires a child's session
+      // to equal its parent's exactly; a session-bearing discover job would make that generic child impossible.
+      res = this.deps.jobs.createCheckTx(by, {
+        kind: 'validate', projectId: s.projectId, workspaceId: s.workspaceId, validatorId: csTestsPass.ID,
+        idempotencyKey: `cs.tests_pass:${v.id}:discover`, recipeId: recipe.id,
+        params: { versionId: v.id }, retry: { idempotent: true, maxAttempts: 2, backoffMs: [10_000, 60_000] }
+      });
+    } catch { return null; }
+    if (res.created) {
+      const cap = { action: 'cs.tests_pass.discover', recipe: recipe.id, recipeVersion: recipe.version, executor: recipe.executor, network: recipe.network, profile };
+      const limits = recipe.limits
+        ? { cpus: recipe.limits.cpus, memoryMb: recipe.limits.memoryMb, pids: 512, wallClockMs: recipe.wallClockMs, outputMaxBytes: recipe.limits.outputMaxBytes, tmpfsMb: 512 }
+        : { wallClockMs: recipe.wallClockMs };
+      this.db.prepare('UPDATE jobs SET capabilities_json = ?, limits_json = ? WHERE id = ?').run(JSON.stringify([cap]), JSON.stringify(limits), res.job.id);
+      appendJobEventTx(this.db, { type: 'job.transition', summary: 'job queued: change-set test discovery', projectId: s.projectId, jobId: res.job.id,
+        data: { from: null, to: 'queued', validator: csTestsPass.ID, versionId: v.id, recipe: recipe.id } }, this.deps.now());
+      this.runner.noteQueued();
+    }
+    return res.job.id;
+  }
+
+  /**
+   * B2b Task 8: `git.applies_cleanly`'s child job, the engine recipe `changeset.merge_check` (an engine recipe has no
+   * sandbox profile, so it is never matched by `testRecipeFor`'s profile lookup; it is enqueued here directly instead,
+   * exactly as `repo.worktree` and the other git engine jobs are). Params carry `branch` and `head` (planBuilder reads
+   * them for `changeset.merge_check`'s task); `versionId` is what `step()`/ingest key the result to.
+   */
+  private enqueueChangeSetMergeCheckTx(by: Principal, v: VersionFacts, parentJobId: string | null): string | null {
+    const s = this.changeSetSession(v);
+    const recipe = getRecipe('changeset.merge_check');
+    const storage = parse(v.storage_ref_json);
+    const meta = parse(v.metadata_json);
+    const head = isObj(storage) && typeof storage.commit === 'string' ? storage.commit : null;
+    const branch = isObj(meta) && typeof meta.branch === 'string' ? meta.branch : null;
+    if (!s || !recipe || !head || !branch) return null;
+    let res: { job: { id: string }; created: boolean };
+    try {
+      res = this.deps.jobs.createCheckTx(by, {
+        kind: 'validate', projectId: s.projectId, workspaceId: s.workspaceId, sessionId: s.sessionId, validatorId: appliesCleanly.ID,
+        ...(parentJobId ? { parentJobId } : {}), idempotencyKey: `git.applies_cleanly:${v.id}:merge_check`, recipeId: recipe.id,
+        params: { versionId: v.id, branch, head }, retry: { idempotent: false, maxAttempts: 1, backoffMs: [] }
+      });
+    } catch { return null; }
+    if (res.created) {
+      const cap = { action: 'validate.git.applies_cleanly', recipe: recipe.id, recipeVersion: recipe.version, executor: recipe.executor, network: recipe.network };
+      this.db.prepare('UPDATE jobs SET capabilities_json = ?, limits_json = ? WHERE id = ?')
+        .run(JSON.stringify([cap]), JSON.stringify({ wallClockMs: recipe.wallClockMs }), res.job.id);
+      appendJobEventTx(this.db, { type: 'job.transition', summary: 'job queued: check git.applies_cleanly', projectId: s.projectId, jobId: res.job.id,
+        data: { from: null, to: 'queued', validator: appliesCleanly.ID, versionId: v.id, recipe: recipe.id } }, this.deps.now());
+    }
+    return res.job.id;
   }
 
   /**

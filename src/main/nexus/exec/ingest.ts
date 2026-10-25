@@ -73,6 +73,13 @@ import { MAX_DISCOVERED_FILES } from './planBuilder';
 import { acceptManifestReport, APP_MANIFEST_MAX_BYTES, readAppManifest } from '../repo/repoService';
 import { buildDiagnosticReport, type ProbeTable } from './diagnosticReport';
 import { appendActivityRow } from '../activity/writer';
+import { jobRefFor } from '../../../shared/nexus/changeSet';
+import * as diffNonempty from '../validation/validators/diffNonempty';
+import * as pathsInScope from '../validation/validators/pathsInScope';
+import * as secretScan from '../validation/validators/secretScan';
+import * as secretEntropyNotes from '../validation/validators/secretEntropyNotes';
+import * as appliesCleanly from '../validation/validators/appliesCleanly';
+import * as csTestsPass from '../validation/validators/csTestsPass';
 
 export type { AttemptExited };
 
@@ -108,12 +115,14 @@ export const MAX_TREE_FILES = 5000;
 
 /** The ingest rule of each recipe: the one dispatch table of `ingestTx` (B2a Task 13 pins it to the registry's B2A_IMPL). */
 export const INGEST_RULES: Readonly<Record<string, 'snapshot' | 'discovery' | 'testRun' | 'build' | 'assemble' | 'diagnose' | 'deps' | 'worktree'
-  | 'gitFacts'>> = Object.freeze({
+  | 'gitFacts' | 'changeSet' | 'mergeCheck'>> = Object.freeze({
   'repo.snapshot': 'snapshot', 'sde.test.discover': 'discovery', 'sde.test.node': 'testRun', 'sde.test.pytest': 'testRun',
   'sde.build.node': 'build', 'sde.build.python': 'build', 'sde.app.assemble': 'assemble', 'sde.diagnose': 'diagnose',
   'sde.deps.node': 'deps', 'sde.deps.python': 'deps',
   // B2b Task 7: the session worktree row, and an accept's rollback.
-  'repo.worktree': 'worktree', 'changeset.accept_rollback': 'gitFacts'
+  'repo.worktree': 'worktree', 'changeset.accept_rollback': 'gitFacts',
+  // B2b Task 8: a draft change_set with its lineage and register validators, and the git.applies_cleanly candidate check.
+  'changeset.collect': 'changeSet', 'changeset.merge_check': 'mergeCheck'
 });
 /**
  * The implemented recipes whose outputs are never ingested, each with why: a dev deployment is a service (its evidence is
@@ -121,19 +130,21 @@ export const INGEST_RULES: Readonly<Record<string, 'snapshot' | 'discovery' | 't
  */
 export const NOT_INGESTED: Readonly<Record<string, string>> = Object.freeze({
   'sde.preview.start': 'a service: its evidence is app.preview_health',
-  // B2b Task 7 plans and runs these git writes; what their facts become is recorded by the services that queue them. Until
-  // that ingest lands, a finished job of these recipes is refused (`ingest_unavailable`): unfinished work never completes.
-  'changeset.collect': 'its change_set version, lineage and register validators are recorded by the change-set service (B2b Task 8)',
-  'changeset.merge_check': 'its result is the git.applies_cleanly validation, recorded by the change-set checks (B2b Task 8)',
+  // B2b Task 9 plans and runs these; what their facts become is recorded by the accept service. Until that ingest
+  // lands, a finished job of these recipes is refused (`ingest_unavailable`): unfinished work never completes.
   'changeset.accept': 'its promotion and accept row are recorded by the accept service in one transaction with a rollback (B2b Task 9)',
   'repo.ff': 'its repo_merges row is recorded by the accept service after the dialog-confirmed merge (B2b Task 9)'
 });
 /**
  * The validators an ingest rule records that are not run through `runPure` (the registry check derives main's dispatched
- * validators from this table): a test run records `sde.tests_pass` for the suite it ran (the `testRun` rule).
+ * validators from this table): a test run records `sde.tests_pass` for the suite it ran (the `testRun` rule), and, when
+ * that suite was discovered from a change set, mirrors `cs.tests_pass` onto it too (B2b Task 8); `changeset.merge_check`
+ * records `git.applies_cleanly` (the `mergeCheck` rule).
  */
 const TEST_RUN_RECORDS: string = tests.ID;
-export const INGEST_RECORDED_VALIDATORS: Readonly<Record<string, 'testRun'>> = Object.freeze({ [TEST_RUN_RECORDS]: 'testRun' });
+export const INGEST_RECORDED_VALIDATORS: Readonly<Record<string, 'testRun' | 'mergeCheck'>> = Object.freeze({
+  [TEST_RUN_RECORDS]: 'testRun', [csTestsPass.ID]: 'testRun', [appliesCleanly.ID]: 'mergeCheck'
+});
 /** The most failed or errored cases a test result lists, and the most characters they take in its evidence. */
 export const MAX_LISTED_CASES = 400;
 export const CASE_EVIDENCE_BUDGET = 32_768;
@@ -210,6 +221,8 @@ export class IngestService implements IngestPort {
       case 'deps': return this.depsInstall(ctx);
       case 'worktree': return this.worktree(ctx);
       case 'gitFacts': return this.rollbackFacts(ctx);
+      case 'changeSet': return this.changeSet(ctx);
+      case 'mergeCheck': return this.mergeCheckIngest(ctx);
       default: return refuse('ingest_unavailable', 'no_ingest_rule', `outputs of ${ctx.recipe.id} are not ingested in this build`);
     }
   }
@@ -348,6 +361,108 @@ export class IngestService implements IngestPort {
     return ok;
   }
 
+  /**
+   * `changeset.collect` (B2b Task 8): a draft `change_set` version, its lineage and its register validators, in this
+   * one transaction. Storage is `{kind:'git', commit: head, ref}` (the typed StorageRef has no `base` field; `base`
+   * and `branch` are kept in metadata, alongside the title, summary and the scope collected under), content hash
+   * `'git:'+tree`. Lineage (all `source:'ingest'`: this job carries no job_inputs): `derived_from` the project's
+   * active repository version, `implements` each requirement version, and (revising) `derived_from` the prior
+   * version of the same change-set artifact.
+   */
+  private changeSet(ctx: IngestContext): IngestDecision {
+    const { job, attempt, system } = ctx;
+    // Not the shared `gitFacts()` helper (worktree/rollback): a refused collect (`{ok:false, code}`, e.g. a 60 MiB
+    // file or a planted link) fails the job with that exact code, never a generic parser_contract (CS11, CS12).
+    const raw = ctx.exited.parsed.find((p) => p.parser === 'git-facts')?.normalized;
+    if (isObj(raw) && raw.ok === false && typeof raw.code === 'string') {
+      return refuse('git_refused', raw.code, `the worktree guard refused the collect: ${raw.code}`);
+    }
+    const f = isObj(raw) && raw.ok === true ? raw : null;
+    const params = parse(job.params_json);
+    const sessionId = isObj(params) && typeof params.sessionId === 'string' ? params.sessionId : null;
+    const branch = isObj(params) && typeof params.branch === 'string' ? params.branch : null;
+    const head = isObj(f) && typeof f.head === 'string' ? f.head : null;
+    const base = isObj(f) && typeof f.base === 'string' ? f.base : null;
+    const tree = isObj(f) && typeof f.tree === 'string' ? f.tree : null;
+    const ref = isObj(f) && typeof f.ref === 'string' ? f.ref : null;
+    const changed = isObj(f) && f.changed === true;
+    const diffstat = isObj(f) && isObj(f.diffstat)
+      ? { files: Number(f.diffstat.files) || 0, insertions: Number(f.diffstat.insertions) || 0, deletions: Number(f.diffstat.deletions) || 0 }
+      : null;
+    const paths = isObj(f) && Array.isArray(f.paths) ? f.paths.filter((x): x is string => typeof x === 'string') : null;
+    const pathsTruncated = isObj(f) && f.pathsTruncated === true;
+    const secretHits = isObj(f) && Array.isArray(f.secretHits) ? (f.secretHits as unknown[]) : [];
+    const entropyHits = isObj(f) && Array.isArray(f.entropyHits) ? (f.entropyHits as unknown[]) : [];
+    if (!sessionId || !branch || !head || !COMMIT_RE.test(head) || !base || !COMMIT_RE.test(base) || !tree || !ref || !diffstat || !paths) {
+      return refuse('invalid_output', 'parser_contract', 'the collect facts were not usable');
+    }
+    if (ref !== jobRefFor(sessionId)) return refuse('invalid_output', 'parser_contract', 'the collect facts do not match the session');
+    if (job.participation_id === null) return refuse('invalid_output', 'bad_input', 'the collect job has no participation');
+    const scope = isObj(params) && Array.isArray(params.scope) ? params.scope.filter((x): x is string => typeof x === 'string') : [];
+    const title = isObj(params) && typeof params.title === 'string' ? params.title : 'Agent change';
+    const summary = isObj(params) && typeof params.summary === 'string' ? params.summary : '';
+    const requirementIds = isObj(params) && Array.isArray(params.requirementVersionIds)
+      ? params.requirementVersionIds.filter((x): x is string => typeof x === 'string') : [];
+    const reviseArtifactId = isObj(params) && typeof params.reviseArtifactId === 'string' ? params.reviseArtifactId : null;
+    const diffFacts: diffNonempty.DiffNonemptyFacts = { base, head, changed, diffstat };
+    const alreadyV = this.already(job.id, 'head');
+    if (alreadyV) return this.dedupe(ctx, alreadyV, diffNonempty.ID, this.deps.validation.runPure(diffNonempty.ID, diffFacts));
+    const repo = this.db.prepare("SELECT v.id FROM artifacts a JOIN artifact_versions v ON v.id = a.current_version_id "
+      + "WHERE a.project_id = ? AND a.kind = 'repository' AND a.status = 'active'").get(job.project_id) as { id: string } | undefined;
+    // Not `this.latestLive` (draft/candidate/active only): a revised change set's prior version is normally `failed`
+    // (F23, CS9) — that IS the lineage edge this records. insertSystemVersionTx still refuses a draft one as an input.
+    const previous = reviseArtifactId
+      ? (this.db.prepare('SELECT * FROM artifact_versions WHERE artifact_id = ? ORDER BY version_no DESC LIMIT 1').get(reviseArtifactId) as VersionRow | undefined) ?? null
+      : null;
+    const secretHitsTyped = secretHits.filter((x): x is secretScan.SecretHit => !!x && typeof x === 'object'
+      && typeof (x as secretScan.SecretHit).path === 'string' && Number.isSafeInteger((x as secretScan.SecretHit).line)
+      && ((x as secretScan.SecretHit).rule === 'provider_key' || (x as secretScan.SecretHit).rule === 'private_key'));
+    const entropyHitsTyped = entropyHits.filter((x): x is secretEntropyNotes.EntropyHit => !!x && typeof x === 'object'
+      && typeof (x as secretEntropyNotes.EntropyHit).path === 'string' && Number.isSafeInteger((x as secretEntropyNotes.EntropyHit).line)
+      && (x as secretEntropyNotes.EntropyHit).rule === 'high_entropy');
+    const v = this.deps.artifacts.insertSystemVersionTx(system, {
+      ...(reviseArtifactId ? { artifactId: reviseArtifactId } : { newArtifact: { kind: 'change_set', name: title, participation: job.participation_id } }),
+      storage: { kind: 'git', commit: head, ref },
+      contentHash: `git:${tree}`,
+      metadata: { base, branch, scope, title, summary, diffstat, requirementVersionIds: requirementIds },
+      environment: this.environment(ctx), jobId: job.id, attemptN: attempt.n, outputPath: 'head', action: 'exec.changeset_collect',
+      onBehalfOf: job.on_behalf_of, now: this.deps.now(),
+      inputs: [
+        ...(repo ? [{ versionId: repo.id, role: 'repository', relation: 'derived_from' as const, source: 'ingest' as const }] : []),
+        ...requirementIds.map((id) => ({ versionId: id, role: 'requirement', relation: 'implements' as const, source: 'ingest' as const })),
+        ...(previous ? [{ versionId: previous.id, role: 'previous', relation: 'derived_from' as const, source: 'ingest' as const }] : [])
+      ]
+    });
+    this.bindAttempt(v.id, job.id, attempt.n);
+    this.deps.faults?.afterRows?.(ctx.recipe.id);
+    const pathsFacts: pathsInScope.PathsInScopeFacts = { head, paths, pathsTruncated, scope };
+    const secretFacts: secretScan.SecretScanFacts = { head, secretHits: secretHitsTyped };
+    const entropyFacts: secretEntropyNotes.SecretEntropyNotesFacts = { head, entropyHits: entropyHitsTyped };
+    this.deps.validation.runRegisterTx(system, v.id, {
+      [diffNonempty.ID]: diffFacts, [pathsInScope.ID]: pathsFacts, [secretScan.ID]: secretFacts, [secretEntropyNotes.ID]: entropyFacts
+    }, { jobId: job.id, attemptN: attempt.n });
+    if (this.deps.validation.finalizeIfReady(system, v.id) === 'draft' && this.registerPassed(v.id)) {
+      this.deps.validation.enqueueCandidate(system, v.id, { parentJobId: job.id });
+    }
+    return ok;
+  }
+
+  /** `changeset.merge_check`: records `git.applies_cleanly` on the change set it was enqueued for. */
+  private mergeCheckIngest(ctx: IngestContext): IngestDecision {
+    const { job, system } = ctx;
+    const f = this.gitFacts(ctx);
+    const params = parse(job.params_json);
+    const versionId = isObj(params) && typeof params.versionId === 'string' ? params.versionId : null;
+    const head = isObj(params) && typeof params.head === 'string' ? params.head : null;
+    if (!f || !versionId || !head || typeof f.clean !== 'boolean' || typeof f.integrationHead !== 'string' || !COMMIT_RE.test(f.integrationHead)) {
+      return refuse('invalid_output', 'parser_contract', 'the merge-check facts were not usable');
+    }
+    const outcome = appliesCleanly.run({ head, integrationHead: f.integrationHead, clean: f.clean } satisfies appliesCleanly.AppliesCleanlyFacts);
+    this.deps.validation.recordOutcomeTx(versionId, appliesCleanly.ID, outcome, { jobId: job.id, attemptN: ctx.attempt.n });
+    this.deps.validation.finalizeIfReady(system, versionId);
+    return ok;
+  }
+
   // ---------- repository snapshot (engine) ----------
 
   private snapshot(ctx: IngestContext): IngestDecision {
@@ -395,8 +510,16 @@ export class IngestService implements IngestPort {
     const staged = ctx.exited.outputs.find((o) => o.relPath === 'ids.txt');
     if (!staged) return refuse('invalid_output', 'outputs_missing', 'the discovered list (ids.txt) is missing');
     const parsed = ctx.exited.parsed.find((p) => p.parser === 'discovery');
-    const repo = this.inputs(job.id, 'repository')[0];
+    // B2b Task 8: `cs.tests_pass`'s own discover child job is `validate`-kind (its subject, a draft change set, can
+    // never be a granted job_input); it names its subject the same way a test run on a draft suite already does.
+    const changeSetParams = job.kind === 'validate' ? parse(job.params_json) : null;
+    const changeSetVersionId = isObj(changeSetParams) && typeof changeSetParams.versionId === 'string' ? changeSetParams.versionId : null;
+    const repo = changeSetVersionId
+      ? (this.db.prepare('SELECT id AS version_id, storage_ref_json, metadata_json FROM artifact_versions WHERE id = ? AND project_id = ?')
+          .get(changeSetVersionId, job.project_id) as { version_id: string; storage_ref_json: string; metadata_json: string } | undefined)
+      : this.inputs(job.id, 'repository')[0];
     if (!repo || job.participation_id === null) return refuse('invalid_output', 'bad_input', 'discovery has no repository input');
+    const fromChangeSet = changeSetVersionId !== null;
     const repoStorage = parse(repo.storage_ref_json) as Record<string, unknown> | null;
     const commit = isObj(repoStorage) && typeof repoStorage.commit === 'string' && COMMIT_RE.test(repoStorage.commit) ? repoStorage.commit : null;
     if (!commit) return refuse('invalid_output', 'bad_input', 'the repository input stores no commit');
@@ -418,8 +541,13 @@ export class IngestService implements IngestPort {
     const framework = d.ok ? d.value.framework : null;
     const base = { profile: profile ?? 'sde-node', framework, files, commit, count: Math.max(ids.length, files.length) };
     const disc = { sha256: parsed?.sourceSha256 ?? null, framework, filesCount: files.length, idsCount: ids.length, truncated: false };
-    let metadata: Record<string, unknown> = { ...base, discovery: { ...disc, ...(idsDiffer ? { ids } : {}) } };
-    if (idsDiffer && jsonBytes(metadata) > INLINE_MAX_BYTES) metadata = { ...base, discovery: { ...disc, idsStored: false } };
+    // A change set is still a draft (it cannot be a lineage input, tr_versions_insert's rule in insertSystemVersionTx)
+    // while its own cs.tests_pass is unresolved, so the link to it travels in metadata, not as an edge.
+    let metadata: Record<string, unknown> = { ...base, discovery: { ...disc, ...(idsDiffer ? { ids } : {}) },
+      ...(fromChangeSet ? { changeSetVersionId } : {}) };
+    if (idsDiffer && jsonBytes(metadata) > INLINE_MAX_BYTES) {
+      metadata = { ...base, discovery: { ...disc, idsStored: false }, ...(fromChangeSet ? { changeSetVersionId } : {}) };
+    }
     if (jsonBytes(metadata) > INLINE_MAX_BYTES) {
       return refuse('invalid_output', 'discovery_too_large', `the discovered list is larger than a test suite records (${INLINE_MAX_BYTES} bytes)`);
     }
@@ -434,7 +562,9 @@ export class IngestService implements IngestPort {
       storage: { kind: 'git', commit }, contentHash, metadata,
       environment: this.environment(ctx), jobId: job.id, attemptN: attempt.n, outputPath: 'ids.txt', action: 'exec.discover',
       onBehalfOf: job.on_behalf_of, now: this.deps.now(),
-      inputs: [{ versionId: repo.version_id, role: 'repository', relation: 'derived_from', source: 'job_input' },
+      // A change set is a draft and so can never be a lineage input (see the metadata note above): no edge to it.
+      inputs: [
+        ...(fromChangeSet ? [] : [{ versionId: repo.version_id, role: 'repository', relation: 'derived_from' as const, source: 'job_input' as const }]),
         ...(previous ? [{ versionId: previous.id, role: 'previous', relation: 'derived_from' as const, source: 'ingest' as const }] : [])]
     });
     this.bindAttempt(v.id, job.id, attempt.n);
@@ -493,6 +623,15 @@ export class IngestService implements IngestPort {
     this.deps.validation.recordOutcomeTx(suite.id, TEST_RUN_RECORDS, recorded, { jobId: job.id, attemptN: attempt.n });
     const params = parse(job.params_json);
     this.deps.validation.finalizeIfReady(system, suite.id, { allowPartial: isObj(params) && params.revalidate === true });
+    // B2b Task 8: a suite discovered from a change set (cs.tests_pass's own `sde.test.discover` child job names it in
+    // metadata.changeSetVersionId, never as a lineage edge: the change set is still a draft) mirrors this result onto
+    // the change set's own `cs.tests_pass` row.
+    const changeSetId = isObj(meta) && typeof meta.changeSetVersionId === 'string' ? meta.changeSetVersionId : null;
+    if (changeSetId) {
+      const mirrored = csTestsPass.mirrorEvidence(recorded, { contentHash: suite.content_hash });
+      this.deps.validation.recordOutcomeTx(changeSetId, csTestsPass.ID, mirrored, { jobId: job.id, attemptN: attempt.n });
+      this.deps.validation.finalizeIfReady(system, changeSetId);
+    }
     return ok;
   }
 
