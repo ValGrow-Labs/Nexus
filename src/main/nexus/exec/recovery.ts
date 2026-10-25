@@ -32,6 +32,10 @@
  *   B2b Task 9 (accept reconcile, its own block after the jobs): a `changeset.accept` job that ended (interrupted, failed, timed out,
  *   cancelled) without an accept row, whose `accept.prepared` event exists and that did not end on a git refusal, gets one
  *   `changeset.accept_rollback { from: new, to: old }` (idempotent by key). An accept is never retried and never merged later.
+ *   B2b Task 10 (agent turns, its own block beside the accept reconcile): an `agent.run` job with a live attempt is decided there,
+ *   never by the generic rules above: the attempt is `abandoned`, the job `interrupted` and its session `interrupted`, its token
+ *   revoked (`restart`); the worktree is kept as it is. The turn's container is no longer a live attempt's, so phase B's orphan
+ *   removal takes it. A turn still `queued` is untouched and runs after the restart.
  *   Then pending approvals past `expires_at` that no waiting job holds (image preparation) expire, and image builds left
  *   `running` are `interrupted` (RC17: a leftover row would block `requestImage` until its deadline).
  *   Hold mode: on a v9 database whose execution is off (v9 not enabled, held, or its shape failed), only jobs WITHOUT a
@@ -290,6 +294,11 @@ export interface RecoveryHost {
   logPathOf(a: AttemptRow): string;
   /** An attempt adopted for finalization: it already exited, so its wall clock no longer runs (its lease still does). */
   awaitExit(attemptId: string): void;
+  /**
+   * B2b Task 10, inside a decision's transaction: the agent turn's token is revoked (`restart` or `runner_restart`) and its
+   * session, if it was running, is interrupted (a session of a turn that never ran stays open). Null without agents.
+   */
+  readonly interruptAgentTurnTx: ((system: Principal, jobId: string, now: number, reason: 'restart' | 'runner_restart') => void) | null;
 }
 
 /** Why a decision was taken, in words (the attempt's and the job's error message). */
@@ -309,7 +318,9 @@ const REASON_TEXT: Record<string, string> = {
   exit_durable: 'the exit was recorded before the restart; its outputs are collected again',
   docker_unavailable_at_recovery: 'Docker was not running when the app restarted',
   unreconciled: 'the runner did not reconcile the attempt within 10 minutes of the restart',
-  restarted: 'the app restarted while the image was being built'
+  restarted: 'the app restarted while the image was being built',
+  agent_restart: 'the app restarted while the agent worked; its working copy is kept',
+  agent_runner_lost: 'the sandbox runner restarted while the agent worked; its working copy is kept'
 };
 /**
  * The sentence of each git write refusal (B2b Task 7; src/runner/gitWrite.ts GIT_FAILURE_CODES). The job's error is the
@@ -627,6 +638,8 @@ function mainCheckTx(host: RecoveryHost, system: Principal, j: JobRow, a: Attemp
 function phaseAJobTx(host: RecoveryHost, system: Principal, bootId: string, jobId: string, now: number): Outcome | null {
   const j = jobRow(host.db, jobId);
   if (!j || !LIVE_JOB_STATES.includes(j.state)) return null;
+  // An agent turn is decided by its own block (agentTurnRecoveryTx, beside the accept reconcile), never by these rules.
+  if (j.kind === 'agent.run') return null;
   const a = liveAttemptOf(host.db, j.id);
   if (!a) {
     const r = host.jobs.recoverJobTx(system, j.id, now);
@@ -712,6 +725,9 @@ export function recoverPhaseA(host: RecoveryHost, system: Principal, bootId: str
   // B2b Task 9, accept reconcile (a clearly separate block): an accept job that ended without an accept row, whose
   // `accept.prepared` was reported, is answered with `changeset.accept_rollback { from: new, to: old }`, never retried.
   for (const id of endedAcceptJobIds(db)) decide(host, c, 'an accept', () => acceptReconcileTx(host, system, id, now));
+  // B2b Task 10, agent turns (a clearly separate block, beside the accept reconcile, not interleaved with it): a live agent
+  // attempt is abandoned, its job and session are interrupted and its token revoked (`restart`); the worktree is kept.
+  for (const id of liveAgentTurnIds(db)) decide(host, c, 'an agent turn', () => agentTurnRecoveryTx(host, system, id, now));
   // A `docker build` client dies with the runner: a build left running can never report.
   const builds = db.prepare("SELECT id FROM image_builds WHERE status = 'running' ORDER BY started_at, id").all() as { id: string }[];
   for (const { id } of builds) decide(host, c, 'an image build', () => interruptBuildTx(host, system, id, now));
@@ -727,6 +743,46 @@ function acceptReconcileTx(host: RecoveryHost, system: Principal, jobId: string,
   recordTx(host, system, { decision: 'accept_rollback', reason: 'accept_unfinished', job: jobRow(host.db, n.job.id), attemptN: null,
     summary: 'an accept that did not finish is rolled back; it is never retried or merged later', data: { rollbackJob } }, now);
   return { decision: 'accept_rollback', count: null };
+}
+
+/** The agent turn jobs that are leased, running or waiting for approval: the ones a restart cuts off. */
+function liveAgentTurnIds(db: Database.Database): string[] {
+  return (db.prepare("SELECT id FROM jobs WHERE kind = 'agent.run' AND state IN ('leased','running','awaiting_approval') ORDER BY created_at, rowid").all() as
+    { id: string }[]).map((r) => r.id);
+}
+
+/**
+ * B2b Task 10: one agent turn cut off by a restart. Its attempt is abandoned (its runner, its container and its runtime
+ * process died with the app), the job and its session are interrupted and its token is revoked (`restart`). The worktree is
+ * kept exactly as it is: a new message opens a new session on it. The turn's container is no longer a live attempt's, so
+ * phase B removes it as an orphan of an ended attempt. Never completed, never retried.
+ */
+function agentTurnRecoveryTx(host: RecoveryHost, system: Principal, jobId: string, now: number): Outcome | null {
+  const j = jobRow(host.db, jobId);
+  if (!j || j.kind !== 'agent.run' || !LIVE_JOB_STATES.includes(j.state)) return null;
+  const a = liveAttemptOf(host.db, j.id);
+  if (!a) {
+    // No attempt (a turn is leased together with its attempt, so this is a damaged row): B1's rule for a job without one.
+    const r = host.jobs.recoverJobTx(system, j.id, now);
+    if (!r) return null;
+    const decision = r === 'requeued' ? 'requeue' : 'interrupt';
+    if (host.interruptAgentTurnTx && r === 'interrupted') host.interruptAgentTurnTx(system, j.id, now, 'restart');
+    recordTx(host, system, { decision, reason: 'no_live_attempt', job: j, summary: r === 'requeued' ? 'job queued again after a restart' : 'job interrupted by a restart' }, now);
+    return { decision, count: r };
+  }
+  return agentTurnCutOffTx(host, system, j, a, 'agent_restart', 'restart', now);
+}
+
+/** The attempt is abandoned, the job interrupted, the token revoked and a running session interrupted (shared with phase B's runner restart). */
+function agentTurnCutOffTx(host: RecoveryHost, system: Principal, j: JobRow, a: AttemptRow, reason: 'agent_restart' | 'agent_runner_lost',
+  revoke: 'restart' | 'runner_restart', now: number): Outcome {
+  abandonTx(host, j, a, reason, now);
+  // The token first, with the reason of this decision (the job's end would revoke it as `job_ended`).
+  if (host.interruptAgentTurnTx) host.interruptAgentTurnTx(system, j.id, now, revoke);
+  host.moveJobTx(j.id, 'interrupted', now, { outcome: 'interrupted', error: reasonError(reason) });
+  host.setPhaseTx(j.id, null, now);
+  recordTx(host, system, { decision: 'interrupt', reason, job: j, attemptN: a.n, summary: `job interrupted: ${REASON_TEXT[reason]}` }, now);
+  return { decision: 'interrupt', count: 'interrupted' };
 }
 
 function report(c: Counters, held: boolean): PhaseAReport {
@@ -779,6 +835,12 @@ function phaseBContainerTx(host: RecoveryHost, system: Principal, bootId: string
   // This process is ingesting its exit right now (a runner restart mid-ingest): the ingest decides, not recovery.
   if (host.isCollecting(a.id)) return null;
   const j = jobRow(db, a.job_id)!;
+  // B2b Task 10: an agent turn cannot be adopted (its runtime process lived in the runner that restarted): it is cut off like
+  // an app restart does, and its container, now an orphan of an ended attempt, is removed with the other leftovers.
+  if (j.kind === 'agent.run') {
+    const o = agentTurnCutOffTx(host, system, j, a, 'agent_runner_lost', 'runner_restart', now);
+    return { ...o, after: () => { host.send({ op: 'attempt.release', attemptId: a.id }); } };
+  }
   const recipe = j.recipe_id ? getRecipe(j.recipe_id) : null;
   const service = recipe?.executor === 'service';
   const short = a.container_id.slice(0, 12);

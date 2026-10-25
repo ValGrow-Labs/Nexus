@@ -149,6 +149,7 @@ function agentPlan(w, o = {}) {
     },
     egress: o.egress ?? { allow: [] },
     caps: { turnTokens: 100_000, turnUsdCents: 1000, dayRemainingUsdCents: 1000, toolCalls: 100 },
+    ...(o.mcpTools !== undefined ? { mcpTools: o.mcpTools } : {}),
     resourceLabels: { 'nexus.job': jobId, 'nexus.attempt': attemptId, 'nexus.boot': BOOT, 'nexus.project': 'p-ledger', 'nexus.home': w.label }
   };
 }
@@ -644,6 +645,33 @@ test('AT-env a cli-agent turn runs with the allow-list environment, the own prox
   } finally {
     for (const [k, v] of [['ANTHROPIC_API_KEY', keep.k], ['GITHUB_TOKEN', keep.t], ['NODE_EXTRA_CA_CERTS', keep.c], ['HTTP_PROXY', keep.h]]) { if (v === undefined) delete process.env[k]; else process.env[k] = v; }
   }
+});
+
+// ---------- B2b Task 10: the token's tools are the runtime's allow-list ----------
+
+test('MCPTOOLS the mcpTools of a plan are exactly the cli-agent allow-list; an unknown or repeated tool is refused bad_plan', async () => {
+  const argvOf = async (mcpTools) => {
+    const w = await world({ agentRuntime: { agentBin: process.execPath, agentEnv: { ELECTRON_RUN_AS_NODE: '1' }, agentArgvPrefix: [FAKE_CLI, '--fake-dump-argv'] } });
+    const plan = agentPlan(w, { kind: 'cli-agent', ...(mcpTools === undefined ? {} : { mcpTools }) });
+    await startAgent(w, plan);
+    await w.waitOp('attempt.exited', plan.attemptId, 'exited');
+    const delta = w.of('attempt.runtime', plan.attemptId).map((m) => m.event).find((e) => e.t === 'message.delta');
+    const argv = JSON.parse(delta.text);
+    const i = argv.indexOf('--allowedTools');
+    assert.ok(i >= 0);
+    const names = [];
+    for (let k = i + 1; k < argv.length && !argv[k].startsWith('--'); k++) names.push(argv[k]);
+    return names.filter((n) => n.startsWith('mcp__'));
+  };
+  assert.deepEqual(await argvOf(['context_get', 'artifact_read']), ['mcp__nexus__context_get', 'mcp__nexus__artifact_read'], 'exactly the tools of the token');
+  assert.deepEqual(await argvOf([]), [], 'a token without tools allows none');
+  assert.ok((await argvOf(undefined)).length >= 11, 'without the list the default is every tool the runner serves (main still checks the claims)');
+  const w = await world();
+  for (const mcpTools of [['context_get', 'context_get'], ['not_a_tool'], 'context_get', [7]]) {
+    const plan = agentPlan(w, { mcpTools });
+    assert.equal((await startRefused(w, plan)).reason, 'bad_plan', JSON.stringify(mcpTools));
+  }
+  assert.ok(!w.driver.ops().includes('create'), 'nothing was created for a refused plan');
 });
 
 // ---------- the posture pin this task adds (sanity: taskkill is resolved, never a bare command) ----------

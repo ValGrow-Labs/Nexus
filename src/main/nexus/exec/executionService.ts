@@ -96,8 +96,9 @@
  *   image's `nexus.versions` label.
  */
 import type Database from 'better-sqlite3';
-import type { ImageStatus, SandboxProfile, SandboxProfileId, StagedOutput, ParsedOutput, ExitInfo, ResourceLimits } from '../../../shared/nexus/execution';
+import type { AgentPlan, ImageStatus, SandboxProfile, SandboxProfileId, StagedOutput, ParsedOutput, ExitInfo, ResourceLimits } from '../../../shared/nexus/execution';
 import { DIAGNOSE_MAX_RANGES, SANDBOX_PROFILE_IDS } from '../../../shared/nexus/execution';
+import type { RuntimeEvent } from '../../../shared/nexus/runtime';
 import type { Job, JobKind, JobState, Principal, ScopeRef } from '../../../shared/nexus/platform';
 import { getUserAction, USER_ACTIONS, type UserActionDef } from '../../../shared/nexus/actions';
 import type { ParamsSchema } from '../../../shared/nexus/domainSpec';
@@ -110,7 +111,7 @@ import {
 import { evaluateGate, leaseFloorBytes, type GateResult } from '../../../shared/nexus/resourceGate';
 import type { AuthService } from '../auth/authService';
 import { PrincipalResolver } from '../auth/principals';
-import { containsSecret, redactText } from '../activity/redact';
+import { containsSecret, redactText, scrubHostPaths } from '../activity/redact';
 import { appendActivityRow } from '../activity/writer';
 import type { BlobIndex, IngestToken } from '../blobs/blobIndex';
 import { getValidator } from '../../../shared/nexus/validators';
@@ -126,15 +127,17 @@ import {
 } from './attempts';
 import { appendJobEventTx, toJobEvent, type JobEvent, type JobEventRow } from './events';
 import {
-  boundedRecord, buildPlan, depsVolumeName, imageRef, lockfileSha256Of, RECORD_MAX_CHARS, sandboxRecord, underDataHome, type DiagnoseContext,
-  type PlanApproval, type PlanInput, type ServiceContext
+  AGENT_TURN_MEMORY_MB, boundedRecord, buildPlan, depsVolumeName, imageRef, lockfileSha256Of, RECORD_MAX_CHARS, sandboxRecord, underDataHome,
+  type DiagnoseContext, type PlanApproval, type PlanInput, type ServiceContext
 } from './planBuilder';
 import { stat } from 'node:fs/promises';
 import { resolveGitBinary } from '../../gitBinary';
 import { EGRESS_PROXY_PROFILE } from '../../../shared/nexus/egressPolicy';
 import { homeLabel } from '../../../shared/nexus/homeLabel';
 import type { RunnerPort } from './runnerPort';
-import { backoffMs, DEFAULT_CAPS, leaseGuard, SOLO_MEMORY_SHARE, usableImage, type LiveUse, type ProbeCache, type SchedulerCaps } from './scheduler';
+import {
+  backoffMs, DEFAULT_CAPS, leaseGuard, SOLO_MEMORY_SHARE, usableImage, type AgentWaitReason, type LiveUse, type ProbeCache, type SchedulerCaps
+} from './scheduler';
 import {
   contractMet, exitFailure, failUnreconciled, reconcileBoundDue, recoverBlobStore, recoverPhaseA, recoverPhaseB, reconcileList, runnerOutageHoldEnded,
   type BlobStoreFiles, type BlobSweepReport, type PhaseAReport, type PhaseBReport, type ReconcileResult, type RecoveryHost
@@ -268,6 +271,56 @@ export interface IngestPort {
 export interface McpGatewayPort {
   call(m: Extract<RunnerToMain, { op: 'mcp.call' }>): Promise<McpReplyResult>;
   onExecDone(m: Extract<RunnerToMain, { op: 'agent.exec.done' }>): boolean;
+}
+
+/**
+ * B2b (Task 10): the agent service's hooks into the execution core. A turn (`agent.run`) is no recipe: the core leases it
+ * itself (the scheduler's guards, one lease transaction that mints the token and builds the plan), and the policy side
+ * (consent, budget, runtime health, the worktree, context and skills, usage caps, what counts as a registered version) lives
+ * in AgentService and is asked through this port. Every `...Tx` runs inside the core's own transaction.
+ */
+export interface AgentPrepared {
+  /** The session's worktree, its context file's hash and the skills written, all prepared before the lease. */
+  worktree: { relPath: string; gitDir: string; ref: string; base: string };
+  contextSha256: string;
+  skills: { id: string; version: string; sha256: string }[];
+}
+export type AgentPrepare = { ready: AgentPrepared } | { wait: 'waiting:approval' | 'waiting:worktree' } | { failed: { code: string; message: string } };
+export interface AgentLeaseCtx {
+  bootId: string; dataHomeRoot: string; workRel: string; logRel: string; profile: SandboxProfile | null; imageId: `sha256:${string}` | null;
+  mcpUrl: string; dockerVersion: string | null; nexusVersion: string | null;
+}
+export type AgentLease = { plan: AgentPlan; sandbox: Record<string, unknown>; environment: Record<string, unknown> } | { failed: { code: string; message: string } };
+/** What a turn's end settles to, decided from its last runtime event, its exit and the evidence it left. */
+export interface AgentSettlement {
+  attempt: 'succeeded' | 'failed' | 'cancelled';
+  job: 'completed' | 'partial' | 'failed' | 'interrupted' | 'cancelled';
+  outcome: string;
+  error?: { code: string; message: string };
+  /** `run.failed{auth}`: the session becomes `failed`. */
+  sessionFailed?: boolean;
+}
+export interface AgentTurnPort {
+  /** Whether the turn's conversation has ended (an app restart interrupts a running one): a queued turn in it can never run. */
+  sessionEnded(j: JobRow): boolean;
+  /** The first guard a queued turn fails (the policy ones and the container ones), or null. */
+  guard(j: JobRow, i: { runnerReady: boolean; profile: SandboxProfileId | null; probe: ProbeCache | null; live: LiveUse; caps: SchedulerCaps; preparing: number }): AgentWaitReason | null;
+  /** The async part before the lease: the worktree, the context file, the skills. */
+  prepare(j: JobRow): Promise<AgentPrepare>;
+  /** Inside the lease transaction (the job is `leased`): mints the token and builds the plan and its redacted records. */
+  planTx(j: JobRow, attempt: { id: string; n: number }, p: AgentPrepared, c: AgentLeaseCtx): AgentLease;
+  /** Inside the provisioned transaction: the session of the turn runs. */
+  provisionedTx(j: JobRow, now: number): void;
+  /** One runtime event of a running attempt: usage is recorded monotonically; a cap reached answers `limit`. */
+  runtimeEvent(a: AttemptRow, j: JobRow, ev: RuntimeEvent, now: number): { limit: string | null };
+  /** The attempt exited: how the attempt and the job end. */
+  settle(a: AttemptRow, j: JobRow, terminal: RuntimeEvent | null, exit: { code: number | null }): AgentSettlement;
+  /** Inside the transaction of a turn's job leaving its attempt (it ended, or went back to queued): its tokens are revoked. */
+  turnLeftTx(after: JobRow, now: number): void;
+  /** Inside the settlement transaction: a session effect (auth failure fails the session). */
+  sessionFailedTx(after: JobRow, error: { code: string; message: string }): void;
+  /** Inside a restart-recovery decision: the turn's token is revoked with the decision's reason and its running session is interrupted. */
+  interruptTurnTx(system: Principal, jobId: string, now: number, reason: 'restart' | 'runner_restart'): void;
 }
 
 /** The validation framework's hooks into the scheduler and the runner messages (Task 8). */
@@ -531,6 +584,14 @@ export class ExecutionService {
   private mcpGateway: McpGatewayPort | null = null;
   /** In-flight `mcp.call` gateway promises (each resolves to the `mcp.reply` this sends); tracked so a caller may await them in tests. */
   private readonly pendingMcp = new Set<Promise<unknown>>();
+  /** B2b (Task 10): the agent service's hooks (bindAgents); null: queued agent turns are never leased (agents are off). */
+  private agents: AgentTurnPort | null = null;
+  /** The runner's loopback MCP url, from its `ready` (null until then, and while it serves none): a turn needs it. */
+  private mcpUrl: string | null = null;
+  /** Turns whose async preparation (worktree, context, skills) is in flight: one lease attempt per turn at a time. */
+  private readonly agentPreparing = new Set<string>();
+  /** The last terminal runtime event of each live agent attempt (in memory: a restart abandons every live attempt). */
+  private readonly agentTerminal = new Map<string, RuntimeEvent>();
   /** The port state the last tick saw (leaving `ready` is a runner-wide fault for outstanding re-hashes). */
   private lastPortState: string | null = null;
   /** The images as the runner last reported them (the cached probe holds them judged against the image builds). */
@@ -560,6 +621,9 @@ export class ExecutionService {
   /** B2b: binds the MCP gateway after construction (platform.ts builds it once the execution core and ExecQueries exist). */
   bindMcpGateway(gateway: McpGatewayPort | null): void { this.mcpGateway = gateway; }
 
+  /** B2b Task 10: binds the agent service's hooks after construction (platform.ts builds it once the core exists). */
+  bindAgents(port: AgentTurnPort | null): void { this.agents = port; }
+
   /** Test-only: resolves once every `mcp.call` reply in flight has been sent. */
   async mcpCallsSettled(): Promise<void> { await Promise.all([...this.pendingMcp]); }
 
@@ -588,7 +652,7 @@ export class ExecutionService {
     if (this.unsubscribe) { try { this.unsubscribe(); } catch { /* the old port is gone */ } }
     // A replaced or detached port: whatever it was asked to re-hash will not be answered.
     if (this.port) this.runnerWideFault();
-    this.unsubscribe = null; this.port = null; this.probe = null; this.probeSentAt = null; this.lastPortState = null;
+    this.unsubscribe = null; this.port = null; this.probe = null; this.probeSentAt = null; this.lastPortState = null; this.mcpUrl = null;
     if (!this.deps.available) { if (port) this.log('[nexus] exec: runner not attached: execution is not available'); return; }
     if (!port) return;
     if (typeof bootId !== 'string' || !ULID_RE.test(bootId)) throw new PlatformError('invalid', 'bootId must be a ULID');
@@ -642,6 +706,7 @@ export class ExecutionService {
       switch (m.op) {
         case 'ready':
           this.sendFailures = 0;
+          this.mcpUrl = m.mcpUrl;
           this.log(`[nexus] exec: runner ready${m.bootId === this.bootId ? '' : ' (another boot id)'}`); return;
         case 'probe.result':
           this.sendFailures = 0;                       // a fresh report: the port carries messages again
@@ -666,6 +731,7 @@ export class ExecutionService {
           else this.drop(m.op, 'no validation in this build');
           return;
         case 'mcp.call': return this.onMcpCall(m);
+        case 'attempt.runtime': return this.onRuntime(m);
         case 'agent.exec.done':
           if (!this.mcpGateway) { this.drop(m.op, 'no agent mcp gateway in this build'); return; }
           if (!this.mcpGateway.onExecDone(m)) this.drop(m.op, 'unknown exec');
@@ -711,6 +777,8 @@ export class ExecutionService {
       return;
     }
     const j = this.row(a.job_id)!;
+    // B2b Task 10: an agent turn has no recipe; its own container passes the same preflight (agentProvisioned).
+    if (j.kind === 'agent.run') { this.agentProvisioned(a, j, m); return; }
     const recipe = getRecipe(j.recipe_id ?? '');
     if (!recipe || (j.state !== 'leased' && j.state !== 'running')) { this.drop(m.op, `job is ${j.state}`); return; }
     const now = this.deps.now();
@@ -871,6 +939,7 @@ export class ExecutionService {
     }
     if (this.collecting.has(a.id)) { this.drop(m.op, 'the exit is already being ingested'); return; }
     const j = this.row(a.job_id)!;
+    if (j.kind === 'agent.run') { this.agentExited(a, j, m, this.deps.now()); return; }
     const recipe = getRecipe(j.recipe_id ?? '');
     if (!recipe) { this.drop(m.op, 'job has no recipe'); return; }
     const now = this.deps.now();
@@ -1182,6 +1251,11 @@ export class ExecutionService {
     if (TERMINAL_JOB_STATES.has(to) && after.recipe_id !== null && this.deps.deployments && getRecipe(after.recipe_id)?.executor === 'service') {
       this.deps.deployments.endForJobTx(id, to, now, { outcome: d?.outcome ?? null, code: d?.error?.code ?? null });
     }
+    // B2b Task 10: a turn that ended, or went back to queued after an attempt that never ran, revokes its token on EVERY
+    // path (completed, partial, failed, cancelled, timed out, interrupted, refused): this one choke point sees them all.
+    if (after.kind === 'agent.run' && (TERMINAL_JOB_STATES.has(to) || (to === 'queued' && before.state === 'leased'))) {
+      this.agents?.turnLeftTx(after, now);
+    }
     appendJobEventTx(this.db, { type: 'job.transition', summary: `job ${before.state} -> ${to}${d?.outcome ? ` (${d.outcome})` : ''}`,
       projectId: after.project_id, jobId: id,
       // The event names the current attempt once its row exists (the lease writes this event just before the insert).
@@ -1279,6 +1353,7 @@ export class ExecutionService {
       if (this.deps.blobs?.isExclusiveHeld()) return;
       this.resumeConsumed(now);
       this.leaseQueued(now);
+      this.leaseAgentTurns(now);
     } catch (e) {
       this.log(`[nexus] exec: scheduler pass stopped: ${e instanceof PlatformError ? e.code : (e as Error)?.name ?? 'error'}`);
     }
@@ -1369,6 +1444,7 @@ export class ExecutionService {
     for (const id of [...this.lastSeq.keys()]) if (!liveIds.has(id)) this.lastSeq.delete(id);
     for (const id of [...this.gapFlagged]) if (!liveIds.has(id)) this.gapFlagged.delete(id);
     for (const id of [...this.awaitingExit]) if (!liveIds.has(id)) this.awaitingExit.delete(id);
+    for (const id of [...this.agentTerminal.keys()]) if (!liveIds.has(id)) this.agentTerminal.delete(id);
     for (const [id] of [...this.collectingSince]) if (!liveIds.has(id) && !this.collecting.has(id)) this.collectingSince.delete(id);
     for (const r of live) {
       // Collecting: the work already ran (its exit is durable), so no wall clock and no lease expiry; only the collecting
@@ -1502,10 +1578,12 @@ export class ExecutionService {
 
   private liveUse(): LiveUse {
     // A job waiting for approval holds no container yet, so it holds no slot and no memory.
-    const rows = this.db.prepare(`SELECT j.recipe_id, j.limits_json FROM job_attempts a JOIN jobs j ON j.id = a.job_id
-      WHERE a.state IN ('starting','running') AND j.state <> 'awaiting_approval' AND j.phase IS NOT 'approval'`).all() as { recipe_id: string | null; limits_json: string }[];
+    const rows = this.db.prepare(`SELECT j.kind, j.recipe_id, j.limits_json FROM job_attempts a JOIN jobs j ON j.id = a.job_id
+      WHERE a.state IN ('starting','running') AND j.state <> 'awaiting_approval' AND j.phase IS NOT 'approval'`).all() as { kind: string; recipe_id: string | null; limits_json: string }[];
     const use: LiveUse = { jobContainers: 0, serviceContainers: 0, reservedMemoryMb: 0 };
     for (const r of rows) {
+      // B2b Task 10: an agent turn's container is one job slot with its own 1024 MiB.
+      if (r.kind === 'agent.run') { use.jobContainers++; use.reservedMemoryMb += AGENT_TURN_MEMORY_MB; continue; }
       const recipe = getRecipe(r.recipe_id ?? '');
       if (!recipe || recipe.executor === 'engine') continue;
       if (recipe.executor === 'service') use.serviceContainers++; else use.jobContainers++;
@@ -1655,7 +1733,9 @@ export class ExecutionService {
         plan = buildPlan({ job: { id: j.id, projectId: j.project_id }, attempt: { id: attemptId, n }, bootId: this.bootId!, recipe,
           profile, imageId: (image?.imageId as `sha256:${string}` | undefined) ?? null, dataHomeRoot: home.root, workRel, logRel, inputs, repoPath,
           // B2b Task 7: the git write recipes plan from the params the system stored when it queued them.
-          approval: null, service, diagnose, params: parseJson(j.params_json) });
+          approval: null, service, diagnose, params: parseJson(j.params_json),
+          // B2b Task 10: a collect names the session's RECORDED worktree (a reused one carries the earlier session's name).
+          worktree: recipe.id === 'changeset.collect' ? this.sessionWorktreeOf(j) : null });
       } catch (e) {
         planError = refused(e);
       }
@@ -1753,6 +1833,266 @@ export class ExecutionService {
       }
       return true;
     });
+  }
+
+  // ---------- B2b Task 10: agent turns ----------
+
+  /** The live worktree row of a collect job's session (null: none, the plan derives it from the session id). */
+  private sessionWorktreeOf(j: ExecJobRow): { relPath: string; ref: string } | null {
+    const params = parseJson(j.params_json);
+    const sid = isPlainObject(params) && typeof params.sessionId === 'string' ? params.sessionId : null;
+    if (!sid) return null;
+    try {
+      const r = this.db.prepare('SELECT rel_path, ref FROM session_worktrees WHERE session_id = ? AND removed_at IS NULL').get(sid) as { rel_path: string; ref: string } | undefined;
+      return r ? { relPath: r.rel_path, ref: r.ref } : null;
+    } catch { return null; }
+  }
+
+  /** The repository version facts the sandbox profile is picked from (its newest live version's metadata). */
+  private repositoryFacts(projectId: string): { kind: string; metadata: unknown }[] {
+    const row = this.db.prepare(`SELECT v.metadata_json FROM artifacts a JOIN artifact_versions v ON v.artifact_id = a.id
+      WHERE a.project_id = ? AND a.kind = 'repository' AND a.status = 'active' AND v.status IN ('candidate','active')
+      ORDER BY (v.id = a.current_version_id) DESC, v.version_no DESC LIMIT 1`).get(projectId) as { metadata_json: string } | undefined;
+    return row ? [{ kind: 'repository', metadata: parseJson(row.metadata_json) }] : [];
+  }
+
+  /** The first guard a queued turn fails (the agent service's policy guards, then the container guards), or null. */
+  private agentGuard(j: ExecJobRow, use: LiveUse, preparing: number): AgentWaitReason | null {
+    const profile = this.profileFor(j.project_id, this.repositoryFacts(j.project_id));
+    return this.agents!.guard(j, { runnerReady: this.runnerReady() && this.mcpUrl !== null, profile, probe: this.probe, live: use, caps: this.caps, preparing });
+  }
+
+  /**
+   * Queued agent turns, oldest first. A turn the guards hold stays queued with the reason in `phase` (`waiting:runtime`,
+   * `waiting:consent`, `waiting:budget`, `waiting:rate`, ...). One that passes is prepared (async: its worktree, context
+   * file and skills) and then leased in ONE transaction that mints its token and builds its plan; the guards run again
+   * inside that transaction, because the world moves while a turn is prepared.
+   */
+  private leaseAgentTurns(now: number): void {
+    if (!this.agents) return;
+    const queued = this.db.prepare(`SELECT * FROM jobs WHERE state = 'queued' AND kind = 'agent.run' ORDER BY priority, created_at, rowid`).all() as ExecJobRow[];
+    if (queued.length === 0) return;
+    const use = this.liveUse();
+    for (const j of queued) {
+      if (this.agentPreparing.has(j.id)) continue;
+      // A queued turn whose conversation ended (a restart interrupted it) never runs: no resurrection (it is cancelled).
+      if (this.agents.sessionEnded(j)) {
+        try {
+          immediateTx(this.db, () => {
+            if (this.row(j.id)?.state !== 'queued') return;
+            this.moveJobTx(j.id, 'cancelled', now, { outcome: 'session_ended', error: { code: 'session_ended', message: 'the conversation ended before this turn could start' } }, 'queued');
+            this.setPhaseTx(j.id, null, now);
+          });
+        } catch (e) { this.log(`[nexus] exec: a turn of an ended conversation was not cancelled (${e instanceof PlatformError ? e.code : (e as Error)?.name ?? 'error'})`); }
+        continue;
+      }
+      if (j.next_attempt_at !== null && j.next_attempt_at > now) continue;
+      const wait = this.agentGuard(j, use, this.agentPreparing.size);
+      if (wait !== null) { this.setPhaseIfChanged(j.id, wait, now); continue; }
+      this.agentPreparing.add(j.id);
+      void this.prepareAndLeaseAgent(j.id).finally(() => { this.agentPreparing.delete(j.id); });
+    }
+  }
+
+  private async prepareAndLeaseAgent(jobId: string): Promise<void> {
+    const agents = this.agents;
+    const j0 = this.row(jobId);
+    if (!agents || !j0 || j0.state !== 'queued') return;
+    let prepared: AgentPrepare;
+    try {
+      prepared = await agents.prepare(j0);
+    } catch (e) {
+      // A prepare that could not run (a file system error): the turn waits and tries again in a few seconds.
+      this.log(`[nexus] exec: an agent turn could not be prepared (${e instanceof PlatformError ? e.code : (e as Error)?.name ?? 'error'})`);
+      const now = this.deps.now();
+      try {
+        immediateTx(this.db, () => {
+          this.setPhaseTx(jobId, 'waiting:worktree', now);
+          this.db.prepare("UPDATE jobs SET next_attempt_at = ? WHERE id = ? AND state = 'queued'").run(now + 5_000, jobId);
+        });
+      } catch { /* the next tick tries again */ }
+      return;
+    }
+    const now = this.deps.now();
+    if ('wait' in prepared) { this.setPhaseIfChanged(jobId, prepared.wait, now); return; }
+    try {
+      this.leaseAgentTurn(jobId, 'ready' in prepared ? prepared.ready : prepared, now);
+    } catch (e) {
+      // A deterministic refusal inside the lease transaction (a token or plan that cannot be recorded) is not retried every
+      // tick: the attempt fails in a transaction of its own, as for any other job (final review A1).
+      if (e instanceof PlatformError && e.code === 'invalid') {
+        const failed = { failed: { code: String(e.detail?.reason ?? 'bad_plan'), message: `the turn could not be started: ${e.message}`.slice(0, 300) } };
+        this.log(`[nexus] exec: an agent turn's lease was refused (${failed.failed.code}); its attempt failed`);
+        try { this.leaseAgentTurn(jobId, failed, now); } catch (e2) {
+          this.log(`[nexus] exec: an agent turn's failure was not recorded (${e2 instanceof PlatformError ? e2.code : (e2 as Error)?.name ?? 'error'})`);
+        }
+        return;
+      }
+      this.log(`[nexus] exec: agent turn lease not taken: ${e instanceof PlatformError ? e.code : (e as Error)?.name ?? 'error'}`);
+    }
+  }
+
+  /** The lease transaction of one agent turn; sends `attempt.start` after it commits. Returns true when the turn was leased. */
+  private leaseAgentTurn(jobId: string, prepared: AgentPrepared | { failed: { code: string; message: string } }, now: number): boolean {
+    const agents = this.agents!;
+    const home = this.deps.dataHome;
+    if (!home || this.bootId === null) return false;
+    const j0 = this.row(jobId);
+    if (!j0) return false;
+    const profileId = this.profileFor(j0.project_id, this.repositoryFacts(j0.project_id));
+    const profile = (this.deps.profiles ?? []).find((p) => p.id === profileId) ?? null;
+    const image = usableImage(this.probe, profileId);
+    const attemptId = newId(now);
+    const n = j0.attempts + 1;
+    const ctx: AgentLeaseCtx = { bootId: this.bootId, dataHomeRoot: home.root, workRel: home.attemptWorkRel(j0.id, n), logRel: home.attemptLogPath(j0.id, n),
+      profile, imageId: (image?.imageId as `sha256:${string}` | undefined) ?? null, mcpUrl: this.mcpUrl ?? '', dockerVersion: this.probe?.probe.version ?? null,
+      nexusVersion: this.deps.appVersion ?? null };
+    let plan: AgentPlan | null = null;
+    const result = immediateTx(this.db, (): 'leased' | 'failed' | 'gone' | AgentWaitReason => {
+      const cur = this.row(jobId);
+      if (!cur || cur.state !== 'queued') return 'gone';
+      // The guards again, now that the turn has been prepared: it is leased only if nothing changed.
+      const wait = this.agentGuard(cur, this.liveUse(), 0);
+      if (wait !== null) { this.setPhaseTx(jobId, wait, now); return wait; }
+      this.moveJobTx(jobId, 'leased', now, undefined, 'queued');
+      this.deps.hooks?.afterLeaseTransition?.(jobId);
+      const lease: AgentLease = 'failed' in prepared ? prepared : agents.planTx(this.row(jobId)!, { id: attemptId, n }, prepared, ctx);
+      insertAttemptTx(this.db, { id: attemptId, jobId, projectId: cur.project_id, n, bootId: this.bootId!, now, logPath: ctx.logRel,
+        sandbox: 'plan' in lease ? lease.sandbox : undefined, environment: 'plan' in lease ? lease.environment : undefined });
+      this.db.prepare('UPDATE jobs SET next_attempt_at = NULL WHERE id = ? AND next_attempt_at IS NOT NULL').run(jobId);
+      if ('plan' in lease) {
+        this.db.prepare('UPDATE job_attempts SET runtime_kind = ? WHERE id = ?').run(String(lease.plan.runtime.kind).slice(0, 32), attemptId);
+        this.setPhaseTx(jobId, 'provisioning', now);
+        plan = lease.plan;
+        return 'leased';
+      }
+      const error = lease.failed;
+      transitionAttemptTx(this.db, attemptRow(this.db, attemptId)!, 'failed', now, cur.project_id, { outcome: error.code.slice(0, 32), error });
+      this.moveJobTx(jobId, 'failed', now, { outcome: error.code.slice(0, 32), error });
+      this.setPhaseTx(jobId, null, now);
+      return 'failed';
+    });
+    if (result !== 'leased' || !plan) return false;
+    if (this.send({ op: 'attempt.start', attemptId, plan })) this.sendFailures = 0;
+    else { this.sendFailures++; this.unsent(attemptId, now); }
+    return true;
+  }
+
+  /** `attempt.provisioned` of an agent turn: its container passed preflight, so the attempt, the job and the session run. */
+  private agentProvisioned(a: AttemptRow, j: ExecJobRow, m: Extract<RunnerToMain, { op: 'attempt.provisioned' }>): void {
+    if (a.state !== 'starting') {
+      this.drop(m.op, `attempt is ${a.state}`);
+      if (m.containerId !== undefined && a.state !== 'running') this.send({ op: 'attempt.release', attemptId: a.id });
+      return;
+    }
+    if (j.state !== 'leased' && j.state !== 'running') { this.drop(m.op, `job is ${j.state}`); return; }
+    const now = this.deps.now();
+    const sandbox = (parseJson(a.sandbox_json) ?? {}) as Record<string, unknown>;
+    const expected = isPlainObject(sandbox.image) && typeof sandbox.image.id === 'string' ? sandbox.image.id : null;
+    const problems: string[] = [];
+    if (!m.preflight || !m.containerId) problems.push('no preflight report for the container');
+    else {
+      // A problem may name a path: never a host path in a record.
+      if (!m.preflight.ok) problems.push(...m.preflight.problems.map((p) => scrubHostPaths(p)));
+      if (m.imageDigest !== undefined && expected !== null && m.imageDigest !== expected) problems.push(`image ${m.imageDigest} is not the planned ${expected}`);
+      if (m.hostPort !== undefined) problems.push('an agent container reported a published port');
+    }
+    const record = boundedRecord({ ...sandbox, containerId: m.containerId ?? null, imageDigest: m.imageDigest ?? null,
+      preflight: m.preflight ? { ok: problems.length === 0, problems: problems.slice(0, 20).map((p) => p.slice(0, 300)), observed: m.preflight.observed }
+        : { ok: false, problems: problems.slice(0, 20) } });
+    let release = false;
+    immediateTx(this.db, () => {
+      const cur = attemptRow(this.db, a.id)!;
+      if (problems.length === 0) {
+        transitionAttemptTx(this.db, cur, 'running', now, j.project_id, { containerId: m.containerId, sandbox: record });
+        appendJobEventTx(this.db, { type: 'attempt.provisioned', summary: `attempt ${a.n} container passed preflight`, projectId: j.project_id,
+          jobId: j.id, attemptN: a.n, data: { preflight: 'ok', container: m.containerId!.slice(0, 12) } }, now);
+        appendJobEventTx(this.db, { type: 'preflight', summary: 'preflight passed', projectId: j.project_id, jobId: j.id, attemptN: a.n, data: { ok: true } }, now);
+        if (this.row(j.id)!.state === 'leased') this.moveJobTx(j.id, 'running', now, undefined, 'leased');
+        this.setPhaseTx(j.id, 'running', now);
+        this.agents?.provisionedTx(this.row(j.id)!, now);
+      } else {
+        release = m.containerId !== undefined;
+        transitionAttemptTx(this.db, cur, 'failed', now, j.project_id, { outcome: 'limits_not_applied', containerId: m.containerId, sandbox: record,
+          error: { code: 'limits_not_applied', message: problems.join('; ') } });
+        appendJobEventTx(this.db, { type: 'preflight', summary: `preflight refused the container: ${problems.length} problem(s)`, projectId: j.project_id,
+          jobId: j.id, attemptN: a.n, data: { ok: false, problems: problems.slice(0, 20) } }, now);
+        this.moveJobTx(j.id, 'failed', now, { outcome: 'infra_error', error: { code: 'limits_not_applied', message: problems.join('; ') } });
+        this.setPhaseTx(j.id, null, now);
+      }
+    });
+    if (release) this.send({ op: 'attempt.release', attemptId: a.id });
+  }
+
+  /** One runtime event of a running turn (`attempt.runtime`): the service records it; a cap reached ends the turn `failed: limit`. */
+  private onRuntime(m: Extract<RunnerToMain, { op: 'attempt.runtime' }>): void {
+    const a = this.ownAttempt(m.op, m.attemptId); if (!a) return;
+    if (a.state !== 'running') { this.drop(m.op, `attempt is ${a.state}`); return; }
+    const last = this.lastSeq.get(a.id);
+    if (last !== undefined && m.seq <= last) { this.drop(m.op, `seq ${m.seq} is not after ${last}`); return; }
+    this.lastSeq.set(a.id, m.seq);
+    const j = this.row(a.job_id)!;
+    if (j.kind !== 'agent.run' || !this.agents) { this.drop(m.op, 'not an agent turn'); return; }
+    const now = this.deps.now();
+    const ev = m.event;
+    if (ev.t === 'run.completed' || ev.t === 'run.failed' || ev.t === 'run.cancelled') this.agentTerminal.set(a.id, ev);
+    const r = this.agents.runtimeEvent(a, j, ev, now);
+    if (r.limit !== null) this.agentLimit(a.id, r.limit, now);
+  }
+
+  /** A turn reached one of its caps: it ends `failed: limit` (the attempt too), and the runner is told to stop it. */
+  private agentLimit(attemptId: string, why: string, now: number): void {
+    const error = { code: 'limit', message: `the turn reached its ${why} limit and was stopped` };
+    let ended = false;
+    immediateTx(this.db, () => {
+      const cur = attemptRow(this.db, attemptId);
+      if (!cur || cur.state !== 'running') return;
+      const j = this.row(cur.job_id)!;
+      transitionAttemptTx(this.db, cur, 'failed', now, j.project_id, { outcome: 'limit', error });
+      if (j.state === 'running') this.moveJobTx(j.id, 'failed', now, { outcome: 'limit', error });
+      this.setPhaseTx(j.id, null, now);
+      ended = true;
+    });
+    this.agentTerminal.delete(attemptId);
+    if (ended) this.send({ op: 'attempt.cancel', attemptId, graceMs: CANCEL_GRACE_MS, reason: 'timeout' });
+  }
+
+  /**
+   * `attempt.exited` of an agent turn: how it ends is the service's decision from its last runtime event, the exit and the
+   * evidence it left (a registered version means `completed`; none means `partial: no_change`; `run.failed` names its
+   * failure; no result at all is a failure). The job is never completed from the exit alone.
+   */
+  private agentExited(a: AttemptRow, j: ExecJobRow, m: Extract<RunnerToMain, { op: 'attempt.exited' }>, now: number): void {
+    const exit = { code: m.exit.code, signal: m.exit.signal, oomKilled: m.exit.oomKilled };
+    const terminal = this.agentTerminal.get(a.id) ?? null;
+    this.agentTerminal.delete(a.id);
+    const agents = this.agents;
+    let s: AgentSettlement;
+    if (m.reason === 'timeout') {
+      s = { attempt: 'failed', job: 'failed', outcome: 'timed_out', error: { code: 'timed_out', message: 'the runner stopped the turn at its wall-clock backstop' } };
+    } else if (m.reason === 'cancelled') {
+      // The runner ended a turn main did not cancel (an app quit, a stopped runner): interrupted, never completed.
+      s = { attempt: 'cancelled', job: 'interrupted', outcome: 'interrupted', error: { code: 'interrupted', message: 'the runner stopped the turn' } };
+    } else if (agents) {
+      s = agents.settle(a, j, terminal, { code: m.exit.code });
+    } else {
+      s = { attempt: 'failed', job: 'failed', outcome: 'agents_unavailable', error: { code: 'agents_unavailable', message: 'agent turns are not available in this build' } };
+    }
+    immediateTx(this.db, () => {
+      const cur = attemptRow(this.db, a.id)!;
+      if (cur.state !== 'running') return;
+      const change = { exit, outcome: s.outcome, logBytes: m.logBytes, ...(s.error ? { error: s.error } : {}) };
+      transitionAttemptTx(this.db, cur, s.attempt, now, j.project_id, change);
+      const nowJob = this.row(j.id)!;
+      if (nowJob.state === 'running') {
+        const after = this.moveJobTx(j.id, s.job, now, { outcome: s.outcome, ...(s.error ? { error: s.error } : {}) }, 'running');
+        if (s.sessionFailed && s.error) agents?.sessionFailedTx(after, s.error);
+      }
+      this.setPhaseTx(j.id, null, now);
+    });
+    this.send({ op: 'attempt.release', attemptId: a.id });
+    // The checks of what the turn registered queued their own jobs; they run now.
+    this.deps.validation?.runPending(now);
   }
 
   /** `attempt.start` did not reach the runner: nothing ran, so the attempt is abandoned and the job waits again (as on a refusal). */
@@ -1977,7 +2317,8 @@ export class ExecutionService {
       endAwaitingTx: (jobId, error, now) => this.endAwaitingTx(jobId, error, now),
       send: (msg) => this.send(msg),
       logPathOf: (a) => this.adoptLogPath(a),
-      awaitExit: (id) => { this.awaitingExit.add(id); }
+      awaitExit: (id) => { this.awaitingExit.add(id); },
+      interruptAgentTurnTx: this.agents ? (system, jobId, now, reason) => this.agents!.interruptTurnTx(system, jobId, now, reason) : null
     };
   }
 

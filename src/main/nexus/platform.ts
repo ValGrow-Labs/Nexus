@@ -27,6 +27,11 @@
  * (`runner_restart`, F9): the runner's port is wrapped when it is attached, so the revocation runs before the execution
  * core sees the `ready` (and before any later message of the new runner).
  *
+ * B2b Task 10 also composes the change-set registration (ChangeSetService, behind the `changeset_register` tool), the
+ * session worktrees (WorktreeService) and the AgentService: turns, sessions and the scheduler's agent guards. The
+ * AgentService is the `TurnStarter` of reviews unless a caller passes its own, and its runtime health comes from an
+ * injectable cache (`opts.runtimeHealth`; Task 14 fills it from the runner's probe).
+ *
  * No IPC is registered here. Callers in main pass a Principal resolved through
  * `principals`; the renderer never supplies identity.
  */
@@ -62,6 +67,9 @@ import { BudgetService } from './agents/budgetService';
 import { ContextResolver } from './agents/contextResolver';
 import { Skills } from './agents/skills';
 import { McpGateway } from './agents/mcpGateway';
+import { AgentService, type RuntimeHealthProvider } from './agents/agentService';
+import { WorktreeService } from './repo/worktreeService';
+import { ChangeSetService } from './repo/changeSetService';
 import type { RunnerPort } from './exec/runnerPort';
 import { parseRunnerMessage } from '../../shared/nexus/runnerProtocol';
 import { PlatformError } from './errors';
@@ -124,6 +132,12 @@ export interface NexusPlatform {
   skills: Skills | null;
   /** B2b Task 9: the bounded git reads through the runner (status, diff); null unless execution is available. */
   gitRead: GitRead | null;
+  /** B2b Task 10: agent turns (sessions, the start guards, the plan, usage caps); also the `TurnStarter` of reviews. Null unless agents are available. */
+  agents: AgentService | null;
+  /** B2b Task 7/10: the session worktrees and the once-per-project repository-write approval; null unless agents are available. */
+  worktrees: WorktreeService | null;
+  /** B2b Task 8/10: change-set registration behind the `changeset_register` tool; null unless agents are available. */
+  changeSets: ChangeSetService | null;
   /** B2b Task 9: user review decisions on change-set candidates; null unless agents are available. */
   reviews: ReviewService | null;
   /** B2b Task 9: accept (merge-tree, CAS, rollback), the integration-ref status and "Merge accepted work"; null unless agents are available. */
@@ -184,10 +198,16 @@ export interface NexusPlatformOptions {
   /** B2b Task 5: the app's `resources` folder (a skill's file is `<dir>/skills/<id>/SKILL.md`); null, Skills.write refuses. */
   skillsResourcesDir?: string | null;
   /**
-   * B2b Task 9: starts the next agent turn for a review that asked for changes (Task 10's agent service). Omitted, a safe stub
-   * answers `agents_unavailable`, so a request for changes records nothing until the real one is wired.
+   * B2b Task 9: starts the next agent turn for a review that asked for changes. Omitted, it is the platform's own AgentService
+   * (Task 10) when agents are available, else a stub that answers `agents_unavailable`, so a request for changes records
+   * nothing. A test may pass its own.
    */
   turns?: TurnStarter;
+  /**
+   * B2b Task 10: the cached health of the agent runtime (Task 14 plugs the runner's probe in). Omitted, it is unknown: a turn
+   * is refused at start and a queued one waits `waiting:runtime`.
+   */
+  runtimeHealth?: RuntimeHealthProvider;
 }
 
 /**
@@ -278,15 +298,23 @@ export function createNexusPlatform(db: Database.Database, opts?: NexusPlatformO
   // `validation.setSender` reaches back into it from the other side.
   const contextResolver = agentsAvailable ? new ContextResolver(db, { dataHome: opts?.dataHome ?? null, now, system: principals.system() }) : null;
   const skills = agentsAvailable ? new Skills({ dataHome: opts?.dataHome ?? null, resourcesDir: opts?.skillsResourcesDir ?? null }) : null;
+  // B2b Task 10: change-set registration (the `changeset_register` tool), the session worktrees and the agent service itself.
+  const changeSets = agentsAvailable ? new ChangeSetService(db, { jobs, system: principals.system(), now }) : null;
   const mcpGateway = agentsAvailable && tokens && budget && queries
-    ? new McpGateway(db, { auth, tokens, budget, artifacts, jobs, exec, queries, dataHome: opts?.dataHome ?? null,
+    ? new McpGateway(db, { auth, tokens, budget, artifacts, jobs, changeSets, exec, queries, dataHome: opts?.dataHome ?? null,
       system: principals.system(), now, log })
     : null;
   exec.bindMcpGateway(mcpGateway);
+  const worktrees = agentsAvailable ? new WorktreeService(db, { jobs, now, dataHomeRoot: opts?.dataHome?.root ?? '', acceptFsRoot: opts?.acceptFsRoot ?? null }) : null;
+  const agents = agentsAvailable && tokens && budget && contextResolver && skills && worktrees
+    ? new AgentService(db, { auth, principals, jobs, sessions, tokens, budget, contextResolver, skills, worktrees, exec, system: principals.system(), now, log,
+      runtimeHealth: opts?.runtimeHealth, dataHome: opts?.dataHome ?? null })
+    : null;
+  exec.bindAgents(agents);
   // B2b Task 9: the git reads (status for the accept service, diffs for the viewer) go through the runner; its answers are
   // routed to them below, at the runner port. Built with execution: a read writes nothing and runs as no job.
   const gitRead = executionAvailable ? new GitRead({ send: (m) => exec.sendToRunner(m), now }) : null;
-  const turns: TurnStarter = opts?.turns ?? {
+  const turns: TurnStarter = opts?.turns ?? agents ?? {
     continueWith(): never { throw new PlatformError('unavailable', 'agents are not available yet', { reason: 'agents_unavailable' }); }
   };
   const reviews = agentsAvailable ? new ReviewService(db, { auth, principals, turns, now }) : null;
@@ -328,7 +356,7 @@ export function createNexusPlatform(db: Database.Database, opts?: NexusPlatformO
   return {
     principals, auth, activity, workspaces, projects, artifacts, lineage, jobs, sessions, handoffs, handoffsAvailable, executionAvailable,
     exec, blobs, validation, approvals, deployments, repo, queries, registry: { valid: registryValid, problems: problems.length }, bootId,
-    agentsAvailable, tokens, budget, mcpGateway, contextResolver, skills, gitRead, reviews, accepts,
+    agentsAvailable, tokens, budget, mcpGateway, contextResolver, skills, gitRead, agents, worktrees, changeSets, reviews, accepts,
     startup(): NexusStartupReport {
       // The seeded principals must resolve; a missing one throws platform_unavailable.
       principals.localUser();

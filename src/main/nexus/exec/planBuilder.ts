@@ -51,8 +51,9 @@ import { createHash } from 'node:crypto';
 import * as path from 'node:path';
 import { DIAGNOSE_MAX_CONTAINERS, DIAGNOSE_MAX_RANGES, DIAGNOSE_RANGE_MAX_BYTES, STEP_SEPARATOR_TOKEN } from '../../../shared/nexus/execution';
 import type {
-  AttemptPlan, ContainerSpec, EnginePlan, MountSpec, NetworkMode, ResourceLabels, ResourceLimits, SandboxProfile, ServicePlan, ToolPlan
+  AgentPlan, AttemptPlan, ContainerSpec, EnginePlan, MountSpec, NetworkMode, ResourceLabels, ResourceLimits, SandboxProfile, ServicePlan, ToolPlan
 } from '../../../shared/nexus/execution';
+import type { RunRequest, RuntimeKind } from '../../../shared/nexus/runtime';
 import type { RecipeDef } from '../../../shared/nexus/recipes';
 import { looksSecret } from '../../../shared/nexus/secretShape';
 import { homeLabel } from '../../../shared/nexus/homeLabel';
@@ -188,6 +189,12 @@ export interface PlanContext {
    * them when it queues the job (WorktreeService, ChangeSetService, AcceptService), and every value is checked here.
    */
   params?: unknown;
+  /**
+   * `changeset.collect` only (B2b Task 10): the session's recorded worktree, read by the core from `session_worktrees`. A
+   * worktree reused by a new session (an interrupted session's) is named after the session it was made for, not the new
+   * one, so its folder, git folder and session ref come from this row; without it they derive from the params' session.
+   */
+  worktree?: { relPath: string; ref: string } | null;
 }
 
 /**
@@ -225,7 +232,7 @@ export function imageRef(profile: SandboxProfile, imageId: `sha256:${string}`): 
 }
 
 /** The labels of an attempt's volumes and networks (and the base of its containers' labels). */
-function attemptLabels(ctx: PlanContext): ResourceLabels {
+function attemptLabels(ctx: Pick<PlanContext, 'job' | 'attempt' | 'bootId' | 'dataHomeRoot'>): ResourceLabels {
   return { 'nexus.job': ctx.job.id, 'nexus.attempt': ctx.attempt.id, 'nexus.boot': ctx.bootId, 'nexus.project': ctx.job.projectId,
     'nexus.home': homeLabel(ctx.dataHomeRoot) };
 }
@@ -600,14 +607,21 @@ function buildGitEnginePlan(ctx: PlanContext, base: Omit<EnginePlan, 'kind' | 't
         integrationRef: integrationRefOf(p.branch), branch: p.branch as string });
     }
     case 'changeset.collect': {
-      const name = sessionName(p.sessionId);
+      let name = sessionName(p.sessionId);
+      let sessionRef = `refs/nexus/job/${name}`;
+      const wt = ctx.worktree ?? null;
+      if (wt) {
+        const m = /^wt\/([0-9a-z]{26})$/.exec(wt.relPath);
+        if (!m || wt.ref !== `refs/nexus/job/${m[1]}`) return refuse('bad_input', 'the recorded worktree is not a session worktree');
+        name = m[1]; sessionRef = wt.ref;
+      }
       const scope = p.scope === undefined ? [] : p.scope;
       if (!Array.isArray(scope) || scope.length > MAX_SCOPE_ENTRIES || !scope.every((x) => typeof x === 'string' && SCOPE_RE.test(x) && !x.includes('..'))) {
         return refuse('bad_input', 'the scope is not a list of relative patterns');
       }
       const message = `${oneLine(p.title, 'Agent change')}\n\nNexus-Job: ${jobIdParam(p, 'turnJobId')}\n`;
       return plan({ engine: 'changeset.collect', repoPath, worktreePath: underDataHome(ctx.dataHomeRoot, `wt/${name}`),
-        gitDir: path.join(repoPath, '.git', 'worktrees', name), ref: `refs/nexus/job/${name}`, integrationRef: integrationRefOf(p.branch),
+        gitDir: path.join(repoPath, '.git', 'worktrees', name), ref: sessionRef, integrationRef: integrationRefOf(p.branch),
         scope: [...scope] as string[], message, maxFileBytes: CHANGESET_MAX_FILE_BYTES, maxTotalBytes: CHANGESET_MAX_TOTAL_BYTES });
     }
     case 'changeset.merge_check':
@@ -652,8 +666,143 @@ function buildEnginePlan(ctx: PlanContext, base: Omit<EnginePlan, 'kind' | 'task
   return refuse('not_in_this_build', `${ctx.recipe.id} is not an engine task of this build`);
 }
 
+// ---------- agent turns (B2b Task 10) ----------
+
+/** The recipe id and version an agent turn's plan carries (it is no recipe: the turn is not leased by the recipe scheduler). */
+export const AGENT_TURN_RECIPE = Object.freeze({ id: 'agent.turn', version: '1' });
+/** The container outlives its turn's wall clock by this much (a `sleep`; the entry's own backstop is twice the wall clock). */
+export const AGENT_SLEEP_MARGIN_S = 120;
+/** A turn's container reserves this much memory (it counts as one job slot with it). */
+export const AGENT_TURN_MEMORY_MB = 1024;
+
+/** What an agent turn's plan needs beyond the ids (main reads each value from its own rows; nothing comes from the renderer). */
+export interface AgentPlanContext {
+  job: { id: string; projectId: string };
+  attempt: { id: string; n: number };
+  bootId: string;
+  dataHomeRoot: string;
+  workRel: string;
+  logRel: string;
+  profile: SandboxProfile | null;
+  imageId: `sha256:${string}` | null;
+  /** The session worktree as a recorded row and WorktreeService.ensure know it (host paths under the data home / the repository). */
+  worktree: { relPath: string; gitDir: string; ref: string; base: string };
+  runtime: {
+    kind: string; token: string; sessionId: string; idempotencyKey: string; domainId: string;
+    skills: readonly { id: string; version: string; sha256: string }[];
+    context: { hash: string };
+    message: string; mcpUrl: string; model: { provider: string; model: string };
+  };
+  /** The live consent's hosts and its recorded `hosts_sha256` (never derived from `allow`). */
+  egress: { allow: readonly { host: string; port: number }[]; consentHostsSha256: string };
+  caps: { turnTokens: number; turnUsdCents: number; dayRemainingUsdCents: number; toolCalls: number };
+  wallClockMs: number;
+  /** The token's own `mcpTools` claim. */
+  mcpTools: readonly string[];
+}
+
+const SHA256_HEX = /^[0-9a-f]{64}$/;
+
+/**
+ * The plan of one agent turn: the turn's own container (`sleep <s>`, the worktree bound read-write at `/workspace`,
+ * network `none`; every command the agent runs goes into it through `sandbox_exec`), the runtime request (the context
+ * file, the skills, the loopback MCP url), the turn's token (over the MessagePort only), the live consent's hosts and hash,
+ * and its caps. Pure. Errors are PlatformError 'invalid' with a reason.
+ */
+export function buildAgentPlan(ctx: AgentPlanContext): AgentPlan {
+  const { job, attempt } = ctx;
+  const profile = ctx.profile;
+  if (!profile) return refuse('image_missing', 'no sandbox profile for the agent turn');
+  if (!ctx.imageId || !/^sha256:[0-9a-f]{64}$/.test(ctx.imageId)) return refuse('image_missing', 'the profile image is not present');
+  if (!Number.isSafeInteger(ctx.wallClockMs) || ctx.wallClockMs <= 0) return refuse('bad_input', 'a turn needs a wall clock');
+  if (!/^wt\/[0-9a-z]{26}$/.test(ctx.worktree.relPath)) return refuse('bad_input', 'the worktree is not a session folder');
+  if (typeof ctx.runtime.token !== 'string' || ctx.runtime.token.length === 0) return refuse('bad_input', 'a turn needs its token');
+  if (!SHA256_HEX.test(ctx.egress.consentHostsSha256)) return refuse('consent_mismatch', 'the live consent carries no valid hosts hash');
+  const worktreePath = underDataHome(ctx.dataHomeRoot, ctx.worktree.relPath);
+  const configDir = underDataHome(ctx.dataHomeRoot, `jobs/${job.id}/agent`);
+  const labels = attemptLabels({ job, attempt, bootId: ctx.bootId, dataHomeRoot: ctx.dataHomeRoot });
+  const container: ContainerSpec = {
+    name: `nexus-${attempt.id.toLowerCase()}`,
+    labels: { ...labels, 'nexus.kind': 'agent' },
+    profile: profile.id,
+    image: { ref: imageRef(profile, ctx.imageId), id: ctx.imageId },
+    entrypoint: [...profile.entrypoint],
+    argv: ['sleep', String(Math.ceil(ctx.wallClockMs / 1000) + AGENT_SLEEP_MARGIN_S)],
+    imageEnv: [...profile.imageEnv],
+    env: checkEnv({ HOME: '/home/nexus', CI: 'true', NEXUS_WALL_SECONDS: wallSeconds(ctx.wallClockMs) }),
+    mounts: [{ kind: 'worktree', hostPath: worktreePath, containerPath: '/workspace', readOnly: false }],
+    network: { mode: 'none' },
+    limits: { cpus: profile.defaults.cpus, memoryMb: AGENT_TURN_MEMORY_MB, pids: PIDS_LIMIT, wallClockMs: ctx.wallClockMs,
+      outputMaxBytes: profile.defaults.outputMaxBytes, tmpfsMb: TMPFS_MB },
+    readOnlyRootfs: true,
+    capDrop: ['ALL'],
+    noNewPrivileges: true
+  };
+  const cents = Math.max(0, Math.min(ctx.caps.turnUsdCents, ctx.caps.dayRemainingUsdCents));
+  const request: RunRequest = {
+    jobId: job.id, attempt: attempt.n, sessionId: ctx.runtime.sessionId, idempotencyKey: ctx.runtime.idempotencyKey,
+    domainId: ctx.runtime.domainId,
+    skills: ctx.runtime.skills.map((s) => ({ id: s.id, version: s.version, dir: configDir, sha256: s.sha256 })),
+    context: { hash: ctx.runtime.context.hash, file: path.join(configDir, 'context.md') },
+    message: ctx.runtime.message,
+    worktree: { hostPath: worktreePath, editable: ['/workspace'] },
+    container: { id: 'pending' },
+    mcp: { url: ctx.runtime.mcpUrl },
+    model: ctx.runtime.model,
+    limits: { wallClockMs: ctx.wallClockMs, maxTurns: ctx.caps.toolCalls, maxCostUsd: cents / 100 },
+    credential: { ref: 'runtime-owned' },
+    configDir
+  };
+  return {
+    attemptId: attempt.id, jobId: job.id, attemptN: attempt.n, recipe: { ...AGENT_TURN_RECIPE },
+    workDir: underDataHome(ctx.dataHomeRoot, ctx.workRel), logPath: underDataHome(ctx.dataHomeRoot, ctx.logRel),
+    kind: 'agent', container,
+    worktree: { hostPath: worktreePath, gitDir: ctx.worktree.gitDir, ref: ctx.worktree.ref, base: ctx.worktree.base, editable: ['/workspace'] },
+    runtime: { kind: ctx.runtime.kind as RuntimeKind, request, token: ctx.runtime.token },
+    egress: { allow: ctx.egress.allow.map((h) => ({ host: h.host, port: h.port })), consentHostsSha256: ctx.egress.consentHostsSha256 },
+    caps: { ...ctx.caps },
+    mcpTools: [...ctx.mcpTools],
+    resourceLabels: labels
+  };
+}
+
+/**
+ * What an agent attempt's `sandbox_json` records (F31): the profile, image, limits, network, mounts (the destination and
+ * `kind` only: never a host path), the runtime kind, the adapter version, the flags sha256, the skills' sha256 values, the
+ * context sha256 and the proxy allow-list, plus the turn's caps (main's own recovery of them at every usage event). Never
+ * the token, the message, the config path or the worktree's host path.
+ */
+export function agentSandboxRecord(plan: AgentPlan, extra: { adapterVersion: string | null; flagsSha256: string | null }): Record<string, unknown> {
+  const c = plan.container;
+  return {
+    executor: 'agent', name: c.name, profile: c.profile, image: c.image,
+    limits: c.limits, network: c.network,
+    mounts: c.mounts.map((m) => ({ kind: m.kind, containerPath: m.containerPath, readOnly: m.readOnly })),
+    readOnlyRootfs: true, capDrop: ['ALL'], noNewPrivileges: true,
+    runtime: { kind: plan.runtime.kind, adapterVersion: extra.adapterVersion, flagsSha256: extra.flagsSha256 },
+    skills: plan.runtime.request.skills.map((s) => ({ id: s.id, version: s.version, sha256: s.sha256 })),
+    context: { sha256: plan.runtime.request.context.hash },
+    egress: { allow: plan.egress.allow.map((h) => `${h.host}:${h.port}`), consentHostsSha256: plan.egress.consentHostsSha256 ?? null },
+    turn: { tokens: plan.caps.turnTokens, usdCents: plan.caps.turnUsdCents, dayRemainingUsdCents: plan.caps.dayRemainingUsdCents,
+      toolCalls: plan.caps.toolCalls, wallClockMs: c.limits.wallClockMs },
+    mcpTools: plan.mcpTools ?? null
+  };
+}
+
+/** What an agent attempt's `environment_json` records: the runtime kind, its version, the model id (opaque) and the image. */
+export function agentEnvironmentRecord(plan: AgentPlan, extra: { runtimeVersion: string | null; nexusVersion: string | null; dockerVersion: string | null;
+  runnerBootId: string | null }): Record<string, unknown> {
+  return {
+    executor: 'agent', recipeId: AGENT_TURN_RECIPE.id, recipeVersion: AGENT_TURN_RECIPE.version, profile: plan.container.profile,
+    imageRef: plan.container.image.ref, imageId: plan.container.image.id,
+    runtimeKind: plan.runtime.kind, runtimeVersion: extra.runtimeVersion, model: plan.runtime.request.model.model,
+    dockerVersion: extra.dockerVersion, runnerBootId: extra.runnerBootId, nexusVersion: extra.nexusVersion
+  };
+}
+
 /** What `job_attempts.sandbox_json` records of a plan: argv, env NAMES, mounts without host paths, network, limits. */
 export function sandboxRecord(plan: AttemptPlan): Record<string, unknown> {
+  if (plan.kind === 'agent') return agentSandboxRecord(plan, { adapterVersion: null, flagsSha256: null });
   if (plan.kind === 'engine') {
     const t = plan.task;
     return { executor: 'engine', engine: t.engine, network: 'not-applicable', wallClockMs: plan.wallClockMs,

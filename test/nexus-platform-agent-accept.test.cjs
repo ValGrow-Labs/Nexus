@@ -20,6 +20,7 @@ const loadTs = require('./load-ts.cjs');
 const { agentWorld, openRunningTurn } = require('./helpers/agentFixtures.cjs');
 const { newId } = loadTs('src/main/nexus/db/ids.ts');
 const { immediateTx } = loadTs('src/main/nexus/db/tx.ts');
+const { PlatformError } = loadTs('src/main/nexus/errors.ts');
 const { insertAttemptTx, transitionAttemptTx, attemptRow } = loadTs('src/main/nexus/exec/attempts.ts');
 const { ChangeSetService } = loadTs('src/main/nexus/repo/changeSetService.ts');
 const { ReviewService } = loadTs('src/main/nexus/review/reviewService.ts');
@@ -148,7 +149,9 @@ function jobOf(w, recipe, nth = -1) {
 async function candidateWorld(o = {}) {
   const turns = []; const w0 = {};
   const fakeTurns = { continueWith(user, sessionId, reviewId) { turns.push({ user, sessionId, reviewId }); return { job: { id: `J${turns.length}` } }; } };
-  const w = agentWorld({ platform: { ingest: undefined, acceptFsRoot: (r) => (typeof r === 'string' && r ? r : null), ...(o.stubTurns ? {} : { turns: fakeTurns }) } });
+  // Task 10 wired the real AgentService as the default; RA10b keeps its intent with a TurnStarter that refuses, as agents being off does.
+  const refusingTurns = { continueWith() { throw new PlatformError('unavailable', 'agents are not available yet', { reason: 'agents_unavailable' }); } };
+  const w = agentWorld({ platform: { ingest: undefined, acceptFsRoot: (r) => (typeof r === 'string' && r ? r : null), turns: o.stubTurns ? refusingTurns : fakeTurns } });
   const dir = tmp('nx-ra-');
   const repo = path.join(dir, 'repo'); const home = path.join(dir, 'nexus');
   fs.mkdirSync(repo); fs.mkdirSync(path.join(home, 'wt'), { recursive: true });
@@ -476,7 +479,7 @@ test('RA10: request_changes calls the TurnStarter with the reviewing user and th
   assert.equal(world.turns.length, 1);
 });
 
-test('RA10b: until the agent service is wired, request_changes answers agents_unavailable and records nothing', async () => {
+test('RA10b: a TurnStarter that refuses (agents unavailable) makes request_changes answer agents_unavailable and record nothing', async () => {
   const world = await candidateWorld({ stubTurns: true });
   const c = await makeChange(world);
   assert.throws(() => world.w.nx.reviews.decide(world.w.me, c.versionId, { decision: 'request_changes', comment: 'change it', intentId: ulid() }),

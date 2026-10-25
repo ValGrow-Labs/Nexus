@@ -21,6 +21,7 @@
 import type { ImageStatus, SandboxProbe, SandboxProfileId } from '../../../shared/nexus/execution';
 import type { RecipeDef } from '../../../shared/nexus/recipes';
 import { leaseFloorBytes } from '../../../shared/nexus/resourceGate';
+import { AGENT_TURN_MEMORY_MB } from './planBuilder';
 
 export interface SchedulerCaps {
   /** Share of Docker's memory that live containers may reserve. */
@@ -85,6 +86,51 @@ export function leaseGuard(c: LeaseCandidate, runnerReady: boolean, cache: Probe
   if (!nothingLive && live.reservedMemoryMb + c.memoryMb > budgetMb) return 'waiting:memory';
   // ... but only up to 85 % of Docker's memory: above that it waits, and setup says Docker needs more memory.
   if (nothingLive && (dockerMb <= 0 || c.memoryMb > dockerMb * SOLO_MEMORY_SHARE)) return 'waiting:memory';
+  return null;
+}
+
+/**
+ * Agent turns (B2b Task 10). A turn is no recipe: it needs the runner (with its loopback MCP server), the agent runtime,
+ * the user's consent, the budget and the hourly rate, one live turn at a time (`concurrentTurns`), and then a container
+ * slot like any other container job (its own 1024 MiB). A turn that waits stays `queued` and `jobs.phase` names why;
+ * the job's headline stays `queued` (the closed headline set is unchanged; the reason is the phase).
+ */
+export const AGENT_TURN_WAITS = ['waiting:runner', 'waiting:runtime', 'waiting:consent', 'waiting:budget', 'waiting:rate', 'waiting:slots',
+  'waiting:docker', 'waiting:image', 'waiting:disk', 'waiting:memory', 'waiting:approval', 'waiting:worktree'] as const;
+export type AgentWaitReason = typeof AGENT_TURN_WAITS[number];
+
+/** What the scheduler knows about the policy side of a queued turn (BudgetService and the runtime health cache). */
+export interface AgentPolicyFacts {
+  /** The runner is attached and ready, with a loopback MCP server (its `ready` carried a URL). */
+  runnerReady: boolean;
+  /** The cached health of the agent runtime: true when it is installed, supported and signed in. */
+  runtimeOk: boolean;
+  /** `startGuard`'s answer for this project, with the turn itself left out of the live and hourly counts. */
+  guard: 'ok' | 'consent_missing' | 'budget_exhausted' | 'rate_limited';
+  /** Turns holding a slot now (leased, running or waiting for approval), the turn being leased left out, and the cap. */
+  liveTurns: number; concurrentTurns: number;
+}
+
+/**
+ * The first guard a queued turn fails, or null when it may be leased now: the runner, the runtime, consent, budget, rate,
+ * concurrency, then the container guards of any tool job (Docker, the profile image, disk, slots, memory).
+ */
+export function agentTurnGuard(f: AgentPolicyFacts, profile: SandboxProfileId | null, cache: ProbeCache | null, live: LiveUse, caps: SchedulerCaps):
+  AgentWaitReason | null {
+  if (!f.runnerReady) return 'waiting:runner';
+  if (!f.runtimeOk) return 'waiting:runtime';
+  if (f.guard === 'consent_missing') return 'waiting:consent';
+  if (f.guard === 'budget_exhausted') return 'waiting:budget';
+  if (f.guard === 'rate_limited') return 'waiting:rate';
+  if (f.liveTurns >= f.concurrentTurns) return 'waiting:slots';
+  if (!cache || cache.probe.docker !== 'running') return 'waiting:docker';
+  if (!usableImage(cache, profile)) return 'waiting:image';
+  if (cache.freeBytes === null || cache.freeBytes < leaseFloorBytes(0)) return 'waiting:disk';
+  if (live.jobContainers >= caps.jobContainers) return 'waiting:slots';
+  const dockerMb = typeof cache.probe.memoryBytes === 'number' ? cache.probe.memoryBytes / 2 ** 20 : 0;
+  const nothingLive = live.jobContainers + live.serviceContainers === 0;
+  if (!nothingLive && live.reservedMemoryMb + AGENT_TURN_MEMORY_MB > dockerMb * caps.memoryShare) return 'waiting:memory';
+  if (nothingLive && (dockerMb <= 0 || AGENT_TURN_MEMORY_MB > dockerMb * SOLO_MEMORY_SHARE)) return 'waiting:memory';
   return null;
 }
 

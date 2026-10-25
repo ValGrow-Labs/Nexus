@@ -362,6 +362,12 @@ export interface AgentPlan extends PlanBase {
   runtime: { kind: RuntimeKind; request: RunRequest; token: string };
   egress: { allow: { host: string; port: number }[]; consentHostsSha256?: string };
   caps: { turnTokens: number; turnUsdCents: number; dayRemainingUsdCents: number; toolCalls: number };
+  /**
+   * The Nexus MCP tools the turn's token grants (its `mcpTools` claim, main's own list): the runtime's allow-list is exactly
+   * these, nothing else. Absent: the runtime's default (every tool the runner serves; main still checks the claims on every
+   * call). Main always sets it.
+   */
+  mcpTools?: string[];
   resourceLabels: ResourceLabels;
 }
 

@@ -115,8 +115,31 @@ export class WorktreeService {
     return r?.id ?? null;
   }
 
-  /** See the module header. Never writes to the repository itself. */
-  ensure(system: Principal, sessionId: string, turnJobId: string): EnsureResult {
+  /**
+   * A new session on the SAME worktree (B2b Task 10, AT5): the earlier session was interrupted (a restart) and its live
+   * worktree is kept. The new session gets its own row at the same path, session ref and base (`reused_from_session_id`,
+   * which the database accepts only for a live worktree of an interrupted session of the same project). Nothing is written
+   * to the repository. Returns the row's facts, or null when there is nothing to reuse (the session then gets its own).
+   */
+  private reuseTx(system: Principal, s: SessionRow, from: string, now: number): { rel_path: string; ref: string; base_commit: string } | null {
+    const prev = this.db.prepare(`SELECT p.rel_path, p.ref, p.integration_ref, p.base_commit, p.project_id, st.status FROM session_worktrees p
+      JOIN agent_sessions st ON st.id = p.session_id WHERE p.session_id = ? AND p.removed_at IS NULL`).get(from) as
+      { rel_path: string; ref: string; integration_ref: string; base_commit: string; project_id: string; status: string } | undefined;
+    if (!prev || prev.project_id !== s.project_id || prev.status !== 'interrupted') return null;
+    try {
+      immediateTx(this.db, () => {
+        this.db.prepare(`INSERT INTO session_worktrees (session_id, project_id, rel_path, ref, integration_ref, base_commit, locked, created_at, reused_from_session_id)
+          VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?)`).run(s.id, s.project_id, prev.rel_path, prev.ref, prev.integration_ref, prev.base_commit, now, from);
+        appendActivityRow(this.db, { actorKind: 'system', actorId: system.id, onBehalfOf: s.principal_id, sessionId: s.id, projectId: s.project_id,
+          workspaceId: s.workspace_id, entityType: 'worktree', entityId: s.id, action: 'repo.worktree', status: 'succeeded',
+          details: { worktree: prev.rel_path, ref: prev.ref, integrationRef: prev.integration_ref, base: prev.base_commit, reused: true, locked: true } }, now);
+      });
+    } catch { return null; }   // already reused by another session (reused_from is unique): this one gets its own
+    return { rel_path: prev.rel_path, ref: prev.ref, base_commit: prev.base_commit };
+  }
+
+  /** See the module header. Never writes to the repository itself. `o.reuseFrom`: an interrupted session whose worktree this session continues. */
+  ensure(system: Principal, sessionId: string, turnJobId: string, o?: { reuseFrom?: string | null }): EnsureResult {
     if (!this.isSystem(system)) throw new PlatformError('denied', 'worktrees are prepared by the system', { reason: 'system_only' });
     const s = typeof sessionId === 'string'
       ? this.db.prepare('SELECT id, project_id, workspace_id, participation_id, principal_id FROM agent_sessions WHERE id = ?').get(sessionId) as SessionRow | undefined
@@ -133,10 +156,13 @@ export class WorktreeService {
     if (!repoPath) return { failed: 'project_folder_unavailable' };
     const ref = `refs/nexus/job/${name}`;
     // 1. The worktree exists (its row is written at ingest).
-    const row = this.db.prepare('SELECT rel_path, ref, base_commit FROM session_worktrees WHERE session_id = ? AND removed_at IS NULL').get(s.id) as
+    let row = this.db.prepare('SELECT rel_path, ref, base_commit FROM session_worktrees WHERE session_id = ? AND removed_at IS NULL').get(s.id) as
       { rel_path: string; ref: string; base_commit: string } | undefined;
+    if (!row && typeof o?.reuseFrom === 'string' && o.reuseFrom.length > 0) row = this.reuseTx(system, s, o.reuseFrom, this.deps.now()) ?? undefined;
     if (row) {
-      return { ready: { path: path.join(this.deps.dataHomeRoot, ...row.rel_path.split('/')), gitDir: path.join(repoPath, '.git', 'worktrees', name),
+      // The git folder is named after the worktree folder, which is the session's own name unless the worktree was reused.
+      const dirName = row.rel_path.split('/').pop() ?? name;
+      return { ready: { path: path.join(this.deps.dataHomeRoot, ...row.rel_path.split('/')), gitDir: path.join(repoPath, '.git', 'worktrees', dirName),
         ref: row.ref, base: row.base_commit } };
     }
     const branch = this.branchOf(s.project_id);

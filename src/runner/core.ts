@@ -45,7 +45,7 @@ import {
 } from '../shared/nexus/runnerProtocol';
 import { expectedNetworkName } from '../shared/nexus/preflightCheck';
 import { leaseFloorBytes } from '../shared/nexus/resourceGate';
-import { SANDBOX_EXEC_OUTPUT_MAX_BYTES } from '../shared/nexus/mcpTools';
+import { MCP_TOOLS, SANDBOX_EXEC_OUTPUT_MAX_BYTES } from '../shared/nexus/mcpTools';
 import { containsSecret, redactSecretText } from '../main/nexus/activity/redact';
 import { run as runAgentAttempt, type AgentAttemptPort } from './agentAttempt';
 import { diagnose, diagnoseTaskProblem } from './diagnose';
@@ -736,6 +736,12 @@ stderr: ${r.stderr}` : ''}`
     if (plan.egress.allow.length > 0 ? typeof consent !== 'string' || !/^[0-9a-f]{64}$/.test(consent) : consent !== undefined && (typeof consent !== 'string' || !/^[0-9a-f]{64}$/.test(consent))) {
       return 'the egress hosts carry no valid consent hash';
     }
+    // B2b Task 10: the runtime's allow-list is exactly the token's tools: a list of known Nexus MCP tools, once each.
+    const tools = plan.mcpTools;
+    if (tools !== undefined) {
+      if (!Array.isArray(tools) || tools.length > MCP_TOOLS.length || new Set(tools).size !== tools.length
+        || tools.some((t) => typeof t !== 'string' || !MCP_TOOLS.some((d) => d.name === t))) return 'the agent plan names a tool this runner does not serve';
+    }
     return null;
   }
 
@@ -1127,6 +1133,7 @@ stderr: ${r.stderr}` : ''}`
         mcpUrl: this.mcpServer?.url ?? '',
         egressProxyUrl: () => egress.url,
         caps: plan.caps,
+        mcpTools: plan.mcpTools,
         steps: this.deps.agentRuntime?.scriptFor?.(plan) ?? [],
         fetchImpl: this.deps.agentRuntime?.fetchImpl,
         agentBin: this.deps.agentRuntime?.agentBin,

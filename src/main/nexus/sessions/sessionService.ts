@@ -180,6 +180,9 @@ export class SessionService {
     return immediateTx(this.db, () => {
       const s = this.row(stored.id)!;
       if (TERMINAL_SESSION_STATES.has(s.status)) return toSession(s);
+      // B2b Task 10: a turn that is running owns a live attempt (a container, a runtime process, a token): ending the session
+      // under it would leave all three. The user cancels the turn first (AgentService.cancel / end, through the execution core).
+      if (this.hasLiveAttempt(s.id)) throw new PlatformError('conflict', 'cancel the running turn first', { reason: 'turn_running' });
       if (s.cancel_requested_at === null) {
         this.db.prepare('UPDATE agent_sessions SET cancel_requested_at = ?, cancel_requested_by = ?, updated_at = ? WHERE id = ?')
           .run(now, p.id, now, s.id);
@@ -193,6 +196,14 @@ export class SessionService {
         details: { from: s.status, to: 'cancelled' } }, now);
       return toSession(this.row(s.id)!);
     });
+  }
+
+  /** Whether a job of the session has a live attempt (schema v9 and later; false below it). */
+  private hasLiveAttempt(sessionId: string): boolean {
+    try {
+      return this.db.prepare(`SELECT 1 FROM job_attempts a JOIN jobs j ON j.id = a.job_id WHERE j.session_id = ? AND a.state IN ('starting','running') LIMIT 1`)
+        .get(sessionId) !== undefined;
+    } catch { return false; }
   }
 
   /**
