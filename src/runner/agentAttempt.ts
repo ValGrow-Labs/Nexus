@@ -23,7 +23,7 @@ import type { AgentRuntime, RunRequest, RuntimeEvent } from '../shared/nexus/run
 import type { GuardRefusal } from './worktreeGuard';
 import { scrub } from './logs';
 import { DockerError, SpecError } from './sandbox/dockerDriver';
-import { startHostEgressProxy, hostsSha256, type HostEgressProxy } from './hostEgressProxy';
+import type { startHostEgressProxy, HostEgressProxy } from './hostEgressProxy';
 import type { RunnerDriver, RunnerFs } from './types';
 
 export const AGENT_STOP_GRACE_MS = 10_000;
@@ -158,58 +158,74 @@ export async function run(plan: AgentPlan, port: AgentAttemptPort): Promise<void
 
   port.phase('starting');
   try { await port.driver.start(cid); } catch (e) { await safeRemove(port.driver, cid); await port.fault('docker_error', msgOf(e)); return; }
-  port.provisioned(cid, plan.container.image.id, report);
-  port.phase('running');
-  // The MCP exec relay trusts only this binding for which container a grant of this turn's bearer runs inside.
-  port.bindAgentTurn(plan.runtime.token, plan.attemptId, cid);
 
-  // ---- step 2: the host egress proxy for this turn ----
+  // From here the container runs and the bearer may be bound: everything below is one region whose end (success,
+  // failure, throw or cancel alike) always unbinds, ends the runtime process, closes the proxy and removes the container.
+  const request: RunRequest = { ...plan.runtime.request, container: { id: cid } };
+  const configDir = plan.runtime.request.configDir;
   let proxy: HostEgressProxy | null = null;
-  try {
-    proxy = await port.startHostEgressProxy({
-      allow: plan.egress.allow,
-      consentHostsSha256: plan.egress.allow.length > 0 ? hostsSha256(plan.egress.allow) : undefined,
-      onDecision: () => { /* no attempt.event in this build: the runtime's own host traffic is not evidence */ },
-      imagesDir: port.imagesDir
-    });
-  } catch (e) {
-    port.log(`the host egress proxy could not start: ${msgOf(e)}`);
-  }
-
-  // ---- step 3: the adapter's engine-format files ----
-  await writeEngineFiles(port.fs, plan.runtime.request.configDir, plan.runtime.request);
-
-  // ---- steps 4-6: run the turn, relaying events; the worktree guard (run by the exec relay) can end it early ----
   let runRef: string | null = null;
-  const onAbort = (): void => { if (runRef) void port.runtime.cancel(runRef, AGENT_STOP_GRACE_MS); };
-  port.signal.addEventListener('abort', onAbort, { once: true });
   let completedOk = false;
+  let failedWith: string | null = null;
+  const onAbort = (): void => { void port.runtime.cancel(runRef ?? '', AGENT_STOP_GRACE_MS).catch(() => undefined); };
   try {
-    for await (const raw of port.runtime.start(plan.runtime.request, port.signal)) {
-      const guard = port.guardRefusal();
-      const event: RuntimeEvent = raw.t === 'run.cancelled' && guard
-        ? { t: 'run.failed', at: port.now(), code: 'runtime_error', message: `failed: worktree_guard (${guard})` }
-        : raw;
-      relay(port, event);
-      if (event.t === 'run.started') runRef = event.runRef;
-      if (event.t === 'run.completed') { completedOk = true; break; }
-      if (event.t === 'run.failed' || event.t === 'run.cancelled') break;
+    // The MCP exec relay trusts only this binding for which container a grant of this turn's bearer runs inside.
+    port.bindAgentTurn(plan.runtime.token, plan.attemptId, cid);
+    port.provisioned(cid, plan.container.image.id, report);
+    port.phase('running');
+
+    // ---- step 2: the host egress proxy for this turn (a failure, consent_mismatch included, fails the turn) ----
+    try {
+      proxy = await port.startHostEgressProxy({
+        allow: plan.egress.allow,
+        consentHostsSha256: plan.egress.consentHostsSha256,
+        onDecision: () => { /* no attempt.event in this build: the runtime's own host traffic is not evidence */ },
+        imagesDir: port.imagesDir
+      });
+    } catch (e) {
+      failedWith = (e as { code?: unknown } | null)?.code === 'consent_mismatch' ? 'consent_mismatch' : 'proxy_failed';
+      port.log(`the host egress proxy did not start: ${msgOf(e)}`);
+      relay(port, { t: 'run.failed', at: port.now(), code: 'runtime_error', message: `failed: ${failedWith}` });
     }
-  } catch (e) {
-    port.log(`the turn stopped: ${msgOf(e)}`);
+
+    if (!failedWith && !port.signal.aborted) {
+      // ---- step 3: the adapter's engine-format files ----
+      await writeEngineFiles(port.fs, configDir, request);
+
+      // ---- steps 4-6: run the turn, relaying events; the worktree guard (run by the exec relay) can end it early ----
+      port.signal.addEventListener('abort', onAbort, { once: true });
+      try {
+        for await (const raw of port.runtime.start(request, port.signal)) {
+          const guard = port.guardRefusal();
+          // A refused worktree never ends as anything but `failed: worktree_guard`: any terminal event is overridden.
+          const terminal = raw.t === 'run.completed' || raw.t === 'run.failed' || raw.t === 'run.cancelled';
+          const event: RuntimeEvent = terminal && guard
+            ? { t: 'run.failed', at: port.now(), code: 'runtime_error', message: `failed: worktree_guard (${guard})` }
+            : raw;
+          relay(port, event);
+          if (event.t === 'run.started') runRef = event.runRef;
+          if (event.t === 'run.completed') { completedOk = true; break; }
+          if (event.t === 'run.failed' || event.t === 'run.cancelled') break;
+        }
+      } catch (e) {
+        port.log(`the turn stopped: ${msgOf(e)}`);
+      }
+    }
   } finally {
     port.signal.removeEventListener('abort', onAbort);
+    // ---- step 7: cleanup, always ----
+    port.unbindAgentTurn(plan.runtime.token);
+    // The host process is ended even when no abort fired (a turn that completed or failed with its CLI still alive).
+    try { await port.runtime.cancel(runRef ?? '', AGENT_STOP_GRACE_MS); } catch { /* best effort */ }
+    try { await proxy?.close(); } catch { /* best effort */ }
+    await stopAndRemove(port.driver, cid);
+    await cleanupEngineFiles(port.fs, configDir);
   }
   const finalGuard = port.guardRefusal();
   if (finalGuard) port.log(`the turn failed: worktree_guard (${finalGuard})`);
+  if (failedWith) port.log(`the turn failed: ${failedWith}`);
 
-  // ---- step 7: cleanup ----
-  port.unbindAgentTurn(plan.runtime.token);
-  try { await proxy?.close(); } catch { /* best effort */ }
-  await stopAndRemove(port.driver, cid);
-  await cleanupEngineFiles(port.fs, plan.runtime.request.configDir);
-
-  if (finalGuard) { port.exited({ code: 1, oomKilled: false, finishedAt: port.now() }); return; }
+  if (finalGuard || failedWith) { port.exited({ code: 1, oomKilled: false, finishedAt: port.now() }); return; }
   if (port.signal.aborted) { port.exited(cancelledExit(), 'cancelled'); return; }
   port.exited({ code: completedOk ? 0 : 1, oomKilled: false, finishedAt: port.now() });
 }

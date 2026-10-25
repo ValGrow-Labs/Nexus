@@ -34,6 +34,8 @@ export interface RuntimeTurnContext {
   agentArgvPrefix?: readonly string[];
   /** `cli-agent` only: called the moment the process is spawned (its pid is then known), to register it with procTree. */
   onSpawned?: (info: { pid: number; imageName: string }) => void | Promise<void>;
+  /** `cli-agent` only: called once the process is gone (it exited, or was killed): its pidfile is forgotten, never killed later. */
+  onGone?: (pid: number) => void | Promise<void>;
   taskkillBin?: string;
 }
 
@@ -41,7 +43,7 @@ export function runtimeFor(kind: RuntimeKind, ctx: RuntimeTurnContext): AgentRun
   if (kind === SCRIPTED_KIND) return new ScriptedRuntime({ token: ctx.token, mcpUrl: ctx.mcpUrl, steps: ctx.steps ?? [], fetchImpl: ctx.fetchImpl });
   if (kind === CLI_AGENT_KIND) {
     if (!ctx.agentBin) throw new Error('the cli-agent runtime needs a resolved CLI binary');
-    return new CliAgentRuntime({ agentBin: ctx.agentBin, env: ctx.agentEnv, argvPrefix: ctx.agentArgvPrefix ?? [], onSpawned: ctx.onSpawned, taskkillBin: ctx.taskkillBin });
+    return new CliAgentRuntime({ agentBin: ctx.agentBin, env: ctx.agentEnv, argvPrefix: ctx.agentArgvPrefix ?? [], onSpawned: ctx.onSpawned, onGone: ctx.onGone, taskkillBin: ctx.taskkillBin });
   }
   throw new Error(`no runtime is registered for ${String(kind)}`);
 }
@@ -51,6 +53,7 @@ interface CliAgentRuntimeOptions {
   env?: NodeJS.ProcessEnv;
   argvPrefix: readonly string[];
   onSpawned?: (info: { pid: number; imageName: string }) => void | Promise<void>;
+  onGone?: (pid: number) => void | Promise<void>;
   taskkillBin?: string;
 }
 
@@ -64,6 +67,7 @@ export class CliAgentRuntime implements AgentRuntime {
   readonly kind: RuntimeKind = CLI_AGENT_KIND;
   private pid: number | null = null;
   private imageName = '';
+  private killing: Promise<void> | null = null;
 
   constructor(private readonly o: CliAgentRuntimeOptions) {}
 
@@ -102,8 +106,14 @@ export class CliAgentRuntime implements AgentRuntime {
         try { push(JSON.parse(t) as RuntimeEvent); } catch { /* not a frame this adapter understands: ignored */ }
       }
     });
-    child.on('error', () => { ended = true; wake(); });
-    child.on('close', () => { ended = true; wake(); });
+    // The process is gone on its own: its pid may be recycled, so it is forgotten now and never killed later.
+    const gone = (): void => {
+      ended = true; wake();
+      const pid = this.pid;
+      if (pid !== null && !this.killing) { this.pid = null; void this.o.onGone?.(pid); }
+    };
+    child.on('error', gone);
+    child.on('close', gone);
     const onAbort = (): void => { void this.cancel('', 0); };
     signal.addEventListener('abort', onAbort, { once: true });
 
@@ -128,10 +138,16 @@ export class CliAgentRuntime implements AgentRuntime {
     }
   }
 
-  async cancel(_runRef: string, _graceMs: number): Promise<void> {
+  /** Kills the whole tree of a process still running, then forgets it. Safe to call again and again (one kill, awaited by all). */
+  cancel(_runRef: string, _graceMs: number): Promise<void> {
+    if (this.killing) return this.killing;
     const pid = this.pid;
-    if (pid === null) return;
+    if (pid === null) return Promise.resolve();
     this.pid = null;
-    await killProcessTree(pid, this.imageName, this.o.taskkillBin);
+    this.killing = (async () => {
+      await killProcessTree(pid, this.imageName, this.o.taskkillBin);
+      try { await this.o.onGone?.(pid); } catch { /* best effort */ }
+    })();
+    return this.killing;
   }
 }

@@ -23,10 +23,11 @@ const { parseRunnerMessage, chunkText, MESSAGE_DELTA_MAX_BYTES } = loadTs('src/s
 const { homeLabel } = loadTs('src/shared/nexus/homeLabel.ts');
 const { newId } = loadTs('src/main/nexus/db/ids.ts');
 const { defaultTaskkillBin, isTaskkillBinary } = loadTs('src/runner/procTree.ts');
+const { hostsSha256 } = loadTs('src/runner/hostEgressProxy.ts');
 
 const ROOT = path.resolve(__dirname, '..');
 const IMAGES = path.join(ROOT, 'infra', 'images');
-const FAKE_CLI = path.join(__dirname, 'fixtures', 'agent', 'fake-cli.cjs');
+const FAKE_CLI = path.join(__dirname, 'fixtures', 'agent', 'proc-cli.cjs');
 
 const NOW = 1_781_000_000_000;
 const BOOT = newId(NOW);
@@ -114,9 +115,10 @@ function world(o = {}) {
 /** A valid AgentPlan: a worktree the mount points at exactly, a job config dir main would have written context.md into. */
 function agentPlan(w, o = {}) {
   const jobId = newId(NOW); const attemptId = newId(NOW + 1);
-  const worktreeDir = path.join(w.dir, 'wt', attemptId);
+  // The worktree is a session folder of the data home (`<home>/wt/<26 lowercase>`), the config dir exactly `<home>/jobs/<job>/agent`.
+  const worktreeDir = o.worktreeDir ?? path.join(w.home, 'wt', attemptId.toLowerCase());
   fs.mkdirSync(worktreeDir, { recursive: true });
-  const configDir = path.join(w.home, 'jobs', jobId, 'agent');
+  const configDir = o.configDir ?? path.join(w.home, 'jobs', jobId, 'agent');
   fs.mkdirSync(configDir, { recursive: true });
   fs.writeFileSync(path.join(configDir, 'context.md'), '## (no context available for this turn)\n', 'utf8');
   const token = `${'a'.repeat(22)}.${'b'.repeat(43)}`;
@@ -145,10 +147,33 @@ function agentPlan(w, o = {}) {
       },
       token
     },
-    egress: { allow: [] },
+    egress: o.egress ?? { allow: [] },
     caps: { turnTokens: 100_000, turnUsdCents: 1000, dayRemainingUsdCents: 1000, toolCalls: 100 },
     resourceLabels: { 'nexus.job': jobId, 'nexus.attempt': attemptId, 'nexus.boot': BOOT, 'nexus.project': 'p-ledger', 'nexus.home': w.label }
   };
+}
+
+/** Points a plan's worktree (the plan, the mount and the run request alike) somewhere else. */
+function retarget(plan, p) {
+  plan.worktree.hostPath = p;
+  plan.container.mounts[0].hostPath = p;
+  plan.runtime.request.worktree.hostPath = p;
+}
+
+/** One `tools/call` to the runner's real loopback MCP server, as an agent's client would send it. */
+async function mcpCall(w, token, tool, args) {
+  const url = w.one('ready').mcpUrl;
+  const res = await fetch(url, { method: 'POST', headers: { 'content-type': 'application/json', accept: 'application/json', authorization: `Bearer ${token}` },
+    body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: tool, arguments: args } }) });
+  const json = await res.json();
+  return { isError: json.result.isError, text: json.result.content[0].text };
+}
+const EXEC_ARGS = { argv: ['echo', 'late'], cwd: '/workspace', timeoutMs: 5000 };
+
+/** Sends attempt.start and waits for the runner's refusal. */
+async function startRefused(w, plan) {
+  w.send({ op: 'attempt.start', attemptId: plan.attemptId, plan });
+  return w.waitOp('attempt.refused', plan.attemptId, 'agent plan refused');
 }
 
 async function startAgent(w, plan) {
@@ -318,6 +343,8 @@ test('AT7 cancelling a cli-agent turn leaves no fake-CLI process', async () => {
   await w.waitOp('attempt.exited', plan.attemptId, 'agent exited (cancelled)');
   await untilPidGone(spawned.pid);
   assert.ok(!isPidAlive(spawned.pid));
+  await until(() => !fs.existsSync(path.join(w.home, 'pids', `${spawned.pid}.json`)), 'the pidfile to be removed after cancel');
+  assert.equal(w.driver.containers.size, 0);
 });
 
 // ---------- AT8: a runner crash in the same main boot; the next hello kills the tree ----------
@@ -372,6 +399,8 @@ test('AT17 agent.shutdownTrees kills every live tree this runner holds', async (
   w.send({ op: 'agent.shutdownTrees' });
   await untilPidGone(spawned.pid);
   assert.ok(!isPidAlive(spawned.pid));
+  await w.waitOp('attempt.exited', plan.attemptId, 'the turn ends once its process is gone');
+  assert.equal(w.driver.containers.size, 0, 'the turn also removes its container');
 });
 
 test('AT17 the app-quit shutdown op also ends live agent process trees', async () => {
@@ -381,9 +410,209 @@ test('AT17 the app-quit shutdown op also ends live agent process trees', async (
   const plan = agentPlan(w, { kind: 'cli-agent' });
   await startAgent(w, plan);
   await until(() => spawned !== null, 'the fake CLI to spawn');
+  assert.equal(w.driver.containers.size, 1, 'the agent container is running');
   await w.core.shutdown();
   await untilPidGone(spawned.pid);
   assert.ok(!isPidAlive(spawned.pid));
+  assert.equal(w.driver.containers.size, 0, 'shutdown stops and removes the agent container (its rw worktree bind is not left running)');
+  assert.ok(w.driver.ops().includes('remove'));
+});
+
+// ---------- Fix round 1 ----------
+
+// I1: nothing the runner creates, binds or deletes in is taken on trust from the plan.
+
+test('I1 a config dir that is not exactly <home>/jobs/<job>/agent is refused bad_plan before anything is created or deleted', async () => {
+  const w = await world();
+  const elsewhere = path.join(w.dir, 'elsewhere');
+  fs.mkdirSync(elsewhere, { recursive: true });
+  fs.writeFileSync(path.join(elsewhere, 'keep.txt'), 'precious');
+  const plan = agentPlan(w, { configDir: elsewhere });
+  const refused = await startRefused(w, plan);
+  assert.equal(refused.reason, 'bad_plan');
+  assert.ok(!w.driver.ops().includes('create'));
+  assert.equal(fs.readFileSync(path.join(elsewhere, 'keep.txt'), 'utf8'), 'precious');
+
+  // Another job's agent folder, and a '..' spelling of the right one: both refused.
+  const other = agentPlan(w);
+  other.runtime.request.configDir = path.join(w.home, 'jobs', newId(NOW), 'agent');
+  assert.equal((await startRefused(w, other)).reason, 'bad_plan');
+  const dots = agentPlan(w);
+  dots.runtime.request.configDir = `${dots.runtime.request.configDir}${path.sep}..${path.sep}agent`;
+  assert.equal((await startRefused(w, dots)).reason, 'bad_plan');
+  assert.ok(!w.driver.ops().includes('create'));
+});
+
+test('I1 a worktree outside <home>/wt/<session>, or spelled with .., is refused bad_plan; the run request must agree with the plan', async () => {
+  const w = await world();
+  const outside = path.join(w.dir, 'outside');
+  fs.mkdirSync(outside, { recursive: true });
+  const a = agentPlan(w); retarget(a, outside);
+  assert.equal((await startRefused(w, a)).reason, 'bad_plan');
+
+  const b = agentPlan(w);
+  retarget(b, `${path.join(w.home, 'wt', 'x')}${path.sep}..${path.sep}${path.basename(b.worktree.hostPath)}`);
+  assert.equal((await startRefused(w, b)).reason, 'bad_plan');
+
+  const c = agentPlan(w); c.runtime.request.worktree.hostPath = outside;
+  assert.equal((await startRefused(w, c)).reason, 'bad_plan');
+  const d = agentPlan(w); delete d.runtime.request.container;
+  assert.equal((await startRefused(w, d)).reason, 'bad_plan');
+  const e = agentPlan(w); e.runtime.request.jobId = 'someone-else';
+  assert.equal((await startRefused(w, e)).reason, 'bad_plan');
+  const bad = agentPlan(w); bad.container = null;   // M1: a malformed plan is a refusal, not a TypeError fault
+  assert.equal((await startRefused(w, bad)).reason, 'bad_plan');
+  assert.ok(!w.driver.ops().includes('create'));
+  assert.equal(w.of('fault').length, 0);
+});
+
+test('I1 the run request handed to the runtime names the real container', async () => {
+  let seen = null;
+  const w = await world({ agentRuntime: { makeRuntime: () => ({ kind: 'scripted', async describe() { return {}; }, async health() { return { ok: true, version: '1' }; },
+    async *start(req) { seen = req; yield { t: 'run.started', runRef: 'r1', at: 1 }; yield { t: 'run.completed', at: 2, stopReason: 'end_turn' }; }, async cancel() {} }) } });
+  const plan = agentPlan(w);
+  const p = await startAgent(w, plan);
+  await w.waitOp('attempt.exited', plan.attemptId, 'exited');
+  assert.equal(seen.container.id, p.containerId);
+});
+
+// I2: the host process never outlives its turn, and its pidfile goes with it.
+
+test('I2 a turn that completes while its CLI hangs on leaves no process and no pidfile', async () => {
+  let spawned = null;
+  const w = await world({ agentRuntime: { agentBin: process.execPath, agentEnv: { ELECTRON_RUN_AS_NODE: '1', PROC_CLI_COMPLETE_HANG: '1' }, agentArgvPrefix: [FAKE_CLI],
+    onSpawned: (info) => { spawned = info; } } });
+  const plan = agentPlan(w, { kind: 'cli-agent' });
+  await startAgent(w, plan);
+  await w.waitOp('attempt.exited', plan.attemptId, 'exited');
+  assert.equal(w.one('attempt.exited', plan.attemptId).exit.code, 0, 'the turn itself completed');
+  assert.ok(spawned);
+  await untilPidGone(spawned.pid);
+  await until(() => !fs.existsSync(path.join(w.home, 'pids', `${spawned.pid}.json`)), 'the pidfile to be removed');
+  assert.equal(w.driver.containers.size, 0);
+});
+
+test('I2 a CLI that exits on its own leaves no pidfile behind', async () => {
+  let spawned = null;
+  const w = await world({ agentRuntime: { agentBin: process.execPath, agentEnv: { ELECTRON_RUN_AS_NODE: '1', PROC_CLI_QUICK: '1' }, agentArgvPrefix: [FAKE_CLI],
+    onSpawned: (info) => { spawned = info; } } });
+  const plan = agentPlan(w, { kind: 'cli-agent' });
+  await startAgent(w, plan);
+  await w.waitOp('attempt.exited', plan.attemptId, 'exited');
+  assert.equal(w.one('attempt.exited', plan.attemptId).exit.code, 0);
+  await until(() => !fs.existsSync(path.join(w.home, 'pids', `${spawned.pid}.json`)), 'the pidfile to be removed after a natural exit');
+  await untilPidGone(spawned.pid);
+});
+
+// I3: the worktree guard.
+
+test('I3 an exec that throws is still walked; later execs are refused; a refused worktree never ends as completed', async () => {
+  let W = null;
+  const late = [];
+  const w = await world({ agentRuntime: { makeRuntime: (plan) => ({ kind: 'scripted', async describe() { return {}; }, async health() { return { ok: true, version: '1' }; },
+    // A runtime that ignores the abort: it execs again after the guard refused, then reports it completed.
+    async *start() {
+      yield { t: 'run.started', runRef: 'r1', at: 1 };
+      late.push(await mcpCall(W, plan.runtime.token, 'sandbox_exec', EXEC_ARGS));
+      late.push(await mcpCall(W, plan.runtime.token, 'sandbox_exec', EXEC_ARGS));
+      yield { t: 'run.completed', at: 2, stopReason: 'end_turn' };
+    }, async cancel() {} }) } });
+  W = w;
+  const plan = agentPlan(w);
+  const wt = plan.worktree.hostPath;
+  let execCalls = 0;
+  w.driver.exec = async () => {
+    execCalls++;
+    fs.symlinkSync(path.join(wt, '..'), path.join(wt, 'evil-link'), 'junction');
+    throw new Error('the exec was killed mid-way');
+  };
+  await startAgent(w, plan);
+  await w.waitOp('attempt.exited', plan.attemptId, 'exited');
+  assert.equal(execCalls, 1, 'the second exec after the refusal never reached the container');
+  assert.equal(late[0].isError, true);
+  assert.equal(late[1].isError, true);
+  assert.match(late[1].text, /ended/);
+  const events = w.of('attempt.runtime', plan.attemptId).map((m) => m.event);
+  assert.ok(!events.some((e) => e.t === 'run.completed'), 'never reported as completed');
+  assert.ok(events.some((e) => e.t === 'run.failed' && /worktree_guard/.test(e.message)));
+  assert.notEqual(w.one('attempt.exited', plan.attemptId).exit.code, 0);
+  assert.match(fs.readFileSync(plan.logPath, 'utf8'), /worktree_guard/);
+});
+
+// I5: bind/unbind is structural.
+
+test('I5 a proxy that fails to start fails the turn proxy_failed; the bearer is unbound and nothing is left', async () => {
+  const w = await world({ agentRuntime: { startProxy: async () => { throw new Error('listen failed'); } } });
+  const plan = agentPlan(w, { steps: textTurn('never reached') });
+  await startAgent(w, plan);
+  await w.waitOp('attempt.exited', plan.attemptId, 'exited');
+  assert.notEqual(w.one('attempt.exited', plan.attemptId).exit.code, 0);
+  const events = w.of('attempt.runtime', plan.attemptId).map((m) => m.event);
+  assert.ok(events.some((e) => e.t === 'run.failed' && /proxy_failed/.test(e.message)));
+  assert.ok(!events.some((e) => e.t === 'message.delta'), 'the runtime never ran');
+  assert.equal(w.driver.containers.size, 0);
+  const stale = await mcpCall(w, plan.runtime.token, 'sandbox_exec', EXEC_ARGS);
+  assert.equal(stale.isError, true);
+  assert.match(stale.text, /no running turn/);
+  assert.equal(w.driver.callsOf('exec').length, 0);
+});
+
+test('I5 a runtime whose start throws, and a finished turn, both leave the old bearer refused', async () => {
+  const w = await world({ agentRuntime: { makeRuntime: () => ({ kind: 'scripted', async describe() { return {}; }, async health() { return { ok: true, version: '1' }; },
+    start() { throw new Error('start blew up'); }, async cancel() {} }) } });
+  const plan = agentPlan(w);
+  await startAgent(w, plan);
+  await w.waitOp('attempt.exited', plan.attemptId, 'exited');
+  assert.notEqual(w.one('attempt.exited', plan.attemptId).exit.code, 0);
+  assert.equal(w.driver.containers.size, 0);
+  assert.match((await mcpCall(w, plan.runtime.token, 'sandbox_exec', EXEC_ARGS)).text, /no running turn/);
+
+  const w2 = await world();
+  const plan2 = agentPlan(w2, { steps: textTurn('fine') });
+  await startAgent(w2, plan2);
+  await w2.waitOp('attempt.exited', plan2.attemptId, 'exited');
+  const stale2 = await mcpCall(w2, plan2.runtime.token, 'sandbox_exec', EXEC_ARGS);
+  assert.equal(stale2.isError, true);
+  assert.match(stale2.text, /no running turn/);
+  assert.equal(w2.driver.callsOf('exec').length, 0);
+});
+
+// CONSENT: the live consent's hash is main's, never derived from the allow list.
+
+const ALLOW = [{ host: 'api.example.com', port: 443 }];
+
+test('CONSENT a matching consent hash starts the proxy and the turn completes', async () => {
+  const w = await world();
+  const plan = agentPlan(w, { steps: textTurn('ok'), egress: { allow: ALLOW, consentHostsSha256: hostsSha256(ALLOW) } });
+  await startAgent(w, plan);
+  await w.waitOp('attempt.exited', plan.attemptId, 'exited');
+  assert.equal(w.one('attempt.exited', plan.attemptId).exit.code, 0);
+});
+
+test('CONSENT a hash that does not match the allowed hosts fails the turn consent_mismatch; no container, bearer unbound', async () => {
+  const w = await world();
+  const plan = agentPlan(w, { steps: textTurn('never reached'), egress: { allow: ALLOW, consentHostsSha256: 'f'.repeat(64) } });
+  await startAgent(w, plan);
+  await w.waitOp('attempt.exited', plan.attemptId, 'exited');
+  assert.notEqual(w.one('attempt.exited', plan.attemptId).exit.code, 0);
+  const events = w.of('attempt.runtime', plan.attemptId).map((m) => m.event);
+  assert.ok(events.some((e) => e.t === 'run.failed' && /consent_mismatch/.test(e.message)), JSON.stringify(events));
+  assert.ok(!events.some((e) => e.t === 'message.delta'));
+  assert.equal(w.driver.containers.size, 0);
+  assert.match((await mcpCall(w, plan.runtime.token, 'sandbox_exec', EXEC_ARGS)).text, /no running turn/);
+});
+
+test('CONSENT hosts without a valid consent hash are refused bad_plan; an empty list needs none', async () => {
+  const w = await world();
+  for (const egress of [{ allow: ALLOW }, { allow: ALLOW, consentHostsSha256: 'nothex' }, { allow: [], consentHostsSha256: 'nothex' }]) {
+    const plan = agentPlan(w, { egress });
+    assert.equal((await startRefused(w, plan)).reason, 'bad_plan', JSON.stringify(egress));
+  }
+  assert.ok(!w.driver.ops().includes('create'));
+  const ok = agentPlan(w, { steps: textTurn('deny-all is fine'), egress: { allow: [] } });
+  await startAgent(w, ok);
+  await w.waitOp('attempt.exited', ok.attemptId, 'exited');
+  assert.equal(w.one('attempt.exited', ok.attemptId).exit.code, 0);
 });
 
 // ---------- the posture pin this task adds (sanity: taskkill is resolved, never a bare command) ----------

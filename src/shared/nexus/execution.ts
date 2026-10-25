@@ -350,14 +350,17 @@ export interface EnginePlan extends PlanBase {
  * by policy; every command it runs goes through `sandbox_exec` into `container` (network `none`, the worktree bound at
  * `/workspace`). `runtime.token` is the turn's capability token: it travels only over the MessagePort, never in argv, a
  * file, a log or a database row. `egress.allow`: the hosts the agent process itself may reach through the runner's
- * loopback proxy (the live consent's hosts). `caps`: the turn's limits, already clamped to the consent.
+ * loopback proxy (the live consent's hosts). `egress.consentHostsSha256`: the live consent record's `hosts_sha256`, which
+ * main reads at turn start (never derived from `allow`); required (64 lowercase hex) when `allow` is non-empty, absent
+ * only for an empty `allow` (deny-all). The runner hands it UNCHANGED to the host egress proxy, which refuses a list
+ * whose canonical hash differs (`consent_mismatch`). `caps`: the turn's limits, already clamped to the consent.
  */
 export interface AgentPlan extends PlanBase {
   kind: 'agent';
   container: ContainerSpec;
   worktree: { hostPath: string; gitDir: string; ref: string; base: string; editable: string[] };
   runtime: { kind: RuntimeKind; request: RunRequest; token: string };
-  egress: { allow: { host: string; port: number }[] };
+  egress: { allow: { host: string; port: number }[]; consentHostsSha256?: string };
   caps: { turnTokens: number; turnUsdCents: number; dayRemainingUsdCents: number; toolCalls: number };
   resourceLabels: ResourceLabels;
 }

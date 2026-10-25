@@ -69,6 +69,7 @@ import { httpProbe, type HttpProbe } from './probe';
 import { ProcTree } from './procTree';
 import { findAttemptDir, readPlanRecord, reconcileAnswer, releaseByLabels, removeResources, type PlanRecord } from './reconcile';
 import { startHostEgressProxy } from './hostEgressProxy';
+import type { AgentRuntime } from '../shared/nexus/runtime';
 import type { ScriptedStep } from './runtimes/scripted';
 import { runtimeFor } from './runtimes/registry';
 import { DEPS_VOLUME_RE, DockerError, SpecError } from './sandbox/dockerDriver';
@@ -88,6 +89,8 @@ export const HEARTBEAT_MS = 15_000;
  */
 export const RUNNER_WALL_FACTOR = 2;
 export const STOP_GRACE_MS = 10_000;
+/** The longest an app-quit shutdown waits for an aborted agent turn to remove its own container. */
+export const AGENT_SHUTDOWN_WAIT_MS = 15_000;
 export const LOG_DRAIN_MS = 5_000;
 /** B2b: the longest a relayed `mcp.call` waits for main's `mcp.reply` before the agent is told it timed out. */
 export const MCP_CALL_TIMEOUT_MS = 60_000;
@@ -139,6 +142,9 @@ export interface RunnerDeps {
     taskkillBin?: string;
     /** Test observability only: called whenever a `cli-agent` turn's process is spawned (after it is recorded). */
     onSpawned?: (info: { pid: number; imageName: string }) => void;
+    /** Test seams: a runtime built per plan (replacing the registry's), and the host proxy starter. */
+    makeRuntime?: (plan: AgentPlan) => AgentRuntime;
+    startProxy?: typeof startHostEgressProxy;
   };
 }
 
@@ -179,6 +185,8 @@ interface AttemptState {
   proxy?: { id: string; logDone: Promise<void> | null; ready: boolean; onReady: (() => void) | null; events: number; lines: number; capped: boolean };
   /** B2b Task 11: set by the MCP exec relay (onExecGrant) when the worktree guard refuses the tree after an agent's exec. */
   agentGuardRefusal?: GuardRefusal;
+  /** B2b Task 11: settles when the agent turn's orchestrator (agentAttempt.run) has finished, container removed. */
+  agentDone?: Promise<void>;
 }
 
 /** What `exit.json` beside `/out` records at collect time (the exit is never re-derived from Docker after that). */
@@ -411,35 +419,46 @@ export class RunnerCore {
   private async onExecGrant(bearer: string, grant: SandboxExecGrant): Promise<McpReplyResult> {
     const reg = this.agentTurns.get(bearer);
     if (!reg) return { ok: false, code: 'unknown_attempt', message: 'no running turn holds this token' };
+    const a = this.attempts.get(reg.attemptId);
+    // A turn that was cancelled, released, refused by the worktree guard or is shutting down runs nothing more.
+    if (this.stopped || (a && (a.abort.signal.aborted || a.agentGuardRefusal))) {
+      return { ok: false, code: 'turn_ended', message: 'this turn has ended; no command is run' };
+    }
     const controller = new AbortController();
     const timer = this.timers.setTimeout(() => controller.abort(), grant.timeoutMs + 5_000);
+    let r: Awaited<ReturnType<RunnerDriver['exec']>> | null = null;
+    let execError: unknown = null;
     try {
-      const r = await this.driver.exec(reg.containerId, grant.argv, { timeoutMs: grant.timeoutMs, signal: controller.signal, maxOutputBytes: SANDBOX_EXEC_OUTPUT_MAX_BYTES });
-      const stdoutBytes = Buffer.byteLength(r.stdout, 'utf8');
-      const stderrBytes = Buffer.byteLength(r.stderr, 'utf8');
-      const stdoutSha256 = createHash('sha256').update(r.stdout, 'utf8').digest('hex');
-      this.post({ op: 'agent.exec.done', attemptId: reg.attemptId, execId: grant.execId, exit: r.exit, stdoutBytes, stderrBytes, stdoutSha256, truncated: r.truncated });
-      // B2b Task 11: the attempt log keeps a redacted record of every exec (LogWriter redacts it again regardless),
-      // and the worktree is re-walked after EVERY exec — whatever the agent's tools or this command planted in the
-      // read-write bind mount is caught before anything else (git, a later exec) looks at the tree.
-      const a = this.attempts.get(reg.attemptId);
-      if (a && a.kind === 'agent' && a.plan && a.plan.kind === 'agent') {
-        a.log?.nexus(`sandbox_exec ${grant.argv.join(' ')} -> exit ${r.exit.code ?? 'null'}${r.stdout ? `\nstdout: ${r.stdout}` : ''}${r.stderr ? `\nstderr: ${r.stderr}` : ''}`);
-        if (!a.agentGuardRefusal) {
-          const g = await guardWalk(a.plan.worktree.hostPath);
-          if (!g.ok) {
-            a.agentGuardRefusal = g.code;
-            a.log?.nexus(`the worktree guard refused the tree after an exec: ${g.code} (${g.entry})`);
-            a.abort.abort();
-          }
-        }
-      }
-      return { ok: true, value: { exit: r.exit, stdout: redactSecretText(r.stdout), stderr: redactSecretText(r.stderr), truncated: r.truncated } };
+      r = await this.driver.exec(reg.containerId, grant.argv, { timeoutMs: grant.timeoutMs, signal: controller.signal, maxOutputBytes: SANDBOX_EXEC_OUTPUT_MAX_BYTES });
     } catch (e) {
-      return { ok: false, code: 'exec_failed', message: msgOf(e) };
+      execError = e;
     } finally {
       this.timers.clearTimeout(timer);
     }
+    if (r) {
+      this.post({ op: 'agent.exec.done', attemptId: reg.attemptId, execId: grant.execId, exit: r.exit, stdoutBytes: Buffer.byteLength(r.stdout, 'utf8'),
+        stderrBytes: Buffer.byteLength(r.stderr, 'utf8'), stdoutSha256: createHash('sha256').update(r.stdout, 'utf8').digest('hex'), truncated: r.truncated });
+    }
+    // B2b Task 11: the attempt log keeps a redacted record of every exec (LogWriter redacts it again regardless), and the
+    // worktree is re-walked after EVERY exec, one that failed, timed out or was aborted included: whatever the agent's
+    // tools or the command planted in the read-write bind mount is caught before anything else looks at the tree.
+    if (a && a.kind === 'agent' && a.plan && a.plan.kind === 'agent') {
+      a.log?.nexus(r
+        ? `sandbox_exec ${grant.argv.join(' ')} -> exit ${r.exit.code ?? 'null'}${r.stdout ? `
+stdout: ${r.stdout}` : ''}${r.stderr ? `
+stderr: ${r.stderr}` : ''}`
+        : `sandbox_exec ${grant.argv.join(' ')} -> failed: ${msgOf(execError)}`);
+      if (!a.agentGuardRefusal) {
+        const g = await guardWalk(a.plan.worktree.hostPath);
+        if (!g.ok) {
+          a.agentGuardRefusal = g.code;
+          a.log?.nexus(`the worktree guard refused the tree after an exec: ${g.code} (${g.entry})`);
+          a.abort.abort();
+        }
+      }
+    }
+    if (!r) return { ok: false, code: 'exec_failed', message: msgOf(execError) };
+    return { ok: true, value: { exit: r.exit, stdout: redactSecretText(r.stdout), stderr: redactSecretText(r.stderr), truncated: r.truncated } };
   }
 
   private async onProbe(): Promise<void> {
@@ -663,25 +682,55 @@ export class RunnerCore {
     return null;
   }
 
-  /** B2b Task 11: an agent turn's own container, labels and mount (checked separately: it shares nothing with a tool plan's staging folders). */
+  /**
+   * B2b Task 11: an agent turn's own container, labels, mount and paths. Everything the runner will create, bind or
+   * delete is re-derived from the ids and the data home here, never trusted from the plan: the config dir (the runner
+   * deletes its files at the turn's end) must be exactly `<home>/jobs/<jobId>/agent`, and the worktree (bound read-write
+   * into the container) exactly a session folder `<home>/wt/<session>`; neither may hold a `..` segment. A malformed
+   * plan is a refusal, never a thrown TypeError.
+   */
   private agentPlanProblem(attemptId: string, plan: AgentPlan): string | null {
+    try { return this.agentPlanProblemOf(attemptId, plan); } catch { return 'the agent plan is malformed'; }
+  }
+
+  private agentPlanProblemOf(attemptId: string, plan: AgentPlan): string | null {
+    const isObj = (x: unknown): x is Record<string, unknown> => typeof x === 'object' && x !== null && !Array.isArray(x);
+    if (!isObj(plan.container) || !isObj(plan.container.labels) || !isObj(plan.container.network) || !Array.isArray(plan.container.mounts)) return 'the agent container is malformed';
+    if (!isObj(plan.worktree) || !isObj(plan.runtime) || !isObj(plan.runtime.request) || !isObj(plan.egress) || !Array.isArray(plan.egress.allow)) return 'the agent plan is malformed';
     const rl = plan.resourceLabels;
-    if (!rl || rl['nexus.home'] !== this.home || rl['nexus.attempt'] !== attemptId || rl['nexus.job'] !== plan.jobId) return 'the resource labels are not this attempt\'s';
+    if (!isObj(rl) || rl['nexus.home'] !== this.home || rl['nexus.attempt'] !== attemptId || rl['nexus.job'] !== plan.jobId) return 'the resource labels are not this attempt\'s';
     const spec = plan.container;
     const l = spec.labels;
     if (l['nexus.attempt'] !== attemptId || l['nexus.home'] !== this.home || l['nexus.job'] !== plan.jobId) return 'the container\'s labels are not this attempt\'s';
     if (l['nexus.kind'] !== 'agent') return 'an agent container must be labelled nexus.kind=agent';
     if (spec.network.mode !== 'none') return 'an agent container runs with no network at the container level';
-    if (typeof plan.worktree?.hostPath !== 'string' || !path.isAbsolute(plan.worktree.hostPath)) return 'the worktree is not an absolute path';
+    const root = this.paths!.root;
+    const noDots = (p: string): boolean => !p.split(/[\\/]/).includes('..');
+    const wt = plan.worktree.hostPath;
+    if (typeof wt !== 'string' || !path.isAbsolute(wt) || wt.includes('\0') || !noDots(wt)) return 'the worktree is not a plain absolute path';
+    try { worktreeName(root, wt); } catch { return 'the worktree is not a session folder of this data home'; }
+    const req = plan.runtime.request;
+    const configDir = req.configDir;
+    if (typeof configDir !== 'string' || !path.isAbsolute(configDir) || configDir.includes('\0') || !noDots(configDir)
+      || !this.paths!.same(configDir, path.join(root, 'jobs', plan.jobId, 'agent'))) return 'the config folder is not this job\'s agent folder';
+    if (req.jobId !== plan.jobId || req.attempt !== plan.attemptN) return 'the run request is for another job or attempt';
+    if (!isObj(req.worktree) || typeof req.worktree.hostPath !== 'string' || !this.paths!.same(req.worktree.hostPath, wt)) return 'the run request names another worktree';
+    if (!isObj(req.container) || typeof req.container.id !== 'string' || req.container.id.length === 0 || req.container.id.length > 128) return 'the run request has no container reference';
     let sawWorktree = false;
     for (const m of spec.mounts) {
       if (m.kind !== 'worktree') return 'an agent container may only mount its own worktree';
       if (m.readOnly) return 'the worktree mount must be read-write';
-      if (!this.paths!.same(m.hostPath, plan.worktree.hostPath)) return 'the worktree mount is not this turn\'s worktree';
+      if (m.containerPath !== '/workspace') return 'the worktree is mounted at /workspace only';
+      if (typeof m.hostPath !== 'string' || !this.paths!.same(m.hostPath, wt)) return 'the worktree mount is not this turn\'s worktree';
       sawWorktree = true;
     }
     if (!sawWorktree) return 'the agent container has no worktree mount';
-    if (typeof plan.runtime?.token !== 'string' || plan.runtime.token.length === 0) return 'the turn has no capability token';
+    if (typeof plan.runtime.token !== 'string' || plan.runtime.token.length === 0) return 'the turn has no capability token';
+    // The live consent's hash comes from main, never from `allow`: required (64 hex) with any host, absent only for deny-all.
+    const consent = plan.egress.consentHostsSha256;
+    if (plan.egress.allow.length > 0 ? typeof consent !== 'string' || !/^[0-9a-f]{64}$/.test(consent) : consent !== undefined && (typeof consent !== 'string' || !/^[0-9a-f]{64}$/.test(consent))) {
+      return 'the egress hosts carry no valid consent hash';
+    }
     return null;
   }
 
@@ -1058,20 +1107,31 @@ export class RunnerCore {
   /** Builds this turn's agentAttempt.ts port (post, log, the registry, the proxy starter, the guard-refusal flag) and runs it. */
   private async runAgent(a: AttemptState, plan: AgentPlan): Promise<void> {
     await this.openLog(a);
-    const runtime = runtimeFor(plan.runtime.kind, {
-      token: plan.runtime.token,
-      mcpUrl: this.mcpServer?.url ?? '',
-      steps: this.deps.agentRuntime?.scriptFor?.(plan) ?? [],
-      fetchImpl: this.deps.agentRuntime?.fetchImpl,
-      agentBin: this.deps.agentRuntime?.agentBin,
-      agentEnv: this.deps.agentRuntime?.agentEnv,
-      agentArgvPrefix: this.deps.agentRuntime?.agentArgvPrefix,
-      taskkillBin: this.deps.agentRuntime?.taskkillBin,
-      onSpawned: async (info) => {
-        await this.procTree?.record({ jobId: plan.jobId, pid: info.pid, imageName: info.imageName, mainBootId: this.bootId ?? '', runnerPid: process.pid });
-        this.deps.agentRuntime?.onSpawned?.(info);
-      }
-    });
+    // No link may stand anywhere on the way to the folders the runner binds or deletes in (the config dir, the worktree).
+    if (!(await noLinkUnder(this.fs, this.paths!.root, plan.runtime.request.configDir)) || !(await noLinkUnder(this.fs, this.paths!.root, plan.worktree.hostPath))) {
+      return this.refuse(a, 'bad_plan', 'a link stands in the turn\'s config or worktree folder');
+    }
+    let runtime: AgentRuntime;
+    try {
+      runtime = this.deps.agentRuntime?.makeRuntime?.(plan) ?? runtimeFor(plan.runtime.kind, {
+        token: plan.runtime.token,
+        mcpUrl: this.mcpServer?.url ?? '',
+        steps: this.deps.agentRuntime?.scriptFor?.(plan) ?? [],
+        fetchImpl: this.deps.agentRuntime?.fetchImpl,
+        agentBin: this.deps.agentRuntime?.agentBin,
+        agentEnv: this.deps.agentRuntime?.agentEnv,
+        agentArgvPrefix: this.deps.agentRuntime?.agentArgvPrefix,
+        taskkillBin: this.deps.agentRuntime?.taskkillBin,
+        onSpawned: async (info) => {
+          await this.procTree?.record({ jobId: plan.jobId, pid: info.pid, imageName: info.imageName, mainBootId: this.bootId ?? '', runnerPid: process.pid });
+          this.deps.agentRuntime?.onSpawned?.(info);
+        },
+        // The process is gone (exited, or killed at the turn's end): its pidfile and live entry go with it.
+        onGone: async (pid) => { await this.procTree?.forget(pid); }
+      });
+    } catch (e) {
+      return this.refuse(a, 'bad_plan', `no runtime could be built for this turn: ${msgOf(e)}`);
+    }
     const port: AgentAttemptPort = {
       driver: this.driver,
       fs: this.fs,
@@ -1093,13 +1153,16 @@ export class RunnerCore {
       bindAgentTurn: (bearer, attemptId, containerId) => this.bindAgentTurn(bearer, attemptId, containerId),
       unbindAgentTurn: (bearer) => this.unbindAgentTurn(bearer),
       runtime,
-      startHostEgressProxy,
+      startHostEgressProxy: this.deps.agentRuntime?.startProxy ?? startHostEgressProxy,
       imagesDir: this.deps.imagesDir,
       guardRefusal: () => a.agentGuardRefusal ?? null,
       signal: a.abort.signal
     };
+    // Kept on the attempt so an app quit (shutdown) can abort the turn and wait for its container to be removed.
+    const done = runAgentAttempt(plan, port);
+    a.agentDone = done.then(() => undefined, () => undefined);
     try {
-      await runAgentAttempt(plan, port);
+      await done;
     } finally {
       try { await a.log?.close(); } catch { /* closed */ }
       if (!a.settled && !a.cleaned) a.settled = true;
@@ -1558,6 +1621,20 @@ export class RunnerCore {
   async shutdown(): Promise<void> {
     this.stopped = true;
     this.builder.cancelAll();
+    // Agent turns first: each is aborted (its runtime process killed, its container stopped and removed, its bearer
+    // unbound) and awaited; one that does not finish in time has its labelled containers stopped and removed here.
+    const agents = [...this.attempts.values()].filter((x) => x.kind === 'agent');
+    for (const x of agents) x.abort.abort();
+    await Promise.all(agents.map(async (x) => {
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const finished = await Promise.race([(x.agentDone ?? Promise.resolve()).then(() => true), new Promise<boolean>((r) => { timer = setTimeout(() => r(false), AGENT_SHUTDOWN_WAIT_MS); })]);
+      if (timer) clearTimeout(timer);
+      if (finished || !this.home) return;
+      try {
+        const found = await this.driver.listResources({ 'nexus.home': this.home, 'nexus.attempt': x.id });
+        for (const c of found.filter((r) => r.kind === 'container')) { await this.stopAndKill(c.id, 2_000); try { await this.driver.remove(c.id); } catch { /* gone */ } }
+      } catch (e) { this.log(`[runner] an agent container was not removed at shutdown: ${msgOf(e)}`); }
+    }));
     await this.closeMcpServer();
     await this.procTree?.shutdownTrees();
     const all = [...this.attempts.values()];

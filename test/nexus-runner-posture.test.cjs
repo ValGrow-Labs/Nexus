@@ -78,7 +78,7 @@ test('nothing under src/main or src/runner spawns python, py, pip, uv or pytest'
   for (const f of [...ts('src/main'), ...RUNNER]) assert.doesNotMatch(code(f), BAD, rel(f));
 });
 
-test('the only programs spawned under src/runner and src/main/nexusExec are docker and git (spawn( first arguments)', () => {
+test('the only programs spawned under src/runner and src/main/nexusExec are docker, git, taskkill and an agent turn\'s resolved CLI (spawn( first arguments)', () => {
   const sites = [];
   for (const f of [...RUNNER, ...WIRING]) {
     for (const m of code(f).matchAll(/\b(spawn|execFile|fork)\s*\(\s*([^,)]+)/g)) sites.push({ file: rel(f), fn: m[1], first: m[2].trim() });
