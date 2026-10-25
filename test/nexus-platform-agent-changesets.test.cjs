@@ -60,13 +60,13 @@ test('git.paths_in_scope: a sensitive or out-of-scope path fails; an in-scope pl
 
 test('sec.secret_scan: any hit fails; the evidence holds path and line only, never the secret text', () => {
   const head = 'b'.repeat(40);
-  const failing = secretScan.run({ head, secretHits: [{ path: 'src/a.ts', line: 12, rule: 'provider_key' }] });
+  const failing = secretScan.run({ head, secretHits: [{ path: 'src/a.ts', line: 12, rule: 'provider_key' }], scanTruncated: false });
   assert.equal(failing.status, 'failed');
   assert.equal(failing.reason, 'secret_shaped_line');
   const text = JSON.stringify(failing.evidence);
   assert.ok(!/AKIA|BEGIN|sk-/.test(text), 'no secret shape leaks into the evidence');
   assert.deepEqual(failing.evidence, [{ type: 'location', path: 'src/a.ts', line: 12, rule: 'provider_key' }]);
-  const clean = secretScan.run({ head, secretHits: [] });
+  const clean = secretScan.run({ head, secretHits: [], scanTruncated: false });
   assert.equal(clean.status, 'passed');
 });
 
@@ -190,6 +190,8 @@ test('sec.secret_scan: a truncated scan never passes (failed scan_truncated), wi
   assert.equal(r.status, 'failed');
   assert.equal(r.reason, 'scan_truncated');
   assert.equal(secretScan.run({ head, secretHits: [], scanTruncated: false }).status, 'passed');
+  // An absent flag says nothing was checked: it counts as truncated, exactly like ingest's fail-closed read.
+  assert.equal(secretScan.run({ head, secretHits: [] }).reason, 'scan_truncated');
 });
 
 test('git.paths_in_scope: a .claude segment at any depth is refused whatever the scope says', () => {
@@ -477,6 +479,37 @@ test('CS9b: v2 revising with an UNCHANGED head still gets its own discovery and 
   completeMergeCheck(w, turn, v2.versionId);
   assert.equal(latest(w, v2.versionId, 'cs.tests_pass')?.status, 'passed', 'v2\'s own cs.tests_pass is recorded');
   assert.equal(version(w, v2.versionId).status, 'candidate', 'the draft does not stick');
+});
+
+test('scanAddedLines: non-BMP characters in quoted paths stay whole; a malformed trailing backslash is attributed to an unreadable path, never dropped', () => {
+  const nl = String.fromCharCode(10); const bs = String.fromCharCode(92);
+  const emoji = String.fromCodePoint(0x1f600);
+  const patch = [
+    '--- /dev/null', '+++ "b/' + bs + '360' + bs + '237' + bs + '230' + bs + '200.txt"', '@@ -0,0 +1,1 @@', '+AKIAABCDEFGHIJKLMNOP',
+    '--- /dev/null', '+++ "b/' + emoji + bs + 't.txt"', '@@ -0,0 +1,1 @@', '+AKIAABCDEFGHIJKLMNOP',
+    '--- /dev/null', '+++ "b/x' + bs + '"', '@@ -0,0 +1,1 @@', '+AKIAABCDEFGHIJKLMNOP'
+  ].join(nl);
+  const { secretHits } = scanAddedLines(patch);
+  assert.deepEqual(secretHits.map((h) => h.path), [emoji + '.txt', emoji + String.fromCharCode(9) + '.txt', '(unreadable path)']);
+  assert.ok(secretHits.every((h) => !h.path.includes(String.fromCharCode(0xfffd))), 'no replacement character');
+});
+
+test('a second revalidate while the suite derived from a change set is still running queues no second discovery', async () => {
+  const w = newWorld();
+  const turn = openRunningTurn(w.db, w.nx);
+  const answer = await collectWith(w, turn, css(w), { title: 'Slow suite', summary: '' }, factsFor(turn));
+  const discover = keyed(w, `cs.tests_pass:${answer.versionId}:discover:%`);
+  const idsSha = crypto.createHash('sha256').update('ids').digest('hex');
+  finish(turn, leaseAndRun(w, discover.id), {
+    outputs: [{ relPath: 'ids.txt', sha256: idsSha, bytes: 10, mediaType: 'text/plain' }],
+    parsed: [{ parser: 'discovery', sourceSha256: idsSha, normalized: { framework: 'node-test', ids: ['a.test.js'], files: ['a.test.js'] } }]
+  });
+  const run = findJob(w, discover.id, 'sde.test.node');
+  assert.ok(run, 'the suite\'s own test run is queued and not yet run');
+  const a = w.nx.validation.revalidate(w.me, answer.versionId);
+  const b = w.nx.validation.revalidate(w.me, answer.versionId);
+  assert.ok(a.jobs.includes(run.id) && b.jobs.includes(run.id), 'the live test run is the answer');
+  assert.equal(w.db.prepare('SELECT COUNT(*) AS n FROM jobs WHERE idempotency_key LIKE ?').get(`cs.tests_pass:${answer.versionId}:discover:%`).n, 1, 'no second discovery');
 });
 
 test('CS10: after these flows, no orphan (the existing invariant queries, O1-O22)', async () => {

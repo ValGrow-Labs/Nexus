@@ -463,6 +463,62 @@ test('collect never stages the agent tool\'s settings folder, whatever scope mai
   }
 });
 
+test('collect with several scope entries stages the entries that match even when another matches nothing (one add per entry); deletions count; all-unmatched stays "nothing changed"', async () => {
+  const w = world({ 'a.txt': 'a\n', 'src/x.txt': 'x\n', 'docs/d.md': 'd\n' });
+  await ensureWorktree(w.g, w.task, { dataRoot: w.dataRoot });
+  fs.writeFileSync(path.join(w.wt, 'src', 'x.txt'), 'x2\n');
+  fs.writeFileSync(path.join(w.wt, 'a.txt'), 'out of scope\n');
+  // docs/ is untouched (matches tracked files, no change); e2e/ matches nothing at all: the whole call used to fail 128.
+  const f = await collect(w.g, w.collectTask({ scope: ['src/**', 'docs/**', 'e2e/**'] }), { dataRoot: w.dataRoot });
+  assert.equal(f.changed, true, 'the src change is committed, not silently dropped');
+  assert.deepEqual(f.paths, ['src/x.txt']);
+  // A deletion in one entry beside an untouched entry and an entry that matches nothing.
+  fs.rmSync(path.join(w.wt, 'src', 'x.txt'));
+  const g = await collect(w.g, w.collectTask({ scope: ['src/**', 'docs/**', 'e2e/**'] }), { dataRoot: w.dataRoot });
+  assert.equal(g.changed, true);
+  assert.equal(git(w.repo, ['ls-tree', '-r', '--name-only', g.head]).stdout.includes('src/x.txt'), false, 'the deletion is committed');
+  assert.deepEqual(g.diffstat, { files: 1, insertions: 0, deletions: 1 }, 'against the base the file is gone');
+  // Every entry unmatched: nothing changes.
+  fs.writeFileSync(path.join(w.wt, 'a.txt'), 'edited again\n');
+  const h = await collect(w.g, w.collectTask({ scope: ['nothing/**', 'nowhere/**'] }), { dataRoot: w.dataRoot });
+  assert.equal(h.changed, false);
+  assert.equal(h.head, g.head);
+  // The excludes of a scope still apply to every entry.
+  fs.writeFileSync(path.join(w.wt, 'docs', 'gen.md'), 'generated\n'); fs.writeFileSync(path.join(w.wt, 'docs', 'keep.md'), 'keep\n');
+  const k = await collect(w.g, w.collectTask({ scope: ['docs/**', '!docs/gen.md'] }), { dataRoot: w.dataRoot });
+  assert.ok(k.paths.includes('docs/keep.md') && !k.paths.includes('docs/gen.md'), 'the exclude applied');
+});
+
+test('collect scans files git would call binary: a NUL byte and a -diff / binary attribute never hide a secret (path:line only)', async () => {
+  const w = world({ 'a.txt': 'a\n', '.gitattributes': 'secret.txt -diff\n*.bin binary\n' });
+  await ensureWorktree(w.g, w.task, { dataRoot: w.dataRoot });
+  fs.writeFileSync(path.join(w.wt, 'zeros.dat'), Buffer.concat([Buffer.from([0, 1, 2, 10]), Buffer.from('AKIAABCDEFGHIJKLMNOP\n')]));
+  fs.writeFileSync(path.join(w.wt, 'secret.txt'), 'x\nAKIAABCDEFGHIJKLMNOP\n');
+  fs.writeFileSync(path.join(w.wt, 'blob.bin'), 'AKIAABCDEFGHIJKLMNOP\n');
+  const f = await collect(w.g, w.collectTask(), { dataRoot: w.dataRoot });
+  assert.deepEqual(f.secretHits.map((h) => `${h.path}:${h.line}:${h.rule}`).sort(), ['blob.bin:1:provider_key', 'secret.txt:2:provider_key', 'zeros.dat:2:provider_key']);
+  assert.equal(f.scanTruncated, false);
+  assert.ok(!JSON.stringify(f).includes('AKIA'));
+  // A large real binary fills the scan's cap: fail closed (scanTruncated), never a silent pass.
+  const w2 = world({ 'a.txt': 'a\n' });
+  await ensureWorktree(w2.g, w2.task, { dataRoot: w2.dataRoot });
+  fs.writeFileSync(path.join(w2.wt, 'big.bin'), crypto.randomBytes(64 * 1024));
+  const g = await collect(w2.g, w2.collectTask(), { dataRoot: w2.dataRoot, patchMaxBytes: 8 * 1024 });
+  assert.equal(g.scanTruncated, true);
+});
+
+test('collect never stages a settings folder or file of that name in any case', async () => {
+  const w = world({ 'a.txt': 'a\n' });
+  await ensureWorktree(w.g, w.task, { dataRoot: w.dataRoot });
+  fs.mkdirSync(path.join(w.wt, '.CLAUDE'), { recursive: true });
+  fs.writeFileSync(path.join(w.wt, '.CLAUDE', 'settings.local.json'), '{}\n');
+  fs.mkdirSync(path.join(w.wt, 'sub'), { recursive: true });
+  fs.writeFileSync(path.join(w.wt, 'sub', '.claude'), 'a file with the folder\'s name\n');
+  fs.writeFileSync(path.join(w.wt, 'a.txt'), 'a2\n');
+  const f = await collect(w.g, w.collectTask(), { dataRoot: w.dataRoot });
+  assert.deepEqual(f.paths, ['a.txt']);
+});
+
 test('CS14 after the first change set is accepted, the next collect\'s base is the merge-base with the integration ref and its diffstat shows only the new work', async () => {
   const w = world();
   const c1 = await changed(w);

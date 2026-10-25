@@ -340,7 +340,9 @@ export const COLLECT_PATCH_MAX_BYTES = 16 * 2 ** 20;
  * Pathspecs every collect appends, whatever scope main supplied: the agent CLI writes its own settings under
  * `<worktree>/.claude/` (Task 0), which must never be staged or committed.
  */
-export const COLLECT_ALWAYS_EXCLUDE: readonly string[] = Object.freeze([':(glob,exclude).claude/**', ':(glob,exclude)**/.claude/**']);
+export const COLLECT_ALWAYS_EXCLUDE: readonly string[] = Object.freeze([
+  ':(glob,icase,exclude).claude', ':(glob,icase,exclude).claude/**', ':(glob,icase,exclude)**/.claude', ':(glob,icase,exclude)**/.claude/**'
+]);
 
 /**
  * Scans a zero-context unified diff (`git diff -U0`) for added lines, classifying each by `diffLineSecret` (blocking)
@@ -390,16 +392,20 @@ export function scanAddedLines(patch: string): { secretHits: CollectFacts['secre
 }
 
 /** A `---`/`+++` header's path: git's C-style quoting undone, a trailing tab (a name with a space) dropped, the prefix removed; null for /dev/null. */
+const UNREADABLE_PATH = '(unreadable path)';
 function patchPath(rest: string, prefix: string): string | null {
   let p = rest.replace(/\t.*$/, '');
   if (p.startsWith('"') && p.endsWith('"') && p.length >= 2) {
     const bytes: number[] = [];
-    const inner = p.slice(1, -1);
-    for (let i = 0; i < inner.length; i++) {
-      const c = inner[i];
+    const chars = [...p.slice(1, -1)];                       // by code point: a non-BMP character is one unit, never split
+    for (let i = 0; i < chars.length; i++) {
+      const c = chars[i];
       if (c !== '\\') { bytes.push(...Buffer.from(c, 'utf8')); continue; }
-      const n = inner[++i];
-      if (n >= '0' && n <= '7') { let o = n; while (o.length < 3 && inner[i + 1] >= '0' && inner[i + 1] <= '7') o += inner[++i]; bytes.push(parseInt(o, 8) & 0xff); }
+      const n = chars[++i];
+      // A trailing backslash is malformed: the path is unreadable, and an unreadable path is still attributed (never dropped),
+      // so a hit under it is reported rather than silently skipped.
+      if (n === undefined) return UNREADABLE_PATH;
+      if (n >= '0' && n <= '7') { let o = n; while (o.length < 3 && chars[i + 1] !== undefined && chars[i + 1] >= '0' && chars[i + 1] <= '7') o += chars[++i]; bytes.push(parseInt(o, 8) & 0xff); }
       else bytes.push(({ n: 10, t: 9, r: 13, a: 7, b: 8, f: 12, v: 11 } as Record<string, number>)[n] ?? n.charCodeAt(0));
     }
     p = Buffer.from(bytes).toString('utf8');
@@ -407,6 +413,8 @@ function patchPath(rest: string, prefix: string): string | null {
   if (p === '/dev/null') return null;
   return p.startsWith(prefix) ? p.slice(prefix.length) : p;
 }
+
+const isExcludeSpec = (s: string): boolean => s.startsWith(':(glob,exclude)') || s.startsWith(':(glob,icase,exclude)');
 
 /**
  * `:(glob)` pathspecs of a change-set scope (`!x` excludes); an empty scope is the whole tree. Every entry must be a
@@ -450,9 +458,16 @@ export async function collect(g: HardenedGit, t: { repoPath: string; worktreePat
   const repo = t.repoPath;
   const parent = await resolveRef(g, repo, n, t.ref, o.signal);
   if (!parent) throw new GitFailure('ref_moved', 'the session ref is gone');
-  const add = await g.run(t.worktreePath, ['add', '-A', '--', ...scopePathspecs(t.scope), ...COLLECT_ALWAYS_EXCLUDE], { neutral: n, worktree: wt, signal: o.signal, timeoutMs: 10 * GIT_TIMEOUT_MS, eol: true });
-  // A scope that matches no file stages nothing (git answers 128 "did not match any files"); any other failure stops.
-  if (add.code !== 0 && !/did not match any files/.test(add.stderr)) throw new GitFailure('git_failed', 'add failed');
+  // One `add -A` per positive scope entry, each carrying EVERY exclude: a single call with several entries stages
+  // NOTHING when any one of them matches no file (git answers 128 "did not match any files" for the whole call), which
+  // silently dropped the work in the entries that did match. An entry that matches nothing stages nothing (tolerated);
+  // any other failure stops. `-A` keeps its meaning per entry (new, modified and deleted paths under it).
+  const specs = scopePathspecs(t.scope);
+  const excludes = [...specs.filter(isExcludeSpec), ...COLLECT_ALWAYS_EXCLUDE];
+  for (const spec of specs.filter((s) => !isExcludeSpec(s))) {
+    const add = await g.run(t.worktreePath, ['add', '-A', '--', spec, ...excludes], { neutral: n, worktree: wt, signal: o.signal, timeoutMs: 10 * GIT_TIMEOUT_MS, eol: true });
+    if (add.code !== 0 && !/did not match any files/.test(add.stderr)) throw new GitFailure('git_failed', 'add failed');
+  }
   const ls = must(await g.run(t.worktreePath, ['ls-files', '-s', '-z'], { neutral: n, worktree: wt, signal: o.signal, maxStdout: 64 * 2 ** 20 }), 'ls-files');
   if (ls.truncated) throw new GitFailure('worktree_too_large', 'the index is too large');
   for (const entry of ls.stdout.split('\0')) {
@@ -487,9 +502,12 @@ export async function collect(g: HardenedGit, t: { repoPath: string; worktreePat
   }
   // F29/D-B14: a zero-context patch of the same base..head, scanned for secret- and entropy-shaped added lines. The
   // patch text is read only here, inside this function, and discarded; `scanAddedLines` returns path:line only.
-  const patch = must(await g.run(repo, ['-c', 'core.quotePath=false', 'diff', ...SAFE_DIFF_ARGS, '--no-renames', '--src-prefix=a/', '--dst-prefix=b/', '-U0', base, head],
+  const patch = must(await g.run(repo, ['-c', 'core.quotePath=false', 'diff', ...SAFE_DIFF_ARGS, '--no-renames', '--src-prefix=a/', '--dst-prefix=b/', '--text', '-U0', base, head],
     { neutral: n, signal: o.signal, maxStdout: o.patchMaxBytes ?? COLLECT_PATCH_MAX_BYTES }), 'diff -U0');
   const { secretHits, entropyHits } = scanAddedLines(patch.stdout);
+  // `--text` renders every file as text, overriding a NUL byte and any `-diff`/`binary` attribute: otherwise such a file
+  // is "Binary files differ" and never scanned, and a secret could hide in it. The cost is that a huge real binary now
+  // fills the patch cap; that is the same fail-closed outcome (scanTruncated -> sec.secret_scan fails scan_truncated).
   // A patch cut at the cap was not fully scanned: reported, so main fails the secret scan (never passes it).
   return { ok: true, changed, parent, head, tree, base, ref: t.ref, diffstat, paths, pathsTruncated, secretHits, entropyHits, scanTruncated: patch.truncated === true };
 }

@@ -476,6 +476,12 @@ export class ValidationService {
     // fresh key (revalidate), exactly as the generic branch bounds and re-queues its checks.
     const live = this.liveChangeSetCheck('cs.tests_pass:' + v.id + ':discover%');
     if (live) return live;
+    // The suite this change set's discovery derived may still be running its own `sde.test.*` check (the discover job
+    // itself has settled): that live test run is the answer too, so a second revalidate never queues a second discovery.
+    const running = this.db.prepare(`SELECT c.id FROM jobs c JOIN jobs p ON p.id = c.parent_job_id
+      WHERE p.idempotency_key LIKE ? AND c.recipe_id LIKE 'sde.test.%' AND c.state IN ${LIVE_JOB_STATES} ORDER BY c.rowid DESC LIMIT 1`)
+      .get('cs.tests_pass:' + v.id + ':discover%') as { id: string } | undefined;
+    if (running) return running.id;
     const seq = this.countChangeSetChecks('cs.tests_pass:' + v.id + ':discover%') + 1;
     let res: { job: { id: string }; created: boolean };
     try {

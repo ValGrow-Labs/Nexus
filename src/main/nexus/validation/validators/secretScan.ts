@@ -13,7 +13,7 @@ export const MAX_LISTED = 100;
 
 export interface SecretHit { path: string; line: number; rule: 'provider_key' | 'private_key' }
 /** `scanTruncated`: the runner's patch was cut at its cap, so not every added line was scanned (never a pass). */
-export interface SecretScanFacts { head: string; secretHits: SecretHit[]; scanTruncated?: boolean }
+export interface SecretScanFacts { head: string; secretHits: SecretHit[]; scanTruncated: boolean }
 
 const isHit = (x: unknown): x is SecretHit => !!x && typeof x === 'object'
   && typeof (x as SecretHit).path === 'string' && Number.isSafeInteger((x as SecretHit).line) && (x as SecretHit).line >= 1
@@ -23,9 +23,11 @@ export function run(f: SecretScanFacts): ValidatorOutcome {
   if (!f || typeof f.head !== 'string' || !COMMIT_RE.test(f.head) || !Array.isArray(f.secretHits) || !f.secretHits.every(isHit)) {
     return errored('parser_contract', 'Checks could not run: the secret scan facts were not usable.');
   }
-  if (f.scanTruncated === true) {
-    // A secret past the cut could not be seen: the scan fails (the agent revises a smaller change), it never passes.
-    return failed('scan_truncated', 'The change is too large to scan for secrets in full; split it into smaller changes.',
+  if (f.scanTruncated !== false) {
+    // A secret past the cut could not be seen (and an absent flag says nothing was checked): the scan fails (the agent
+    // revises a smaller change), it never passes. Large binary files fill the scan's cap too, so a change holding one
+    // fails here; keep large binaries out of a change set.
+    return failed('scan_truncated', 'The change is too large to scan for secrets in full (large or binary files count against the scan); split it into smaller changes.',
       f.secretHits.slice(0, MAX_LISTED).map((h) => ({ type: 'location' as const, path: h.path, line: h.line, rule: h.rule })));
   }
   const evidence = f.secretHits.slice(0, MAX_LISTED).map((h) => ({ type: 'location' as const, path: h.path, line: h.line, rule: h.rule }));
