@@ -267,6 +267,8 @@ export function createNexusPlatform(db: Database.Database, opts?: NexusPlatformO
       system: principals.system(), now, log })
     : null;
   exec.bindMcpGateway(mcpGateway);
+  // What the gateway keeps in memory for a turn (retried-call replies, call count, pending execs) goes with its tokens.
+  if (tokens && mcpGateway) tokens.onRevoked((jobId) => { if (jobId === null) mcpGateway.evictAll(); else mcpGateway.evictJob(jobId); });
   if (tokens) {
     // Every runner `ready` is a new runner process (it answers the one `hello` of its port): its MCP server is new, and
     // no token of an earlier runner may reach it. The revocation runs before the execution core sees the message.

@@ -23,8 +23,9 @@
  *
  * `sandbox_exec` never runs anything itself: it records a pending exec (`{execId, argvSha256, argvCount, cwd}`, an
  * `attempt.progress` event) against the CALLING job's own live attempt and replies with a grant the runner executes
- * in that attempt's own container. The grant is cached per `callId` (MG13: a retried call gets the same grant, never
- * a second one). `onExecDone` records the reported exit, byte counts and `stdoutSha256`; an unknown or mismatched
+ * in that attempt's own container. Every call's reply is remembered per (token, `callId`) (a retry never re-runs the
+ * service call, re-audits or re-counts; MG13: a retried `sandbox_exec` gets the same grant, never a second one) until
+ * the turn's tokens are revoked or expire. `onExecDone` records the reported exit, byte counts and `stdoutSha256`; an unknown or mismatched
  * `execId` is refused (the caller, ExecutionService, logs one line and never writes anything for it — F1).
  */
 import { createHash, randomBytes } from 'node:crypto';
@@ -83,9 +84,14 @@ const fail = (code: string, message: string): McpReplyResult => ({ ok: false, co
 
 export class McpGateway {
   private readonly log: (line: string) => void;
-  /** `callId` -> the reply already decided for it (every tool is idempotent on a retried callId; `sandbox_exec`'s
-   *  grant in particular must never be re-minted, MG13). */
-  private readonly repliedCalls = new Map<string, McpReplyResult>();
+  /**
+   * `<jti>:<callId>` -> the reply decided for it, as a promise (a retry that arrives while the first is still running
+   * shares it). Every tool is idempotent on a retried callId of the same token: the service call never runs twice, no
+   * second `mcp.call` row is written, the per-turn budget is counted once, and a `sandbox_exec` grant is never
+   * re-minted (MG13). Keyed by the token too, so a callId never answers for another turn. Entries are dropped when
+   * the turn's tokens are revoked (`evictJob`) and, as a backstop, once their token has expired.
+   */
+  private readonly repliedCalls = new Map<string, { reply: Promise<McpReplyResult>; jobId: string; exp: number }>();
   /** `execId` -> what main is waiting for from `agent.exec.done`. */
   private readonly pendingExecs = new Map<string, PendingExec>();
   /** `jobId` -> MCP calls counted against the turn's tool-call cap so far (in memory; a restart starts a fresh turn). */
@@ -96,10 +102,8 @@ export class McpGateway {
   }
 
   async call(raw: Extract<RunnerToMain, { op: 'mcp.call' }>): Promise<McpReplyResult> {
-    const cached = this.repliedCalls.get(raw.callId);
-    if (cached) return cached;
-
     const now = this.deps.now();
+    this.sweepExpired(now);
     const v = this.deps.tokens.verify(raw.bearer, now);
     if (!v.ok) {
       const c = v.claims;
@@ -108,7 +112,40 @@ export class McpGateway {
       return fail(v.code, `the token is ${v.code}`);
     }
     const claims = v.claims;
+    const key = `${claims.jti}:${raw.callId}`;
+    const prior = this.repliedCalls.get(key);
+    if (prior) return prior.reply;
+    const reply = this.decide(raw, claims, now);
+    this.repliedCalls.set(key, { reply, jobId: claims.jobId, exp: claims.exp });
+    // A call that threw is not remembered (its retry may succeed); the caller still sees the rejection.
+    reply.catch(() => { if (this.repliedCalls.get(key)?.reply === reply) this.repliedCalls.delete(key); });
+    return reply;
+  }
 
+  /** Drops what the gateway keeps in memory for a turn: its retried-call replies, its call count and its pending execs. */
+  evictJob(jobId: string): void {
+    for (const [k, e] of this.repliedCalls) if (e.jobId === jobId) this.repliedCalls.delete(k);
+    this.callCounts.delete(jobId);
+    for (const [id, p] of this.pendingExecs) if (p.jobId === jobId) this.pendingExecs.delete(id);
+  }
+
+  /** Every turn's tokens were revoked at once (a restart, a new runner): nothing is kept. */
+  evictAll(): void { this.repliedCalls.clear(); this.callCounts.clear(); this.pendingExecs.clear(); }
+
+  /** The backstop: a token that expired can no longer call, so what is kept for its turn goes too (at most once a second). */
+  private lastSweepAt = 0;
+  private sweepExpired(now: number): void {
+    if (now - this.lastSweepAt < 1000 && now >= this.lastSweepAt) return;
+    this.lastSweepAt = now;
+    const gone = new Set<string>();
+    for (const [k, e] of this.repliedCalls) if (e.exp <= now) { this.repliedCalls.delete(k); gone.add(e.jobId); }
+    for (const id of gone) {
+      if (![...this.repliedCalls.values()].some((e) => e.jobId === id)) { this.callCounts.delete(id); }
+    }
+  }
+
+  /** The pipeline of one call after its token verified (steps 2 to 6 of the header). */
+  private async decide(raw: Extract<RunnerToMain, { op: 'mcp.call' }>, claims: CapabilityClaims, now: number): Promise<McpReplyResult> {
     const parsed = parseToolArgs(raw.tool, raw.args);
     if (!parsed.ok) {
       const result = fail(parsed.code, parsed.code === 'bad_args' ? `bad argument: ${parsed.field ?? '/'}` : 'unknown tool');
@@ -127,6 +164,15 @@ export class McpGateway {
     const authz = this.deps.auth.authorizeWithToken(claims, action, scope);
     if (!authz.allowed) return fail(authz.reason, `the call is refused: ${authz.reason}`);
 
+    // job_status and job_logs name a job: it must be this turn's own job or one of its child jobs (a token reaches no
+    // other job, not even one of the same project).
+    if ((tool === 'job_status' || tool === 'job_logs') && !this.jobInTurn(claims, args.jobId as string)) {
+      this.deps.auth.auditDenial({ id: claims.sub, kind: 'agent', displayName: '' }, {
+        action: 'auth.denied', reason: 'out_of_scope', entityType: 'auth', jobId: claims.jobId, sessionId: claims.sessionId,
+        onBehalfOf: claims.onBehalfOf, projectId: claims.projectId, workspaceId: claims.workspaceId, details: { requested: 'job.read', tool, field: 'jobId' } });
+      return fail('out_of_scope', 'the call is refused: out_of_scope');
+    }
+
     const used = (this.callCounts.get(claims.jobId) ?? 0) + 1;
     const cap = this.deps.budget.caps().toolCalls;
     if (used > cap) {
@@ -143,8 +189,14 @@ export class McpGateway {
       result = fail(e instanceof PlatformError ? e.code : 'error', e instanceof Error ? e.message.slice(0, 200) : 'the call failed');
     }
     this.recordCall(claims, tool, args, result, now);
-    if (tool === 'sandbox_exec') this.repliedCalls.set(raw.callId, result);
     return result;
+  }
+
+  /** Whether `jobId` is the turn's own job or a child of it, in the token's project (an unknown id is simply not in the turn). */
+  private jobInTurn(claims: CapabilityClaims, jobId: string): boolean {
+    const j = this.db.prepare('SELECT id, project_id, parent_job_id FROM jobs WHERE id = ?').get(jobId) as
+      { id: string; project_id: string; parent_job_id: string | null } | undefined;
+    return !!j && j.project_id === claims.projectId && (j.id === claims.jobId || j.parent_job_id === claims.jobId);
   }
 
   /** `agent.exec.done`: records the exit, counts and hash. Returns false for an unknown or mismatched execId (F1). */
@@ -294,10 +346,12 @@ export class McpGateway {
     void now;
     const childCount = (this.db.prepare('SELECT COUNT(*) AS n FROM jobs WHERE parent_job_id = ?').get(claims.jobId) as { n: number }).n;
     if (childCount >= claims.maxChildJobs) return fail('limit', 'the turn has reached its child-job limit');
-    const inputs = Array.isArray(args.inputs) ? (args.inputs as string[]).map((versionId) => ({ versionId, role: 'input' as const })) : [];
-    const { job: created } = this.deps.jobs.create(asUser(claims), {
-      kind: 'tool.run', projectId: claims.projectId, workspaceId: claims.workspaceId, sessionId: claims.sessionId,
-      parentJobId: claims.jobId, recipeId: args.recipeId as string, idempotencyKey: `mcp:${callId}`, inputs
+    // Through the execution core's own start path (not a bare JobService.create): the job is written with its
+    // capability and limits, so the scheduler leases it; an install then waits for the user's A1 approval at lease.
+    const { job: created } = this.deps.exec.startForAgent(asUser(claims), {
+      projectId: claims.projectId, workspaceId: claims.workspaceId, recipeId: args.recipeId as string,
+      inputVersionIds: Array.isArray(args.inputs) ? (args.inputs as string[]) : [], intentId: `mcp:${callId}`,
+      parentJobId: claims.jobId, sessionId: claims.sessionId
     });
     return ok({ jobId: created.id, state: created.state });
   }

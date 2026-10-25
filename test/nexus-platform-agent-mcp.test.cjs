@@ -14,6 +14,8 @@ const { agentWorld, openRunningTurn, endTurn } = require('./helpers/agentFixture
 const loadTs = require('./load-ts.cjs');
 const { JOB_REQUEST_RECIPES } = loadTs('src/shared/nexus/mcpTools.ts');
 const { resolveDataHome } = loadTs('src/main/nexusExec/dataHome.ts');
+const { newId } = loadTs('src/main/nexus/db/ids.ts');
+const { TOKEN_DEFAULT_TTL_MS } = loadTs('src/main/nexus/agents/tokenService.ts');
 
 const ROOT = path.resolve(__dirname, '..');
 
@@ -46,6 +48,33 @@ function toolEvents(w, jobId) {
     .map((r) => ({ ...r, data: JSON.parse(r.data_json) }));
 }
 
+const COMMIT = 'c0ffee'.padEnd(40, '0');
+const IMAGE = { 'sde-node': 'sha256:' + '1'.repeat(64), 'sde-python': 'sha256:' + '2'.repeat(64) };
+
+/** A candidate repository version (project data the snapshot ingest writes; the fixture inserts the artifact row itself). */
+function addRepository(w, profile = 'sde-node', artifactId = null, commit = COMMIT) {
+  const pw = w.nx.workspaces.primaryOf(w.me, 'p-ledger');
+  let art = artifactId;
+  if (!art) {
+    art = newId(w.clock.t);
+    w.db.prepare(`INSERT INTO artifacts (id, project_id, kind, name, description, owner_scope, owner_participation_id, owner_workspace_id,
+        created_by, status, current_version_id, metadata_json, created_at, updated_at)
+      VALUES (?, 'p-ledger', 'repository', 'ledger-api', NULL, 'participation', ?, ?, 'user:local', 'active', NULL, '{}', ?, ?)`)
+      .run(art, pw.id, pw.workspaceId, w.clock.t, w.clock.t);
+  }
+  const v = w.nx.artifacts.registerVersion(w.me, { artifactId: art, storage: { kind: 'git', commit }, metadata: { profile, lockfile: { sha256: 'a'.repeat(64) } } }).version.id;
+  w.nx.artifacts.finalize(w.sys, v, 'candidate');
+  return { artifactId: art, versionId: v };
+}
+
+/** The runner's probe: Docker up, both images present, plenty of disk (what lets the scheduler lease). */
+function readyProbe(turn) {
+  turn.runner.report({ op: 'probe.result', probe: { docker: 'running', version: '27.0.0', cpus: 4, memoryBytes: 8 * 2 ** 30,
+    gpu: { detected: false, usableInContainers: false } },
+  images: ['sde-node', 'sde-python'].map((profile) => ({ profile, present: true, digestMatches: true, imageId: IMAGE[profile] })),
+  freeBytes: 100 * 2 ** 30, runtimes: [] });
+}
+
 function makeVersion(w, kind, content, workspaceId = 'sde') {
   const art = w.nx.artifacts.create(w.me, { projectId: 'p-ledger', workspaceId, kind, name: `${kind}-${crypto.randomBytes(3).toString('hex')}` });
   const v = w.nx.artifacts.registerVersion(w.me, { artifactId: art.id, storage: { kind: 'inline', json: content } }).version.id;
@@ -58,7 +87,8 @@ function makeVersion(w, kind, content, workspaceId = 'sde') {
 test('MG1 every allowed tool answers ok and writes one mcp.call row plus one attempt.progress {t:"tool"} event', async () => {
   const w = await world();
   const v1 = makeVersion(w, 'requirement', { title: 'r1', criteria: [{ id: 'c1', text: 'works' }] });
-  const t = w.turn({ inputs: [v1] });
+  const repo = addRepository(w);
+  const t = w.turn({ inputs: [v1, repo.versionId] });
   await w.nx.contextResolver.resolve({ id: t.job.id, projectId: t.job.projectId, workspaceId: t.job.workspaceId, sessionId: t.session.id });
 
   const cases = [
@@ -69,7 +99,7 @@ test('MG1 every allowed tool answers ok and writes one mcp.call row plus one att
     ['job_status', { jobId: t.job.id }],
     ['job_logs', { jobId: t.job.id }],
     ['sandbox_exec', { argv: ['echo', 'hi'], cwd: '/workspace', timeoutMs: 5000 }],
-    ['job_request', { recipeId: 'sde.test.discover' }],
+    ['job_request', { recipeId: 'sde.test.discover', inputs: [repo.versionId] }],
     ['requirement_draft', { title: 'From the agent', criteria: [{ id: 'c1', text: 'it works' }], clientKey: 'k1' }],
     ['review_request', { versionId: v1, note: 'please look' }]
   ];
@@ -120,12 +150,14 @@ test('MG3 job_request for sde.build.node is denied (not one of the three allowed
 
 test('MG4 the 21st child job_request is denied', async () => {
   const w = await world();
-  const t = w.turn({ maxChildJobs: 2 });
-  const r1 = await mcpCall(w, t, 'job_request', { recipeId: 'sde.test.discover' }, 'call-1');
+  const repo = addRepository(w);
+  const t = w.turn({ maxChildJobs: 2, inputs: [repo.versionId] });
+  const req = { recipeId: 'sde.test.discover', inputs: [repo.versionId] };
+  const r1 = await mcpCall(w, t, 'job_request', req, 'call-1');
   assert.equal(r1.ok, true);
-  const r2 = await mcpCall(w, t, 'job_request', { recipeId: 'sde.test.discover' }, 'call-2');
+  const r2 = await mcpCall(w, t, 'job_request', req, 'call-2');
   assert.equal(r2.ok, true);
-  const r3 = await mcpCall(w, t, 'job_request', { recipeId: 'sde.test.discover' }, 'call-3');
+  const r3 = await mcpCall(w, t, 'job_request', req, 'call-3');
   assert.equal(r3.ok, false);
   assert.equal(r3.code, 'limit');
   const children = w.db.prepare('SELECT COUNT(*) AS n FROM jobs WHERE parent_job_id = ?').get(t.job.id).n;
@@ -310,4 +342,161 @@ test('Skills.write writes skills.md with the requested, domain-matching skills o
   const fs = require('node:fs');
   const text = fs.readFileSync(require('node:path').join(w.homeRoot, `jobs/${t.job.id}/agent/skills.md`), 'utf8');
   assert.match(text, /nexus-sde-change/);
+});
+
+// ---------- fix round 1 ----------
+
+const jobRow = (w, id) => w.db.prepare('SELECT * FROM jobs WHERE id = ?').get(id);
+
+test('FR1 a job_request job is written with capability and limits and the scheduler leases it (it never stays queued forever)', async () => {
+  const w = await world();
+  const repo = addRepository(w);
+  const t = w.turn({ inputs: [repo.versionId] });
+  readyProbe(t);
+  const r = await mcpCall(w, t, 'job_request', { recipeId: 'sde.test.discover', inputs: [repo.versionId] });
+  assert.equal(r.ok, true, JSON.stringify(r));
+  const j = jobRow(w, r.value.jobId);
+  assert.equal(j.kind, 'tool.run'); assert.equal(j.recipe_id, 'sde.test.discover');
+  assert.equal(j.parent_job_id, t.job.id); assert.equal(j.session_id, t.session.id);
+  const cap = JSON.parse(j.capabilities_json);
+  assert.equal(cap.length, 1); assert.equal(cap[0].action, 'sde.tests.discover'); assert.equal(cap[0].recipe, 'sde.test.discover');
+  assert.equal(cap[0].network, 'none');
+  const limits = JSON.parse(j.limits_json);
+  assert.ok(limits.wallClockMs > 0 && limits.memoryMb > 0, "limits are the recipe's");
+  assert.equal(j.state, 'queued');
+  assert.equal(w.db.prepare('SELECT role FROM job_inputs WHERE job_id = ?').get(j.id).role, 'repository', "the input fills the action's slot");
+  // The scheduler's pass picks it up: a leased attempt, and the runner is told to start it.
+  w.nx.exec.tick(w.advance(1000));
+  assert.equal(jobRow(w, j.id).state, 'leased');
+  const attempt = w.db.prepare('SELECT * FROM job_attempts WHERE job_id = ?').get(j.id);
+  assert.ok(attempt, 'an attempt exists');
+  assert.ok(t.runner.sentOf('attempt.start').some((m) => m.attemptId === attempt.id), 'attempt.start was sent');
+});
+
+test('FR1b a retried job_request (same callId) creates one job; a missing repository input is refused', async () => {
+  const w = await world();
+  const repo = addRepository(w);
+  const t = w.turn({ inputs: [repo.versionId] });
+  const a = await mcpCall(w, t, 'job_request', { recipeId: 'sde.test.discover', inputs: [repo.versionId] }, 'jr-1');
+  const b = await mcpCall(w, t, 'job_request', { recipeId: 'sde.test.discover', inputs: [repo.versionId] }, 'jr-1');
+  assert.deepEqual(a, b);
+  assert.equal(w.db.prepare('SELECT COUNT(*) AS n FROM jobs WHERE parent_job_id = ?').get(t.job.id).n, 1);
+  const none = await mcpCall(w, t, 'job_request', { recipeId: 'sde.test.discover' });
+  assert.equal(none.ok, false); assert.equal(none.code, 'invalid');
+});
+
+test('FR3 sde.deps.node and sde.deps.python (the approval.request ceiling path): created with capability, then held for the A1 approval, never straight to running', async () => {
+  const w = await world({ platform: { approvals: undefined } });
+  const node = addRepository(w, 'sde-node');
+  const py = addRepository(w, 'sde-python', node.artifactId, 'd0d0'.padEnd(40, '0'));
+  const t = w.turn({ inputs: [node.versionId, py.versionId] });
+  readyProbe(t);
+  for (const [recipeId, repo, other] of [['sde.deps.node', node, py], ['sde.deps.python', py, node]]) {
+    const r = await mcpCall(w, t, 'job_request', { recipeId, inputs: [repo.versionId] });
+    assert.equal(r.ok, true, `${recipeId}: ${JSON.stringify(r)}`);
+    const j = jobRow(w, r.value.jobId);
+    const cap = JSON.parse(j.capabilities_json)[0];
+    assert.equal(cap.recipe, recipeId); assert.equal(cap.action, 'sde.deps.install'); assert.equal(cap.network, 'egress-approved');
+    assert.equal(j.parent_job_id, t.job.id);
+    // The scheduler asks the user (A1): a pending approval and a job awaiting it; no container was started.
+    w.nx.exec.tick(w.advance(1000));
+    assert.equal(jobRow(w, j.id).state, 'awaiting_approval', `${recipeId} waits for approval`);
+    const approval = w.db.prepare('SELECT * FROM approvals WHERE job_id = ?').get(j.id);
+    assert.ok(approval && approval.status === 'pending', 'a pending approval exists');
+    assert.ok(!t.runner.sentOf('attempt.start').some((m) => w.db.prepare('SELECT job_id FROM job_attempts WHERE id = ?').get(m.attemptId)?.job_id === j.id),
+      'nothing was started for the install');
+    // A repository the recipe cannot run on is refused (never silently swapped for the other install).
+    const wrong = await mcpCall(w, t, 'job_request', { recipeId, inputs: [other.versionId] });
+    assert.equal(wrong.ok, false); assert.equal(wrong.code, 'invalid');
+  }
+});
+
+test('FR2 a retried non-exec call is answered from memory: one service call, one mcp.call row, one budget count', async () => {
+  const w = await world();
+  w.nx.budget.grant(w.me, { runtimeKind: 'scripted', hosts: [{ host: 'api.example.test', port: 443 }], caps: { toolCalls: 2 } });
+  const t = w.turn();
+  const before = mcpCallRows(w).length;
+  const draft = { title: 'Retry me', criteria: [{ id: 'c1', text: 'x' }], clientKey: 'k' };
+  const a = await mcpCall(w, t, 'requirement_draft', draft, 'retry-1');
+  const b = await mcpCall(w, t, 'requirement_draft', draft, 'retry-1');
+  assert.equal(a.ok, true); assert.deepEqual(b, a, 'the retry gets the very same reply (created stays true)');
+  assert.equal(mcpCallRows(w).length, before + 1, 'one audit row');
+  assert.equal(w.db.prepare("SELECT COUNT(*) AS n FROM artifacts WHERE kind = 'requirement'").get().n, 1);
+  // One count against the cap of 2: a second distinct call still fits, a third is the one over.
+  assert.equal((await mcpCall(w, t, 'artifact_list', {}, 'retry-2')).ok, true);
+  assert.equal((await mcpCall(w, t, 'artifact_list', {}, 'retry-2')).ok, true, 'a retry of a call that fit never counts');
+  assert.equal((await mcpCall(w, t, 'artifact_list', {}, 'retry-3')).code, 'limit');
+  // A denial is remembered too: its retry writes no second auth.denied row.
+  const t2 = w.turn({ mcpTools: ['artifact_list'] });
+  const deniedBefore = w.db.prepare("SELECT COUNT(*) AS n FROM activity WHERE action = 'auth.denied'").get().n;
+  const d1 = await mcpCall(w, t2, 'context_get', {}, 'den-1');
+  const d2 = await mcpCall(w, t2, 'context_get', {}, 'den-1');
+  assert.equal(d1.code, 'tool_not_granted'); assert.deepEqual(d2, d1);
+  assert.equal(w.db.prepare("SELECT COUNT(*) AS n FROM activity WHERE action = 'auth.denied'").get().n, deniedBefore + 1);
+});
+
+test('FR4 what the gateway keeps for a turn is evicted when its tokens are revoked, and once they expire', async () => {
+  const w = await world();
+  const gw = w.nx.mcpGateway;
+  const a = w.turn();
+  await mcpCall(w, a, 'artifact_list', {}, 'e1');
+  const ex = await mcpCall(w, a, 'sandbox_exec', { argv: ['echo'], cwd: '/workspace', timeoutMs: 5000 }, 'e2');
+  assert.equal(ex.ok, true);
+  assert.equal(gw.repliedCalls.size, 2); assert.equal(gw.callCounts.get(a.job.id), 2); assert.equal(gw.pendingExecs.size, 1);
+  w.nx.tokens.revokeForJob(w.sys, a.job.id, 'job_ended');
+  assert.equal(gw.repliedCalls.size, 0); assert.equal(gw.callCounts.size, 0); assert.equal(gw.pendingExecs.size, 0);
+  // The expiry backstop: a turn that is never revoked is dropped once its token has expired, at the next call of any turn.
+  const b = w.turn();
+  await mcpCall(w, b, 'artifact_list', {}, 'x1');
+  assert.equal(gw.repliedCalls.size, 1);
+  w.advance(TOKEN_DEFAULT_TTL_MS + 5000);
+  const c = w.turn();
+  await mcpCall(w, c, 'artifact_list', {}, 'y1');
+  assert.deepEqual([...gw.repliedCalls.values()].map((e) => e.jobId), [c.job.id]);
+  assert.equal(gw.callCounts.has(b.job.id), false);
+  // A runner restart revokes every live token: nothing is kept.
+  w.nx.tokens.revokeLiveAgentTokens(w.sys, 'runner_restart');
+  assert.equal(gw.repliedCalls.size, 0); assert.equal(gw.callCounts.size, 0);
+});
+
+test("FR5 job_status and job_logs reach only the turn's own job and its children: another project's job and another job of the same project are out_of_scope", async () => {
+  const w = await world();
+  const repo = addRepository(w);
+  const a = w.turn({ inputs: [repo.versionId] });
+  const b = w.turn();                                           // another turn's job, same project
+  w.nx.workspaces.attach(w.me, 'p-invoice', 'sde');
+  const foreign = w.turn({ project: 'p-invoice' });             // a job of another project
+  const child = await mcpCall(w, a, 'job_request', { recipeId: 'sde.test.discover', inputs: [repo.versionId] });
+  assert.equal(child.ok, true);
+  for (const tool of ['job_status', 'job_logs']) {
+    assert.equal((await mcpCall(w, a, tool, { jobId: a.job.id })).ok, true, `${tool}: own job`);
+    assert.equal((await mcpCall(w, a, tool, { jobId: child.value.jobId })).ok, true, `${tool}: its child job`);
+  }
+  for (const [label, jobId] of [['another project', foreign.job.id], ['another job of the same project', b.job.id], ['an unknown id', '0'.repeat(26)]]) {
+    for (const tool of ['job_status', 'job_logs']) {
+      const before = w.db.prepare("SELECT COUNT(*) AS n FROM activity WHERE action = 'auth.denied'").get().n;
+      const r = await mcpCall(w, a, tool, { jobId });
+      assert.equal(r.ok, false, `${tool} / ${label}`);
+      assert.equal(r.code, 'out_of_scope', `${tool} / ${label}`);
+      assert.equal(w.db.prepare("SELECT COUNT(*) AS n FROM activity WHERE action = 'auth.denied'").get().n, before + 1, `${tool} / ${label}: one audit row`);
+      assert.ok(!JSON.stringify(r).includes(jobId), 'the reply never echoes the id');
+    }
+  }
+});
+
+test('FR6 a secret straddling the 4000-character cut of the diagnostic facts is never written to the context file', async () => {
+  const w = await world();
+  const t = w.turn();
+  const art = w.nx.artifacts.create(w.me, { projectId: 'p-ledger', workspaceId: 'sde', kind: 'diagnostic_report', name: 'diag' });
+  const secret = 'sk-ant-' + 'abcdefghijklmnopqrstuvwxyz0123456789'.repeat(2);
+  const filler = 'x'.repeat(3985);   // the secret starts at character 3995 of the JSON: the 4000-character cut keeps only 5 of its characters
+  const v = w.nx.artifacts.registerVersion(w.me, { artifactId: art.id, storage: { kind: 'inline', json: { ok: true } }, metadata: {} }).version.id;
+  // Registration refuses secret-shaped metadata, so plant it in the draft directly (what a bug elsewhere could leave behind).
+  w.db.prepare('UPDATE artifact_versions SET metadata_json = ? WHERE id = ?').run(JSON.stringify({ note: `${filler} ${secret}` }), v);
+  w.nx.artifacts.finalize(w.sys, v, 'candidate');
+  const r = await w.nx.contextResolver.resolve(contextJob(t));
+  const text = w.readWritten(r.path);
+  assert.ok(!text.includes('sk-ant'), 'no part of the secret');
+  assert.doesNotMatch(text, /## Diagnostic facts/, 'the whole field is dropped');
+  assert.equal(w.db.prepare("SELECT COUNT(*) AS n FROM activity WHERE action = 'context_redacted' AND job_id = ?").get(t.job.id).n, 1);
 });

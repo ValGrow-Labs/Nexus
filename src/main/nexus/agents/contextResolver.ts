@@ -111,7 +111,9 @@ export class ContextResolver {
       .get(job.projectId) as { id: string; metadata_json: string } | undefined;
     if (diag) {
       const m = parseJson(diag.metadata_json);
-      field('Diagnostic facts', isObj(m) ? JSON.stringify(m).slice(0, 4000) : `report ${diag.id}`);
+      // The secret check runs on the WHOLE text, before the cut: a secret straddling the 4000-character mark never slips through.
+      const full = isObj(m) ? JSON.stringify(m) : `report ${diag.id}`;
+      if (containsSecret(full)) redacted++; else field('Diagnostic facts', full.slice(0, 4000));
     }
 
     const markdown = sections.length > 0 ? sections.join('\n') : '## (no context available for this turn)\n';

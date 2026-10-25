@@ -76,6 +76,8 @@ export class TokenService {
   readonly #random: (n: number) => Buffer;
   /** Parsed claims per jti (claims are immutable once minted; revocation is read fresh). */
   readonly #claims = new Map<string, CapabilityClaims>();
+  /** Told after a revocation commits: the job whose tokens were revoked, or null when every live token was (restart, new runner). */
+  readonly #revokeListeners: ((jobId: string | null) => void)[] = [];
 
   constructor(private readonly db: Database.Database, private readonly deps: TokenServiceDeps) {
     this.#random = deps.randomBytes ?? ((n) => nodeRandomBytes(n));
@@ -151,13 +153,20 @@ export class TokenService {
     return { ok: true, claims };
   }
 
+  /** B2b Task 5: `fn(jobId)` runs after a revocation of one job's tokens (or `fn(null)` after every live token's); it never throws out. */
+  onRevoked(fn: (jobId: string | null) => void): void { this.#revokeListeners.push(fn); }
+
+  private notifyRevoked(jobId: string | null): void {
+    for (const fn of this.#revokeListeners) { try { fn(jobId); } catch { /* a listener never breaks a revocation */ } }
+  }
+
   /** Revokes the live tokens of one job (its end, its session's cancel, a cap reached). Works inside or outside a transaction. */
   revokeForJob(system: Principal, jobId: string, reason: TokenRevokeReason): number {
     this.requireSystem(system);
     if (!isStr(jobId)) throw new PlatformError('invalid', 'jobId is required');
     if (!['job_ended', 'session_cancelled', 'restart', 'runner_restart', 'budget'].includes(reason)) throw new PlatformError('invalid', 'unknown revoke reason');
     const now = this.deps.now();
-    return immediateTx(this.db, () => {
+    const count = immediateTx(this.db, () => {
       const rows = this.db.prepare(`SELECT t.jti, j.project_id, j.workspace_id, t.session_id FROM capability_tokens t JOIN jobs j ON j.id = t.job_id
         WHERE t.job_id = ? AND t.revoked_at IS NULL`).all(jobId) as { jti: string; project_id: string; workspace_id: string; session_id: string }[];
       if (rows.length === 0) return 0;
@@ -168,6 +177,8 @@ export class TokenService {
         details: { reason, count: n } }, now);
       return n;
     });
+    this.notifyRevoked(jobId);
+    return count;
   }
 
   /**
@@ -179,7 +190,7 @@ export class TokenService {
     this.requireSystem(system);
     if (reason !== 'restart' && reason !== 'runner_restart') throw new PlatformError('invalid', 'unknown revoke reason');
     const now = this.deps.now();
-    return immediateTx(this.db, () => {
+    const count = immediateTx(this.db, () => {
       const n = this.db.prepare('UPDATE capability_tokens SET revoked_at = MAX(?, issued_at), revoke_reason = ? WHERE revoked_at IS NULL AND expires_at > ?')
         .run(now, reason, now).changes;
       if (n > 0) {
@@ -188,6 +199,8 @@ export class TokenService {
       }
       return n;
     });
+    this.notifyRevoked(null);
+    return count;
   }
 
   // ---------- helpers ----------

@@ -99,7 +99,7 @@ import type Database from 'better-sqlite3';
 import type { ImageStatus, SandboxProfile, SandboxProfileId, StagedOutput, ParsedOutput, ExitInfo, ResourceLimits } from '../../../shared/nexus/execution';
 import { DIAGNOSE_MAX_RANGES, SANDBOX_PROFILE_IDS } from '../../../shared/nexus/execution';
 import type { Job, JobKind, JobState, Principal, ScopeRef } from '../../../shared/nexus/platform';
-import { getUserAction, type UserActionDef } from '../../../shared/nexus/actions';
+import { getUserAction, USER_ACTIONS, type UserActionDef } from '../../../shared/nexus/actions';
 import type { ParamsSchema } from '../../../shared/nexus/domainSpec';
 import { getRecipe, PREVIEW_IDLE_TTL_MS, RETRY_BACKOFF_MS, type RecipeDef } from '../../../shared/nexus/recipes';
 import { APPROVAL_TTL_MS, EXPIRY_SWEEP_MS, latestSucceededBuild, withdrawPendingApprovalsTx } from '../approvals/approvalService';
@@ -2108,6 +2108,29 @@ export class ExecutionService {
     return this.createExecJob(p, { action, projectId: pw.project_id, workspaceId: pw.workspace_id, key, params, inputs, retryOf: null });
   }
 
+  /**
+   * B2b (Task 5 fix round 1): the recipe job an agent turn asks for (the `job_request` tool), requested for the user the
+   * turn acts for. It goes through the same path as a user's action (`createExecJob`), so the job is written with its
+   * capability and limits in the same transaction and the scheduler can lease it (a bare `JobService.create` never
+   * sets them: such a job stays queued forever). The recipe is exactly the one asked for, under the domain's own action
+   * that lists it (its input slot and prerequisites apply; an install still waits for the user's A1 approval at lease);
+   * `parentJobId` ties it to the turn's job (the child-job cap and cancel cascade) and `sessionId` to its session.
+   * `inputVersionIds` fill the action's one input slot.
+   */
+  startForAgent(p: Principal, r: { projectId: string; workspaceId: string; recipeId: string; inputVersionIds: string[]; intentId: string;
+    parentJobId: string; sessionId: string }): { job: ExecJob; created: boolean } {
+    this.requireAvailable();
+    if (!isPlainObject(r) || !isStr(r.projectId) || !isStr(r.workspaceId) || !isStr(r.recipeId)) throw new PlatformError('invalid', 'projectId, workspaceId and recipeId are required');
+    const pw = requireActiveParticipation(this.access, this.db, p, r.projectId, r.workspaceId, 'job.create');
+    const key = validateKey(r.intentId);
+    const action = USER_ACTIONS.find((a) => a.domain === r.workspaceId && 'recipes' in a.run && a.run.recipes.includes(r.recipeId)) ?? null;
+    if (!action) return invalid('unknown_action', 'no action of this domain runs that recipe');
+    if (action.inputs.length > 1 || (action.inputs.length === 0 && r.inputVersionIds.length > 0)) return invalid('input_not_allowed', 'the recipe takes no such inputs');
+    const inputs = this.validateInputShape(action, r.inputVersionIds.map((versionId) => ({ versionId, slot: action.inputs[0].slot })));
+    return this.createExecJob(p, { action, projectId: pw.project_id, workspaceId: pw.workspace_id, key, params: {}, inputs, retryOf: null,
+      onlyRecipe: r.recipeId, parentJobId: r.parentJobId, sessionId: r.sessionId });
+  }
+
   retry(p: Principal, jobId: string, intentId: string): { job: ExecJob } {
     this.requireAvailable();
     const key = validateKey(intentId);
@@ -2162,9 +2185,12 @@ export class ExecutionService {
 
   /** Authorization is done; checks inputs (readable, candidate or active, an accepted kind), picks the recipe, creates the job. */
   private createExecJob(p: Principal, o: { action: UserActionDef; projectId: string; workspaceId: string; key: string;
-    params: Record<string, unknown>; inputs: { versionId: string; slot: string }[]; retryOf: string | null }): { job: ExecJob; created: boolean } {
+    params: Record<string, unknown>; inputs: { versionId: string; slot: string }[]; retryOf: string | null;
+    /** B2b (an agent's job_request): the one recipe of the action to use (never picked by profile among the others), and the turn it belongs to. */
+    onlyRecipe?: string; parentJobId?: string; sessionId?: string }): { job: ExecJob; created: boolean } {
     const prior = this.db.prepare('SELECT id FROM jobs WHERE idempotency_key = ?').get(o.key) as { id: string } | undefined;
-    const recipes = ('recipes' in o.action.run ? o.action.run.recipes : []).map((id) => getRecipe(id)).filter((x): x is RecipeDef => x !== null);
+    const recipes = ('recipes' in o.action.run ? o.action.run.recipes : []).filter((id) => o.onlyRecipe === undefined || id === o.onlyRecipe)
+      .map((id) => getRecipe(id)).filter((x): x is RecipeDef => x !== null);
     const serviceRecipe = recipes.find((rc) => rc.executor === 'service');
     if (serviceRecipe) return this.createPreviewJob(p, o, serviceRecipe, !!prior);
     // One live snapshot job per project (Task 9; RepoService also checks the folder first): a new request returns it.
@@ -2204,6 +2230,7 @@ export class ExecutionService {
     const create = {
       kind: 'tool.run' as const, projectId: o.projectId, workspaceId: o.workspaceId, idempotencyKey: o.key, recipeId: recipe.id,
       ...(o.retryOf ? { retryOf: o.retryOf } : {}),
+      ...(o.parentJobId ? { parentJobId: o.parentJobId } : {}), ...(o.sessionId ? { sessionId: o.sessionId } : {}),
       params: o.params, inputs: o.inputs.map((x) => ({ versionId: x.versionId, role: x.slot })),
       retry: { idempotent: recipe.retry.idempotent, maxAttempts: recipe.retry.maxAttempts, backoffMs: RETRY_BACKOFF_MS.slice(0, Math.max(recipe.retry.maxAttempts - 1, 0)) }
     };
