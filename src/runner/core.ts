@@ -47,6 +47,11 @@ import { leaseFloorBytes } from '../shared/nexus/resourceGate';
 import { containsSecret, redactSecretText } from '../main/nexus/activity/redact';
 import { diagnose, diagnoseTaskProblem } from './diagnose';
 import { appManifestArgv, COMMIT_RE, GitRunner } from './git';
+import { gitRead } from './gitRead';
+import {
+  accept as gitAccept, collect as gitCollect, ensureWorktree, fastForward as gitFastForward, GIT_FAILURE_CODES, GitFailure, HardenedGit,
+  mergeCheck as gitMergeCheck, rollback as gitRollback, worktreeName
+} from './gitWrite';
 import { ImageBuilder } from './imageBuilder';
 import { discardUnmergedReport, mergePerFileJunit } from './junitMerge';
 import { lastFrameTs, LogWriter } from './logs';
@@ -55,7 +60,7 @@ import { collectOut, outBytes, showEntry } from './outputs';
 import { parseDiscovery, discoveryFrameworkOf } from './parsers/discovery';
 import { JUNIT_MAX_BYTES, parseJunit } from './parsers/junit';
 import { APP_MANIFEST_MAX_BYTES, parseAppManifest } from './parsers/manifest';
-import { errCode, HomePaths, noLinkUnder } from './paths';
+import { ensureDirUnder, errCode, HomePaths, noLinkUnder } from './paths';
 import { httpProbe, type HttpProbe } from './probe';
 import { findAttemptDir, readPlanRecord, reconcileAnswer, releaseByLabels, removeResources, type PlanRecord } from './reconcile';
 import { DEPS_VOLUME_RE, DockerError, SpecError } from './sandbox/dockerDriver';
@@ -78,6 +83,15 @@ export const LOG_DRAIN_MS = 5_000;
 const ID_RE = /^[0-9A-Za-z_-]{1,64}$/;
 const SHA_RE = /^[0-9a-f]{64}$/;
 const MAX_GC_LIST = 20_000;
+/** The B2b git write engines (src/runner/gitWrite.ts), each run as a system child job. */
+export const GIT_WRITE_ENGINES: readonly string[] = Object.freeze(['repo.worktree', 'changeset.collect', 'changeset.merge_check', 'changeset.accept',
+  'changeset.accept_rollback', 'repo.ff']);
+/** Whether `p` is `root` or inside it. */
+function insideRoot(p: string, root: string): boolean {
+  const a = path.resolve(root); const b = path.resolve(p);
+  const rel = process.platform === 'win32' ? path.relative(a.toLowerCase(), b.toLowerCase()) : path.relative(a, b);
+  return rel === '' || (!rel.startsWith('..') && !path.isAbsolute(rel));
+}
 
 export interface RunnerDeps {
   driver: RunnerDriver;
@@ -174,6 +188,8 @@ export class RunnerCore {
   private paths: HomePaths | null = null;
   private store: ObjectStore | null = null;
   private git: GitRunner | null = null;
+  /** B2b: the hardened launcher of the git write engines and `git.read`. */
+  private gitw: HardenedGit | null = null;
   private readonly builder: ImageBuilder;
   private stopped = false;
   private recordSeq = 0;
@@ -255,6 +271,7 @@ export class RunnerCore {
         case 'blob.verify': return await this.onVerify(m.sha256 as string);
         case 'gc.scan': return await this.onGcScan(m.scanId as string, m.olderThanMs as number);
         case 'gc.apply': return await this.onGcApply(m.objects as string[], m.workDirs as { jobId: string; attemptN: number }[]);
+        case 'git.read': return await this.onGitRead(m.reqId, m.task);
         case 'shutdown': await this.shutdown(); this.deps.onShutdown?.(); return;
         default: this.log(`[runner] unknown op ${String(m.op).slice(0, 40)} ignored`);
       }
@@ -281,6 +298,7 @@ export class RunnerCore {
     this.store = this.paths ? new ObjectStore(this.paths, this.fs, this.sleep) : null;
     // git runs from the data home (never from a repository folder), the repository named with -C.
     this.git = this.paths ? new GitRunner({ cwd: this.paths.root, resolve: this.deps.resolveGit }) : null;
+    this.gitw = this.paths ? new HardenedGit({ cwd: this.paths.root, resolve: this.deps.resolveGit }) : null;
     this.stopped = false;
     // No loopback MCP endpoint yet (B2b Task 6 starts it here and reports its URL): agent turns stay unavailable.
     this.post({ op: 'ready', bootId: m.bootId, mcpUrl: null });
@@ -465,7 +483,7 @@ export class RunnerCore {
     if (!ID_RE.test(plan.jobId) || !Number.isSafeInteger(plan.attemptN) || plan.attemptN < 1) return 'the plan ids are malformed';
     if (!this.paths.same(plan.workDir, this.paths.workDir(plan.jobId, plan.attemptN))) return 'the work folder is not this attempt\'s';
     if (!this.paths.same(plan.logPath, this.paths.logPath(plan.jobId, plan.attemptN))) return 'the log path is not this attempt\'s';
-    if (plan.kind === 'engine') return plan.task?.engine === 'sde.diagnose' ? diagnoseTaskProblem(plan.task) : null;
+    if (plan.kind === 'engine') return plan.task?.engine === 'sde.diagnose' ? diagnoseTaskProblem(plan.task) : this.gitTaskProblem(plan);
     // B2b: an agent turn's plan is refused until this runner runs turns (Task 11).
     if (plan.kind === 'agent') return 'agent turns are not run by this runner yet';
     if (!this.home) return 'this install has no label';
@@ -987,7 +1005,7 @@ export class RunnerCore {
     await this.openLog(a);
     // The git engines need git: none installed is a setup refusal before anything ran (the job waits, never fails).
     const t0 = plan.task;
-    if ((t0.engine === 'repo.snapshot' || t0.engine === 'sde.app.assemble') && !(await this.git!.available())) {
+    if (t0.engine !== 'sde.diagnose' && !(await this.git!.available())) {
       return this.refuse(a, 'git_missing', 'git is not installed');
     }
     this.post({ op: 'attempt.provisioned', attemptId: a.id });
@@ -1023,13 +1041,23 @@ export class RunnerCore {
         const r = await diagnose({ driver: this.driver, fs: this.fs, paths: this.paths!, home: this.home }, t, a.abort.signal);
         parsed.push({ parser: 'diagnostic', sourceSha256: createHash('sha256').update(JSON.stringify(r)).digest('hex'), normalized: r });
         a.log?.nexus(`diagnosed ${r.containers.length} container(s) and ${r.logs.length} log range(s)`);
+      } else if (GIT_WRITE_ENGINES.includes(t.engine)) {
+        const facts = await this.runGitWrite(a, t);
+        parsed.push({ parser: 'git-facts', sourceSha256: createHash('sha256').update(JSON.stringify(facts)).digest('hex'), normalized: facts });
       } else {
         code = 1;
         a.log?.nexus(`${(t as { engine: string }).engine} is not in this build`);
       }
     } catch (e) {
       code = 1;
-      a.log?.nexus(`the work stopped: ${msgOf(e)}`);
+      if (e instanceof GitFailure && GIT_FAILURE_CODES.includes(e.code) && GIT_WRITE_ENGINES.includes(t.engine)) {
+        // A git write refused: the code is a fact main words as a sentence (never git's own text); nothing was written.
+        const facts = { ok: false as const, code: e.code };
+        parsed.push({ parser: 'git-facts', sourceSha256: createHash('sha256').update(JSON.stringify(facts)).digest('hex'), normalized: facts });
+        a.log?.nexus(`${t.engine} refused: ${e.code}`);
+      } else {
+        a.log?.nexus(`the work stopped: ${msgOf(e)}`);
+      }
     }
     if (a.released) return;
     for (const h of a.timers.splice(0)) this.timers.clearTimeout(h.h);
@@ -1038,6 +1066,69 @@ export class RunnerCore {
     this.post({ op: 'attempt.exited', attemptId: a.id, exit: { code: reason ? null : code, oomKilled: false, finishedAt: this.now() },
       outputs: [], parsed: reason ? [] : parsed, logBytes: a.log?.bytes() ?? 0, ...(reason ? { reason } : {}) });
     a.settled = true;
+  }
+
+  /** Why a git write task's paths are not exactly what this data home derives, or null (B2b). */
+  private gitTaskProblem(plan: EnginePlan): string | null {
+    const t = plan.task as { engine: string; worktreePath?: unknown; repoPath?: unknown };
+    if (!GIT_WRITE_ENGINES.includes(t.engine)) return null;
+    if (typeof t.repoPath !== 'string' || !path.isAbsolute(t.repoPath) || t.repoPath.includes('\0')) return 'the project folder is not an absolute path';
+    if (insideRoot(t.repoPath, this.paths!.root) || insideRoot(this.paths!.root, t.repoPath)) return 'the project folder overlaps the data home';
+    if (t.engine === 'repo.worktree' || t.engine === 'changeset.collect') {
+      try { worktreeName(this.paths!.root, String(t.worktreePath)); } catch { return 'the worktree is not a session folder of this data home'; }
+    }
+    return null;
+  }
+
+  /** One git write engine (B2b Task 7); throws GitFailure on a refusal. */
+  private async runGitWrite(a: AttemptState, t: EnginePlan['task']): Promise<Record<string, unknown>> {
+    const g = this.gitw!;
+    const signal = a.abort.signal;
+    const dataRoot = this.paths!.root;
+    switch (t.engine) {
+      case 'repo.worktree': {
+        if (!(await ensureDirUnder(this.fs, dataRoot, path.join(dataRoot, 'wt')))) throw new GitFailure('bad_task', 'the worktree folder is refused');
+        const f = await ensureWorktree(g, t, { dataRoot, signal });
+        a.log?.nexus(`session worktree ${f.reused ? 'reused' : 'created'} at ${f.base.slice(0, 12)}, locked`);
+        return { ...f };
+      }
+      case 'changeset.collect': {
+        const f = await gitCollect(g, t, { dataRoot, signal });
+        a.log?.nexus(f.changed ? `committed ${f.diffstat.files} changed file(s) on the session ref` : 'nothing changed in scope');
+        return { ...f };
+      }
+      case 'changeset.merge_check': {
+        const f = await gitMergeCheck(g, t, { signal });
+        a.log?.nexus(f.clean ? 'the change merges cleanly' : 'the change does not merge cleanly');
+        return { ...f };
+      }
+      case 'changeset.accept': {
+        const f = await gitAccept(g, t, { signal, onPrepared: (p) => {
+          this.post({ op: 'attempt.event', attemptId: a.id, seq: ++a.seq, event: { t: 'accept.prepared', old: p.old, new: p.new, at: this.now() } });
+        } });
+        a.log?.nexus(`accepted: the integration ref moved to ${f.new.slice(0, 12)}`);
+        return { ...f };
+      }
+      case 'changeset.accept_rollback': {
+        const f = await gitRollback(g, t, { signal });
+        a.log?.nexus(f.already ? 'the integration ref was already back' : 'the integration ref was moved back');
+        return { ...f };
+      }
+      case 'repo.ff': {
+        const f = await gitFastForward(g, t, { signal });
+        a.log?.nexus(`fast-forwarded the branch to ${f.after.slice(0, 12)}`);
+        return { ...f };
+      }
+      default: throw new GitFailure('bad_task', 'not a git write engine');
+    }
+  }
+
+  /** `git.read` (B2b): a bounded read, answered as `git.read.result`; no attempt, no job. */
+  private async onGitRead(reqId: unknown, task: unknown): Promise<void> {
+    if (typeof reqId !== 'string' || !ID_RE.test(reqId)) { this.log('[runner] git.read is malformed'); return; }
+    const result = this.gitw ? await gitRead(this.gitw, task as Parameters<typeof gitRead>[1])
+      : { ok: false as const, code: 'error' as const, message: 'the runner has no data home yet' };
+    this.post({ op: 'git.read.result', reqId, result });
   }
 
   // ---------- cancel, release ----------

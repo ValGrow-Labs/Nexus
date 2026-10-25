@@ -145,9 +145,12 @@ test('DR3 a step is REAL only at or after its sub-phase; SDE matches the B2b sta
     for (const s of d.lifecycle.filter((x) => x.status === 'FUTURE'))
       assert.ok(!spec.isAtOrBefore(s.subPhase, 'B2b'), `${id}/${s.id} FUTURE names a later sub-phase`);
   }
-  // No domain was executable end to end at B2a; at B2b only SDE is (by the registry), never the other five.
+  // Wave-1 review, ruling on finding 1 (restored): as delivered (the default, DELIVERED_SUB_PHASE = B2a) no domain is
+  // executable end to end. At the registry's sub-phase (B2b) only SDE is, by step status alone, never the other five.
+  assert.equal(spec.DELIVERED_SUB_PHASE, 'B2a');
+  for (const d of DOMAINS) assert.equal(spec.isExecutableEndToEnd(d), false, `${d.id} as delivered`);
   for (const d of DOMAINS) assert.equal(spec.isExecutableEndToEnd(d, 'B2a'), false, `${d.id} at B2a`);
-  for (const d of DOMAINS) assert.equal(spec.isExecutableEndToEnd(d), d.id === 'sde', `${d.id} at B2b`);
+  for (const d of DOMAINS) assert.equal(spec.isExecutableEndToEnd(d, 'B2b'), d.id === 'sde', `${d.id} at B2b (the registry-level fact)`);
   // Negative fixture: a step of a later sub-phase (B2c) marked REAL fails.
   const bad = clone(); const s = step(byId(bad, 'qa'), 'test-plan');
   s.status = 'REAL'; s.e2eTestId = 'e2e.qa.test-plan';

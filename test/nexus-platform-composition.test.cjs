@@ -214,3 +214,29 @@ test('main enables v9 only through NEXUS_ENABLE_V9 and never passes an explicit 
   assert.match(call, /enableV9: process\.env\.NEXUS_ENABLE_V9 === '1' \? true : undefined/);
   assert.doesNotMatch(idx, /enableV9:\s*false/);
 });
+// B2b Task 3 (PC-10): v10 is opt-in. main enables it only through NEXUS_ENABLE_V10, never passes an explicit
+// enableV10 (true or false) any other way, honours NEXUS_DB_HOLD_V10 inside the one persist.open call, and the store's
+// default stays off.
+test('PC-10 main enables v10 only through NEXUS_ENABLE_V10, honours NEXUS_DB_HOLD_V10, and the v10 default stays off', () => {
+  const idx = read('src/main/index.ts');
+  const call = idx.slice(idx.indexOf('persist.open({'), idx.indexOf('});', idx.indexOf('persist.open({')));
+  assert.match(call, /holdV10: process\.env\.NEXUS_DB_HOLD_V10 === '1'/);
+  assert.match(call, /enableV10: process\.env\.NEXUS_ENABLE_V10 === '1' \? true : undefined/);
+  assert.equal((idx.match(/enableV10:/g) || []).length, 1, 'one enableV10 key in main, the env-gated one');
+  assert.doesNotMatch(idx, /enableV10:\s*(false|true)\b/);
+  assert.equal((idx.match(/persist\.open\(/g) || []).length, 1);
+  // No other main module turns v10 on.
+  for (const f of walkTs('src/main')) {
+    if (f.split(path.sep).join('/') === 'src/main/index.ts') continue;
+    assert.doesNotMatch(read(f), /enableV10:\s*true\b/, f);
+  }
+  const db = loadTs('src/main/db.ts');
+  assert.equal(db.V10_ENABLED_BY_DEFAULT, false);
+  assert.equal(db.V9_ENABLED_BY_DEFAULT, false);
+  assert.match(read('src/main/db.ts'), /^export const V10_ENABLED_BY_DEFAULT = false;\r?$/m);
+  // Opened with no v10 option, a v9 store stays at v9 with agents not_enabled.
+  const { file } = h.v6Fixture(); const s = new PersistStore(file);
+  s.open({ log: () => {}, backupDir: path.join(path.dirname(file), 'b'), now: () => h.NOW, enableV9: true });
+  assert.equal(s.schemaVersion, 9); assert.equal(s.agentsAvailable, false); assert.equal(s.agentsUnavailableReason, 'not_enabled');
+  s.close();
+});

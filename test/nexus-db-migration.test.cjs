@@ -348,12 +348,12 @@ test('downgrade safety: the e1fd80f store opens a v7 database and its reads and 
 
 test('a newer schema is opened for legacy use only, never migrated or downgraded', () => {
   const { file } = h.v6Fixture(); openStore(file).s.close();
-  const pre = h.openRaw(file); pre.pragma('user_version = 10'); pre.close();
+  const pre = h.openRaw(file); pre.pragma('user_version = 11'); pre.close();
   const { s, logs } = openStore(file);
-  assert.equal(s.isOpen, true); assert.equal(s.schemaVersion, 10); assert.equal(s.platformAvailable, false);
+  assert.equal(s.isOpen, true); assert.equal(s.schemaVersion, 11); assert.equal(s.platformAvailable, false);
   assert.equal(s.platformDatabase(), null);
   assert.equal(s.lastMigration.reason, 'newer_schema');
-  assert.ok(logs.some((l) => /schema v10 is newer than this build \(v9\)/.test(l)));
+  assert.ok(logs.some((l) => /schema v11 is newer than this build \(v10\)/.test(l)));
   assert.equal(s.getKv('window_bounds').width, 1200);
   s.close();
 });

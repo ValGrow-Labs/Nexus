@@ -170,9 +170,11 @@ export interface StagedOutput { relPath: string; sha256: string; bytes: number; 
 
 export type ParserId =
   | 'junit' | 'discovery' | 'app-manifest' | 'repo-snapshot' | 'diagnostic'
-  | 'cobertura' | 'metrics-json' | 'metrics-jsonl' | 'stats-json' | 'duckdb-summary' | 'papermill';
+  | 'cobertura' | 'metrics-json' | 'metrics-jsonl' | 'stats-json' | 'duckdb-summary' | 'papermill'
+  /** B2b: the facts of a git write engine (src/runner/gitWrite.ts), re-validated by main before anything is recorded. */
+  | 'git-facts';
 export const PARSER_IDS: readonly ParserId[] = ['junit', 'discovery', 'app-manifest', 'repo-snapshot', 'diagnostic',
-  'cobertura', 'metrics-json', 'metrics-jsonl', 'stats-json', 'duckdb-summary', 'papermill'];
+  'cobertura', 'metrics-json', 'metrics-jsonl', 'stats-json', 'duckdb-summary', 'papermill', 'git-facts'];
 
 /** A parser's normalized result. `normalized` is schema-checked again by main before it becomes evidence. */
 export interface ParsedOutput { parser: ParserId; sourceSha256: string; normalized: unknown }

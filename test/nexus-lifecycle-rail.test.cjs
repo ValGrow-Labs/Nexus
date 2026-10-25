@@ -16,25 +16,38 @@ const src = (p) => fs.readFileSync(path.join(NEXUS, p), 'utf8');
 const views = L.bundledDomainViews();
 const view = (id) => views.find((v) => v.id === id);
 const rail = (id, records = null) => L.railFor(view(id), records);
+/** The view as the registry would project it at `at` (wave-1 review, ruling on finding 1): the B2b doneWhen logic is
+ *  pinned on a view built at B2b, never by claiming the delivered build has reached B2b. */
+const viewAt = (id, at) => ({ ...view(id), currentSubPhase: at });
 
 test('the bundled projection is exactly what main sends over #22 (dto.ts domainView)', () => {
   const { domainView } = loadTs('src/main/nexusIpc/dto.ts');
   for (const d of DOMAINS) assert.deepEqual(L.domainViewOf(d), domainView(d), d.id);
 });
 
-// B2b Task 1 (the registry flip): AI-assisted implementation, review and iteration are REAL in B2b, so all twelve SDE
-// steps are in this release; the FUTURE wording is still pinned for the other domains (the next test).
-test('LR1 SDE at B2b: all twelve steps in this release, the three B2b steps among them', () => {
+// Wave-1 review, ruling on finding 1 (a restoration, not a weakening): the registry has AI-assisted implementation,
+// review and iteration REAL at B2b (CURRENT_SUB_PHASE), but the build has proven only B2a (DELIVERED_SUB_PHASE), and
+// the rail reads the delivered sub-phase. So SDE shows nine steps in this release and three not, until Task 16.
+test('LR1 SDE as delivered (B2a): nine steps in this release, three not ("Not in this release: arrives with AI-assisted changes")', () => {
   const r = rail('sde');
+  assert.equal(view('sde').currentSubPhase, 'B2a', 'the view carries the delivered sub-phase');
   assert.equal(r.steps.length, 12);
   const now = r.steps.filter((s) => !s.future);
   const later = r.steps.filter((s) => s.future);
-  assert.equal(now.length, 12);
-  assert.deepEqual(later, []);
+  assert.equal(now.length, 9);
   assert.ok(now.every((s) => s.status === 'REAL' && s.word === 'In this release'));
-  const b2b = now.filter((s) => s.subPhase === 'B2b');
-  assert.deepEqual(b2b.map((s) => s.id), ['ai-implementation', 'review', 'iteration']);
-  for (const s of b2b) assert.ok(s.note && !/^Not in this release/.test(s.note), `${s.id}: a scope note, never a FUTURE note`);
+  assert.deepEqual(later.map((s) => s.id), ['ai-implementation', 'review', 'iteration']);
+  for (const s of later) {
+    assert.equal(s.note, 'Not in this release: arrives with AI-assisted changes');
+    assert.equal(s.word, 'Not in this release');
+    assert.equal(s.subPhase, 'B2b');
+  }
+  // The #22 view never marks them delivered.
+  assert.deepEqual(view('sde').lifecycle.filter((s) => !s.delivered).map((s) => s.id), ['ai-implementation', 'review', 'iteration']);
+  // At the registry's sub-phase (B2b) the same steps are REAL with their scope notes: what Task 16 will deliver.
+  const atB2b = L.railFor(viewAt('sde', 'B2b'));
+  assert.deepEqual(atB2b.steps.filter((s) => s.future), []);
+  for (const s of atB2b.steps.filter((x) => x.subPhase === 'B2b')) assert.ok(s.note && !/^Not in this release/.test(s.note), s.id);
   assert.equal(r.availability, null);
   assert.equal(r.supported, true);
 });
@@ -80,8 +93,9 @@ test('LR1 modules in the domain\'s words: delivered now, or the sub-phase they a
   const da = rail('data');
   assert.deepEqual(da.modules.find((m) => m.id === 'questions'), { id: 'questions', label: 'Questions', delivered: true, note: null });
   assert.equal(da.modules.find((m) => m.id === 'queries').note, 'arrives in B3');
-  // B2b Task 1: the SDE Changes module is delivered in B2b; a QA module still names the sub-phase it arrives in.
-  assert.deepEqual(rail('sde').modules.find((m) => m.id === 'changes'), { id: 'changes', label: 'Changes', delivered: true, note: null });
+  // Wave-1 review, finding 1 (restored): the SDE Changes module arrives in B2b until Task 16 proves the flow; a QA module
+  // still names the sub-phase it arrives in.
+  assert.deepEqual(rail('sde').modules.find((m) => m.id === 'changes'), { id: 'changes', label: 'Changes', delivered: false, note: 'arrives in B2b' });
   assert.equal(rail('qa').modules.find((m) => m.id === 'defects').note, 'arrives in B2c');
 });
 
@@ -110,14 +124,19 @@ test('LR2 a candidate test suite with its checks passed (suite.discovered and sd
   assert.equal(stepOf('sde', 'project', rec()).state, 'done');
   assert.equal(stepOf('sde', 'dev-deployment', rec({ versions: [{ kind: 'application', status: 'candidate', validators: {} }] })).state, 'ready');
   assert.equal(stepOf('sde', 'dev-deployment', rec({ deploymentHealthy: true })).state, 'done');
-  // A FUTURE step is unavailable whatever the records say (B2b Task 1: SDE has none left, so a QA step is the case).
-  assert.equal(stepOf('qa', 'test-plan', rec({ versions: [{ kind: 'test_plan', status: 'active', validators: {} }] })).state, 'unavailable');
-  // B2b: a change set is done only with every blocking change-set check passed, never on its status alone.
+  // A step not in this release is unavailable whatever the records say: SDE's ai-implementation as delivered (B2a;
+  // restored by the wave-1 review ruling), and a QA FUTURE step.
   const CS_OK = { 'git.diff_nonempty': 'passed', 'git.paths_in_scope': 'passed', 'sec.secret_scan': 'passed', 'cs.tests_pass': 'passed',
     'git.applies_cleanly': 'passed' };
-  assert.notEqual(stepOf('sde', 'ai-implementation', rec({ versions: [{ kind: 'change_set', status: 'active', validators: {} }] })).state, 'done');
-  assert.equal(stepOf('sde', 'ai-implementation', rec({ versions: [{ kind: 'change_set', status: 'candidate', validators: CS_OK }] })).state, 'done');
-  assert.equal(stepOf('sde', 'ai-implementation', rec({ versions: [{ kind: 'change_set', status: 'candidate',
+  assert.equal(stepOf('sde', 'ai-implementation', rec({ versions: [{ kind: 'change_set', status: 'active', validators: {} }] })).state, 'unavailable');
+  assert.equal(stepOf('sde', 'ai-implementation', rec({ versions: [{ kind: 'change_set', status: 'candidate', validators: CS_OK }] })).state, 'unavailable');
+  assert.equal(stepOf('qa', 'test-plan', rec({ versions: [{ kind: 'test_plan', status: 'active', validators: {} }] })).state, 'unavailable');
+  // The B2b doneWhen logic, on a view built at B2b (never a delivery claim): a change set is done only with every
+  // blocking change-set check passed, never on its status alone.
+  const stepAtB2b = (step, records) => L.railFor(viewAt('sde', 'B2b'), records).steps.find((s) => s.id === step);
+  assert.notEqual(stepAtB2b('ai-implementation', rec({ versions: [{ kind: 'change_set', status: 'active', validators: {} }] })).state, 'done');
+  assert.equal(stepAtB2b('ai-implementation', rec({ versions: [{ kind: 'change_set', status: 'candidate', validators: CS_OK }] })).state, 'done');
+  assert.equal(stepAtB2b('ai-implementation', rec({ versions: [{ kind: 'change_set', status: 'candidate',
     validators: { ...CS_OK, 'cs.tests_pass': 'failed' } }] })).state, 'failed');
   // Without records (a workspace page, or checks that could not be read): no state is claimed.
   assert.ok(rail('sde').steps.every((s) => s.state === null));
@@ -125,14 +144,14 @@ test('LR2 a candidate test suite with its checks passed (suite.discovered and sd
 
 test('LR2 the compact summary counts only the rail\'s own steps', () => {
   const r = L.railFor(view('sde'), rec({ versions: [{ kind: 'test_suite', status: 'candidate', validators: PASSED }] }));
-  // B2b Task 1: all twelve SDE steps are in this release, so the summary has no "not in this release" part for SDE.
-  assert.equal(L.railSummary(r), '2 of 12 steps in this release done');
+  // Wave-1 review, finding 1 (restored): as delivered (B2a), nine SDE steps are in this release and three are not.
+  assert.equal(L.railSummary(r), '2 of 9 steps in this release done; 3 not in this release');
   assert.match(L.railSummary(rail('qa', rec())), /not in this release$/, 'a domain with FUTURE steps still says so');
   assert.equal(L.railSummary(rail('data-scientist')), 'Available from B4; it cannot be added to a project yet');
   // Steps that need attention or are moving are counted too (fix round 1).
   const busy = L.railFor(view('sde'), rec({ versions: [{ kind: 'test_suite', status: 'candidate', validators: { 'suite.discovered': 'passed', 'sde.tests_pass': 'failed' } },
     { kind: 'repository', status: 'active', validators: { 'git.head_resolves': 'passed' } }], liveActions: ['sde.build.run'] }));
-  assert.equal(L.railSummary(busy), '2 of 12 steps in this release done; 1 needs attention; 1 in progress');
+  assert.equal(L.railSummary(busy), '2 of 9 steps in this release done; 1 needs attention; 1 in progress; 3 not in this release');
   assert.deepEqual(rail('sde').steps.map((s) => s.n), Array.from({ length: 12 }, (_, i) => i + 1));
   assert.deepEqual(L.liveActionsOf([{ state: 'running', actionId: 'a' }, { state: 'completed', actionId: 'b' }, { state: 'queued', actionId: null }]), ['a']);
 });
@@ -196,7 +215,7 @@ test('C6b (final review) a version past the Spine read cap claims no state, neve
   const plain = S.railRecordsFor({ workspaceId: 'sde', artifacts: [art(7, 'git_commit', 'candidate')], checks: new Map(), liveActions: [], deploymentHealthy: false, participating: true });
   assert.equal(plain.versions[0].unread, undefined);
   // The summary counts only steps with a state (requirement, and project from the participation record).
-  assert.match(L.railSummary(r), /^2 of 12 steps in this release done/, 'requirement and project; the unread step is not counted as moving');
+  assert.match(L.railSummary(r), /^2 of 9 steps in this release done/, 'requirement and project; the unread step is not counted as moving');
   assert.doesNotMatch(L.railSummary(r), /in progress/);
 });
 

@@ -107,9 +107,10 @@ const RECORDS = [null, { versions: [], liveActions: [], participation: true, dep
 
 test('HA1 no domain is ever called complete; FUTURE steps never carry a state', () => {
   for (const v of L.bundledDomainViews()) {
-    // B2b Task 1 (the registry flip): every SDE step is in this release, so the registry projects SDE as executable end to
-    // end at B2b; no other domain ever is (constraint 3). The flag is never shown as text (the scan below).
-    assert.equal(v.executableEndToEnd, v.id === 'sde', `${v.id}: executable end to end only for SDE at B2b`);
+    // Wave-1 review, ruling on finding 1 (a restoration, not a weakening): the view reads the delivered sub-phase (B2a),
+    // so no domain is executable end to end until Task 16 proves the B2b flow and sets DELIVERED_SUB_PHASE.
+    assert.equal(v.currentSubPhase, 'B2a', `${v.id}: the view carries the delivered sub-phase`);
+    assert.equal(v.executableEndToEnd, false, `${v.id} is not executable end to end as delivered (B2a)`);
     for (const records of RECORDS) {
       const r = L.railFor(v, records);
       for (const t of railTexts(r)) assert.doesNotMatch(t, /\bcomplete(d)?\b|finished|end to end/i, `${v.id}: ${t}`);

@@ -6,6 +6,8 @@
  *   logs/jobs/<jobId>/<n>.log    attempt logs (the stored `job_attempts.log_path` is this relative form)
  *   logs/images/<buildId>.log    image build logs
  *   work/<jobId>/<n>/{in,out}    attempt staging
+ *   wt/<session id, lowercase>   B2b: one locked git worktree per agent session (written by git, through the runner)
+ *   jobs/<jobId>/                B2b: per-job files main writes (an agent turn's context); never blob GC's
  *
  * Confinement (`confineToDataHome`) reuses B1's segment rules (`relSegments`, applied with the
  * Windows rules on every platform): a relative path is refused when it is empty, absolute
@@ -43,6 +45,16 @@ export interface DataHome {
   readonly objectsTmpDir: string;
   readonly logsDir: string;
   readonly workDir: string;
+  /** B2b: `<root>/wt`, the session worktrees (one per session, F23). Blob GC never lists anything under it. */
+  readonly worktreesDir: string;
+  /** B2b: `<root>/jobs`, per-job files main writes. Blob GC never lists anything under it. */
+  readonly jobsDir: string;
+  /** RELATIVE folder of a session's worktree: `wt/<sessionId lowercased>` (the v10 trigger's naming). */
+  worktreeRel(sessionId: string): string;
+  /** Absolute, confined folder of a session's worktree, or null when refused (it may not exist yet). */
+  worktreePath(sessionId: string): Promise<string | null>;
+  /** RELATIVE folder of one job's own files: `jobs/<jobId>`. */
+  jobRel(jobId: string): string;
   /** RELATIVE path of a blob's bytes (`objects/<2>/<62>`). */
   objectRel(sha256: string): string;
   /** Absolute, confined path of a blob's bytes, or null when confinement refuses it. */
@@ -154,7 +166,12 @@ export async function confineUnder(root: string, rel: string): Promise<string | 
   return cur;
 }
 
-const LAYOUT: readonly (readonly string[])[] = Object.freeze([['objects', 'tmp'], ['logs', 'jobs'], ['logs', 'images'], ['work']]);
+const LAYOUT: readonly (readonly string[])[] = Object.freeze([['objects', 'tmp'], ['logs', 'jobs'], ['logs', 'images'], ['work'], ['wt'], ['jobs']]);
+
+/** A session id as a worktree folder name: lowercased (`tr_worktrees_insert` requires `wt/<lower(session_id)>`). */
+export function worktreeRelFor(sessionId: string): string {
+  return `wt/${checkId(sessionId, 'sessionId').toLowerCase()}`;
+}
 
 function objectRel(sha256: string): string {
   if (typeof sha256 !== 'string' || !SHA_RE.test(sha256)) throw new PlatformError('invalid', 'not a lowercase sha256', { field: 'sha256' });
@@ -238,8 +255,13 @@ export function resolveDataHome(userData: string): DataHome {
   const objectsTmpDir = path.join(objectsDir, 'tmp');
   const logsDir = path.join(root, 'logs');
   const workDir = path.join(root, 'work');
+  const worktreesDir = path.join(root, 'wt');
+  const jobsDir = path.join(root, 'jobs');
   const home: DataHome = Object.freeze({
-    root, objectsDir, objectsTmpDir, logsDir, workDir,
+    root, objectsDir, objectsTmpDir, logsDir, workDir, worktreesDir, jobsDir,
+    worktreeRel: worktreeRelFor,
+    worktreePath(sessionId: string): Promise<string | null> { return confineUnder(root, worktreeRelFor(sessionId)); },
+    jobRel(jobId: string): string { return `jobs/${checkId(jobId, 'jobId')}`; },
     objectRel,
     objectPath(sha256: string): Promise<string | null> { return confineUnder(root, objectRel(sha256)); },
     attemptWorkRel,

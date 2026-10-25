@@ -42,7 +42,8 @@ export type MainToRunner =
   /**
    * B2b: main's answer to one relayed MCP call (`mcp.call` with the same `callId`). For `sandbox_exec` the value is
    * `{ grant: SandboxExecGrant }`: the runner runs exactly that argv in the turn's container and returns the redacted,
-   * capped output to the agent only (main gets `agent.exec.done`: counts and a hash, never the text).
+   * capped output to the agent only (main gets `agent.exec.done`: counts and a hash, never the text). The runner acts
+   * on the first reply for a `callId` only and ignores any later one.
    */
   | { op: 'mcp.reply'; callId: string; result: McpReplyResult }
   /** B2b: a bounded git read (status, or a diff between two recorded commits); answered by `git.read.result`. */
@@ -301,7 +302,11 @@ const SHA256_RE = /^[0-9a-f]{64}$/;
 const COMMIT_RE = /^[0-9a-f]{40}(?:[0-9a-f]{24})?$/;
 /** The runner's loopback MCP endpoint. */
 export const MCP_URL_RE = /^http:\/\/127\.0\.0\.1:([1-9][0-9]{0,4})\/mcp$/;
-/** A relay id the runner mints (`callId`, `execId`, `reqId`). */
+/**
+ * A relay id: the runner mints `callId` (one per relayed MCP call); main mints `execId` (inside the `sandbox_exec`
+ * grant) and `reqId` (for `git.read`). The runner answers each `callId` once: it ignores a second `mcp.reply` for a
+ * `callId` it has already answered (or never sent).
+ */
 const OP_ID_RE = /^[A-Za-z0-9_-]{1,64}$/;
 /** A tool name as a model may send it (`[a-zA-Z0-9_-]`). */
 const TOOL_NAME_RE = /^[A-Za-z0-9_-]{1,64}$/;

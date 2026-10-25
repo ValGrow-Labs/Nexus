@@ -300,6 +300,25 @@ test('S10-2a capability_tokens: the principal is agent:<session> of kind agent, 
   assert.equal(db.prepare('SELECT length(caps_json) n FROM capability_tokens').get().n, 8192);
 });
 
+// Wave-1 review, finding 2: the shared claims-to-row mapping (tokens.ts claimsRowParts) is a row v10 accepts as is.
+test('S10-2a2 capability_tokens: the row claimsRowParts builds from real claims inserts, and reads back to the same claims', () => {
+  const { db } = world();
+  const { claimsRowParts } = loadTs('src/shared/nexus/tokens.ts');
+  const { DOMAINS } = loadTs('src/shared/nexus/domains/index.ts');
+  const caps = DOMAINS.find((d) => d.id === 'sde').capabilities.map((c) => JSON.parse(JSON.stringify(c)));
+  const claims = { jti: 'ZyXwVuTsRqPoNmLkJi_-99', sub: AGENT, onBehalfOf: 'user:local', projectId: 'p-ledger', workspaceId: 'sde',
+    participationId: 'pw', jobId: 'j-turn', sessionId: SID, caps, inputs: ['v-cs-cand'], mcpTools: ['context_get', 'sandbox_exec'],
+    maxChildJobs: 20, iat: T0, exp: T0 + 1_800_000 };
+  insert(db, 'capability_tokens', { ...claimsRowParts(claims) });
+  const r = db.prepare('SELECT * FROM capability_tokens WHERE jti = ?').get(claims.jti);
+  const grant = JSON.parse(r.caps_json);
+  assert.deepEqual([grant.caps, grant.maxChildJobs, JSON.parse(r.inputs_json), JSON.parse(r.tools_json), r.issued_at, r.expires_at],
+    [caps, 20, ['v-cs-cand'], ['context_get', 'sandbox_exec'], T0, T0 + 1_800_000]);
+  assert.equal(r.caps_sha256, crypto.createHash('sha256').update(r.caps_json).digest('hex'));
+  // The array alone (the claims' `caps` field) is never the column: v10 refuses it.
+  assert.throws(() => insert(db, 'capability_tokens', { ...claimsRowParts({ ...claims, jti: 'ZyXwVuTsRqPoNmLkJi_-98' }), caps_json: JSON.stringify(caps) }), CHECK);
+});
+
 test('S10-2b capability_tokens: identity and claims are immutable; revocation is set once with a known reason', () => {
   const { db } = world();
   insToken(db);
@@ -492,6 +511,18 @@ test('S10-2g session_worktrees: wt/<session> and refs/nexus/job/<session>, under
   assert.throws(() => upd(db, 'session_worktrees', 'removed_at = NULL', 'session_id = ?', SID3), frozen);
   assert.throws(() => db.prepare('DELETE FROM session_worktrees WHERE session_id = ?').run(SID), /worktrees are never deleted/);
   assert.deepEqual(db.pragma('foreign_key_check'), []);
+});
+
+// Wave-1 review, finding 3: the shared helpers (changeSet.ts jobRefFor and worktreeRelPathFor) name exactly what
+// tr_worktrees_insert accepts for an uppercase ULID session id; the uppercase pair is refused.
+test('S10-2g2 session_worktrees: jobRefFor and worktreeRelPathFor give the lowercased pair the trigger accepts', () => {
+  const { db } = world();
+  const cs = loadTs('src/shared/nexus/changeSet.ts');
+  assert.match(SID, /[A-Z]/, 'the fixture id is uppercase, like a real ULID');
+  assert.throws(() => insWorktree(db, { rel_path: `wt/${SID}`, ref: `refs/nexus/job/${SID}` }), /a new worktree is named after its session/);
+  insWorktree(db, { rel_path: cs.worktreeRelPathFor(SID), ref: cs.jobRefFor(SID) });
+  assert.deepEqual(db.prepare('SELECT rel_path, ref FROM session_worktrees WHERE session_id = ?').get(SID),
+    { rel_path: cs.worktreeRelPathFor(SID), ref: cs.jobRefFor(SID) });
 });
 
 test('S10-2h: no v10 write touches a v1-v9 row, and every refusal leaves the tables empty', () => {

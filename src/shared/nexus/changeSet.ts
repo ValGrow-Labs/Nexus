@@ -1,7 +1,7 @@
 // Change-set rules (B2b): which repository paths an agent's change may touch,
 // which names are sensitive at any depth (never collected, never shown to the
 // agent), and which files are lockfiles (left out of the advisory entropy notes).
-// A change set is the agent's work committed by Nexus on `refs/nexus/job/<session>`;
+// A change set is the agent's work committed by Nexus on `refs/nexus/job/<lowercased session>`;
 // main records these facts in its metadata. Pure; no I/O.
 
 import { deepFreeze } from './freeze';
@@ -11,7 +11,7 @@ export interface ChangeSetMeta {
   /** The merge base with the integration ref when collected, and the commit Nexus wrote. */
   base: string;
   head: string;
-  /** `refs/nexus/job/<session>` and `refs/nexus/accepted/<branch>`. */
+  /** `refs/nexus/job/<lowercased session>` and `refs/nexus/accepted/<branch>`. */
   ref: string;
   integrationRef: string;
   branch: string;
@@ -26,7 +26,14 @@ export interface ChangeSetMeta {
 
 /** The refs Nexus writes, only under `refs/nexus/*` (D-B13). */
 export const NEXUS_REF_PREFIX = 'refs/nexus/';
-export const jobRefFor = (sessionId: string): string => `refs/nexus/job/${sessionId}`;
+/**
+ * A session's job ref and worktree folder, both named after the LOWERCASED session id (session ids are uppercase
+ * ULIDs; a ref and a folder name are case-folded on Windows). Exactly what schema v10's `tr_worktrees_insert` accepts
+ * for a new worktree: `rel_path = 'wt/' || lower(session_id)` and `ref = 'refs/nexus/job/' || lower(session_id)`.
+ */
+export const jobRefFor = (sessionId: string): string => `refs/nexus/job/${sessionId.toLowerCase()}`;
+/** The worktree folder, relative to the project's Nexus data folder: `wt/<lowercased session id>`. */
+export const worktreeRelPathFor = (sessionId: string): string => `wt/${sessionId.toLowerCase()}`;
 export const integrationRefFor = (branch: string): string => `refs/nexus/accepted/${branch}`;
 
 /**

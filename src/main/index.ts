@@ -5707,6 +5707,9 @@ app.whenReady().then(() => {
       holdV8: process.env.NEXUS_DB_HOLD_V8 === '1',
       holdV9: process.env.NEXUS_DB_HOLD_V9 === '1',
       enableV9: process.env.NEXUS_ENABLE_V9 === '1' ? true : undefined,
+      // v10 (agent records), held at v9 by NEXUS_DB_HOLD_V10=1 and opt-in like v9: only NEXUS_ENABLE_V10=1 turns it on.
+      holdV10: process.env.NEXUS_DB_HOLD_V10 === '1',
+      enableV10: process.env.NEXUS_ENABLE_V10 === '1' ? true : undefined,
       appVersion: app.getVersion()
     });
   } catch (e) { console.error('[db] open failed:', e); }

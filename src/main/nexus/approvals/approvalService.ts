@@ -386,6 +386,7 @@ export class ApprovalService {
       if (a.expires_at <= now) { this.expireTx(a, now); return { expired: true, after: null }; }
       if (a.reason === 'egress.deps' || a.reason === 'egress.weights') return { expired: false, after: this.answerEgressTx(p, a, decision, now) };
       if (a.reason === 'image.prepare') return { expired: false, after: this.answerImageTx(p, a, decision, now) };
+      if (a.reason === 'repo.write_refs') { this.answerRepoWritesTx(p, a, decision, now); return { expired: false, after: null }; }
       throw invalid('reason_not_in_this_build', 'this approval is not answered in this build');
     });
     if (out.expired) throw new PlatformError('illegal_transition', 'the approval expired before it was answered', { from: 'expired', reason: 'expired' });
@@ -429,6 +430,19 @@ export class ApprovalService {
       workspaceId: j.workspace_id, entityType: 'approval', entityId: a.id, action: 'approval.respond', status: 'succeeded',
       details: { reason: a.reason, decision, consumedBy: decision === 'once' ? { jobId: j.id, attemptN: live.n } : null, effect } }, now);
     return after;
+  }
+
+  /**
+   * A3, repository writes (B2b Task 7, D-B6): once -> approved and consumed for the PROJECT (no job: it is asked once per
+   * project, WorktreeService then queues the worktree job); deny -> denied (the turn that asked ends; nothing was written).
+   */
+  private answerRepoWritesTx(p: Principal, a: ApprovalRow, decision: ApprovalDecision, now: number): void {
+    if (a.project_id === null || a.job_id !== null) throw invalid('bad_request', 'the repository write request is not usable');
+    this.decideTx(p, a, decision, now, decision === 'once' ? { jobId: null, n: null } : null);
+    appendJobEventTx(this.db, { type: 'approval', summary: decision === 'once' ? 'repository writes approved for this project' : 'repository writes denied',
+      projectId: a.project_id, approvalId: a.id, data: { status: decision === 'once' ? 'approved' : 'denied', reason: a.reason } }, now);
+    appendActivityRow(this.db, { actorKind: p.kind, actorId: p.id, onBehalfOf: a.on_behalf_of, sessionId: a.session_id, projectId: a.project_id,
+      entityType: 'approval', entityId: a.id, action: 'approval.respond', status: 'succeeded', details: { reason: a.reason, decision } }, now);
   }
 
   /** Image: once -> consume and insert the running build (sent after commit); deny -> denied. */

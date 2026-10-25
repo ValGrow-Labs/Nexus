@@ -17,7 +17,9 @@ export const ACTIVITY_DETAIL_ALLOW: readonly string[] = Object.freeze([
   // B2a Task 9: approvals, image builds and dev deployments (each read only as one of a fixed set of values).
   'reason', 'decision', 'status', 'job',
   // B2a Task 11: how many leftover sandbox resources main asked the runner to remove (a count).
-  'requested'
+  'requested',
+  // B2b Task 7: whether a job's worktree was freshly created or an existing one was reused (a flag, never a path).
+  'reused'
 ]);
 
 /** Every action the platform services write to the activity log. */
@@ -38,7 +40,11 @@ export const ACTIVITY_ACTIONS: readonly string[] = Object.freeze([
   // B2a Task 10: restart recovery's decisions.
   'exec.recover',
   // B2a Task 11: leftover sandbox resources of ended runs, handed to the runner for removal after a restart.
-  'exec.orphan_removed'
+  'exec.orphan_removed',
+  // B2b Task 4: the agent's network permission, and its per-turn capability tokens (counts only, never the token).
+  'agent.consent', 'token.mint', 'token.revoke',
+  // B2b Task 7: a job's git worktree was prepared (never the worktree's own path, which is never in details).
+  'repo.worktree'
 ]);
 
 /** Plain words for an action a person may be refused (every platform action). */
@@ -92,7 +98,17 @@ const ACTION_WORDS: Record<string, string> = {
   'exec.recover': 'recover work after a restart',
   'exec.orphan_removed': 'remove leftover sandbox resources',
   'version.revalidate': 'run the checks again',
-  'platform.health': 'read the platform health'
+  'platform.health': 'read the platform health',
+  // B2b Task 4.
+  'agent.start': 'start an agent turn',
+  'review.decide': 'decide a review',
+  'changeset.accept': 'accept a change set',
+  'repo.merge': 'merge accepted work',
+  'repo.worktree': "prepare the agent's working copy",
+  'agent.consent': "change the agent's network permission",
+  'token.mint': "issue the agent's turn permission",
+  'token.revoke': "end the agent's turn permission",
+  'auth.denied': 'act with its turn permission'
 };
 
 const ACTION_SHAPE = /^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)*$/;
@@ -333,6 +349,13 @@ function sentence(row: ActivityView, ctx: ActivityContext): string | null {
       if (decision === 'fail') return pick(RECOVER_FAIL_WORDS, detail(row, 'status')) ?? 'Job failed: it stopped while the app was closed';
       return pick(RECOVER_WORDS, decision) ?? RECOVER_NEUTRAL;
     }
+    case 'agent.consent':
+      return detail(row, 'op') === 'revoke' ? "The agent's network permission was revoked" : 'The agent was given network permission, with spend limits';
+    case 'token.mint': return 'The agent was given a permission for one turn';
+    case 'token.revoke': return "The agent's turn permission ended";
+    case 'repo.worktree':
+      return detail(row, 'reused') === true ? "The agent's job reused its working copy of the repository"
+        : "A working copy of the repository was prepared for the agent's job";
     case 'project_workspace.primary_synced': {
       const ws = workspacePhrase(detail(row, 'workspaceId'), ctx);
       return ws ? `Main workspace set to ${ws}, from the project's domain` : "Main workspace set from the project's domain";

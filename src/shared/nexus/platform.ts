@@ -21,9 +21,35 @@ export type PlatformAction =
   | 'blob.gc'
   // B2a execution: approvals, deployments, revalidation, health, and the system-only execution writes.
   | 'approval.read' | 'approval.respond' | 'approval.create' | 'deployment.stop' | 'deployment.transition'
-  | 'version.revalidate' | 'platform.health' | 'exec.ingest';
-export type AuthDenyReason = 'unknown_principal' | 'disabled_principal' | 'no_membership' | 'role' | 'agent_requires_token' | 'system_only';
+  | 'version.revalidate' | 'platform.health' | 'exec.ingest'
+  // B2b agents: start a turn (member), a user's review decision and change-set accept (member, users only), the
+  // dialog-confirmed merge and the runtime consent (owner), and the capability-token mint (system only).
+  | 'agent.start' | 'review.decide' | 'changeset.accept' | 'repo.merge' | 'agent.consent' | 'token.mint';
+export type AuthDenyReason = 'unknown_principal' | 'disabled_principal' | 'no_membership' | 'role' | 'agent_requires_token' | 'system_only'
+  // B2b: an action only a stored user may take (the system principal and agents never may).
+  | 'user_only';
 export type AuthDecision = { allowed: true; role: Role | 'system' } | { allowed: false; reason: AuthDenyReason; needed?: Role };
+/**
+ * B2b: what an agent's capability token is checked against on one call (AuthService.authorizeWithToken). Every field
+ * but the project is optional; each one given must be inside the token's grant and the domain's ceiling.
+ */
+export interface TokenScope {
+  projectId: ProjectId;
+  /** A version the call reads or names as an input: one of the turn's inputs, or an output of the turn's job (or its child jobs). */
+  versionId?: VersionId;
+  /** A recipe the call requests. */
+  recipeId?: string;
+  /** An artifact kind the call registers. */
+  kind?: string;
+  /** A worktree path the call edits (checked against the code edit scope). */
+  path?: string;
+  /** The MCP tool the call came through (it must be in the token's tool list, and it decides the capability). */
+  tool?: string;
+}
+/** Why a token call was refused: a verification failure, or a failed check of the intersection. */
+export type TokenDenyReason = 'malformed' | 'bad_signature' | 'unknown' | 'expired' | 'revoked'
+  | 'not_agent' | 'agent_forbidden' | 'job_ended' | 'user_denied' | 'ceiling' | 'no_capability' | 'tool_not_granted' | 'out_of_scope';
+export type TokenAuthDecision = { allowed: true } | { allowed: false; reason: TokenDenyReason };
 export type ParticipationStatus = 'active' | 'withdrawn' | 'complete';
 export interface ProjectWorkspace { id: ParticipationId; projectId: ProjectId; workspaceId: WorkspaceId; status: ParticipationStatus;
   isPrimary: boolean; objective: string | null; source: 'backfill' | 'legacy_domain' | 'user'; createdBy: PrincipalId; createdAt: number; updatedAt: number }

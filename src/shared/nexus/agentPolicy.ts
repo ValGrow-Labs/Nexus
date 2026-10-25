@@ -39,9 +39,23 @@ export const AGENT_DEFAULTS: Readonly<AgentCaps> = deepFreeze({
 
 export const AGENT_CAP_KEYS: readonly (keyof AgentCaps)[] = deepFreeze(Object.keys(AGENT_DEFAULTS) as (keyof AgentCaps)[]);
 
+/** Thrown by clampCaps for a requested value below 1 (a cap of 0 or less is refused, never stored: the v10 CHECKs
+ *  require 1 or more). `code` is `invalid`, like a refused request; `field` names the cap. */
+export class CapsRefused extends RangeError {
+  readonly code = 'invalid' as const;
+  readonly field: keyof AgentCaps;
+  constructor(field: keyof AgentCaps) {
+    super(`${field} must be at least 1`);
+    this.name = 'CapsRefused';
+    this.field = field;
+  }
+}
+
 /**
- * A grant's caps: each requested value when it is a non-negative safe integer, never above the ceiling; a missing or
- * malformed value takes the ceiling. Grants may only lower caps.
+ * A grant's caps: each requested value when it is a safe integer of 1 or more, never above the ceiling; a missing or
+ * malformed value (not a safe integer) takes the ceiling; a safe integer below 1 is refused (CapsRefused), never
+ * stored. The turn cap is then lowered to the day cap when it is above it. Grants may only lower caps, and every
+ * output satisfies the runtime_consents CHECK ranges of schema v10 (1..ceiling, turn <= day).
  */
 export function clampCaps(requested: Partial<Record<keyof AgentCaps, unknown>> | null | undefined,
   defaults: Readonly<AgentCaps> = AGENT_DEFAULTS): AgentCaps {
@@ -49,8 +63,10 @@ export function clampCaps(requested: Partial<Record<keyof AgentCaps, unknown>> |
   for (const k of AGENT_CAP_KEYS) {
     const ceiling = defaults[k];
     const v = requested && typeof requested === 'object' ? (requested as Record<string, unknown>)[k] : undefined;
-    out[k] = typeof v === 'number' && Number.isSafeInteger(v) && v >= 0 ? Math.min(v, ceiling) : ceiling;
+    if (typeof v === 'number' && Number.isSafeInteger(v) && v < 1) throw new CapsRefused(k);
+    out[k] = typeof v === 'number' && Number.isSafeInteger(v) ? Math.min(v, ceiling) : ceiling;
   }
+  out.turnUsdCents = Math.min(out.turnUsdCents, out.dayUsdCents);
   return out;
 }
 

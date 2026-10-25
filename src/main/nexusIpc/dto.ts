@@ -17,7 +17,7 @@ import type {
   ParticipationView, PreviewView, ValidationResultView, VersionContent, VersionDetail, VersionView
 } from '../../shared/nexus/ipc';
 import type { DomainSpec } from '../../shared/nexus/domainSpec';
-import { CURRENT_SUB_PHASE, isAtOrBefore, isExecutableEndToEnd } from '../../shared/nexus/domainSpec';
+import { DELIVERED_SUB_PHASE, isAtOrBefore, isExecutableEndToEnd } from '../../shared/nexus/domainSpec';
 import { RECOMMENDED_FREE_BYTES, REQUIRED_FREE_BYTES } from '../../shared/nexus/resourceGate';
 import type { ExecJob, HealthSnapshot, JobDetail } from '../nexus/exec/executionService';
 import type { JobEvent } from '../nexus/exec/events';
@@ -151,12 +151,12 @@ export function domainView(d: DomainSpec): DomainSpecView {
     statusNote: d.statusNote, vocabulary,
     lifecycle: d.lifecycle.map((s) => ({
       id: s.id, label: s.label, status: s.status, scopeNote: s.scopeNote ?? null, subPhase: s.subPhase,
-      delivered: s.status !== 'FUTURE' && isAtOrBefore(s.subPhase),
+      delivered: s.status !== 'FUTURE' && isAtOrBefore(s.subPhase, DELIVERED_SUB_PHASE),
       consumes: [...s.consumes], produces: [...s.produces], prerequisites: [...s.prerequisites],
       actions: s.via.flatMap((v) => ('userAction' in v ? [v.userAction] : []))
     })),
     modules: d.modules.map((m) => ({ id: m.id, label: m.label, kinds: [...m.kinds], subPhase: m.subPhase })),
-    availableFromSubPhase: d.participationFromSubPhase, currentSubPhase: CURRENT_SUB_PHASE, executableEndToEnd: isExecutableEndToEnd(d)
+    availableFromSubPhase: d.participationFromSubPhase, currentSubPhase: DELIVERED_SUB_PHASE, executableEndToEnd: isExecutableEndToEnd(d)
   };
 }
 

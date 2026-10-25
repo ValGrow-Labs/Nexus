@@ -21,6 +21,12 @@
  * agreement with what main implements. A problem keeps execution off (`registry_invalid`); nothing throws, and the
  * B1 services and the read-only channels keep working.
  *
+ * Agents (B2b): with `opts.agents` on, execution available and the v10 shape in place, the platform also composes the
+ * capability tokens (TokenService: one key per platform, i.e. per main boot) and the runtime consent with its spend and
+ * rate guards (BudgetService). Startup revokes every live agent token (`restart`), and so does every runner `ready`
+ * (`runner_restart`, F9): the runner's port is wrapped when it is attached, so the revocation runs before the execution
+ * core sees the `ready` (and before any later message of the new runner).
+ *
  * No IPC is registered here. Callers in main pass a Principal resolved through
  * `principals`; the renderer never supplies identity.
  */
@@ -50,6 +56,10 @@ import { SessionService } from './sessions/sessionService';
 import { WorkspaceService } from './workspace/workspaceService';
 import { ExecQueries } from './exec/execQueries';
 import { registryProblems } from './registryImpl';
+import { v10ShapeProblem } from './db/schemaV10';
+import { TokenService } from './agents/tokenService';
+import { BudgetService } from './agents/budgetService';
+import type { RunnerPort } from './exec/runnerPort';
 
 export interface NexusPlatform {
   principals: PrincipalResolver;
@@ -92,6 +102,12 @@ export interface NexusPlatform {
   registry: { valid: boolean; problems: number };
   /** This process's boot id: restart recovery re-owns for it, and main attaches the runner with it (B2a Task 10/11). */
   bootId: string;
+  /** B2b: true when the agent services are built (`opts.agents`, execution available, the v10 shape in place). */
+  agentsAvailable: boolean;
+  /** B2b: capability tokens (mint in the lease transaction, verify, revoke); null unless agents are available. */
+  tokens: TokenService | null;
+  /** B2b: the runtime consent, today's usage and the start guards; null unless agents are available. */
+  budget: BudgetService | null;
   startup(): NexusStartupReport;
 }
 
@@ -103,6 +119,8 @@ export interface NexusStartupReport {
   jobs: { interrupted: number; requeued: number };
   /** On a v9 database only (the key is absent below v9): what restart recovery's phase A did. */
   execution?: PhaseAReport;
+  /** With agents available only (the key is absent otherwise): the live agent tokens revoked at startup. */
+  agents?: { tokensRevoked: number };
 }
 
 export interface NexusPlatformOptions {
@@ -139,6 +157,10 @@ export interface NexusPlatformOptions {
   bootId?: string;
   /** Tests only: the registry check's problems (default: registryImpl's startup check). */
   registryProblems?: () => string[];
+  /** B2b: turn the agent services on (main: PersistStore.agentsAvailable); they need execution and the v10 shape too. Default off. */
+  agents?: boolean;
+  /** Tests only: the token key and id source (default node:crypto). */
+  randomBytes?: (n: number) => Buffer;
 }
 
 /**
@@ -219,9 +241,37 @@ export function createNexusPlatform(db: Database.Database, opts?: NexusPlatformO
   repo?.bindExecution(exec);
   if (executionAvailable) log('[nexus] execution core ready: runner not attached');
   const bootId = opts?.bootId ?? newId(now());
+  // B2b: the agent services, only with execution on and the exact v10 shape (agents stay off by default).
+  const agentsAvailable = (opts?.agents ?? false) && executionAvailable && v10ShapeProblem(db, true) === null;
+  if ((opts?.agents ?? false) && !agentsAvailable) log('[nexus] agents unavailable: execution or the schema v10 shape is not in place');
+  const tokens = agentsAvailable ? new TokenService(db, { auth, now, randomBytes: opts?.randomBytes }) : null;
+  const budget = agentsAvailable ? new BudgetService(db, { auth, now }) : null;
+  if (tokens) {
+    // Every runner `ready` is a new runner process (it answers the one `hello` of its port): its MCP server is new, and
+    // no token of an earlier runner may reach it. The revocation runs before the execution core sees the message.
+    const attach = exec.attachRunner.bind(exec);
+    exec.attachRunner = (port: RunnerPort | null, boot: string): void => {
+      if (!port) { attach(port, boot); return; }
+      const wrapped: RunnerPort = {
+        state: () => port.state(),
+        send: (m) => port.send(m),
+        onMessage: (fn) => port.onMessage((raw) => {
+          if ((raw as { op?: unknown } | null)?.op === 'ready') {
+            try {
+              const n = tokens.revokeLiveAgentTokens(principals.system(), 'runner_restart');
+              if (n > 0) log(`[nexus] agent tokens revoked at runner ready: ${n}`);
+            } catch (e) { log(`[nexus] agent tokens not revoked at runner ready (${(e as { code?: string })?.code ?? (e as Error)?.name ?? 'error'})`); }
+          }
+          fn(raw);
+        })
+      };
+      attach(wrapped, boot);
+    };
+  }
   return {
     principals, auth, activity, workspaces, projects, artifacts, lineage, jobs, sessions, handoffs, handoffsAvailable, executionAvailable,
     exec, blobs, validation, approvals, deployments, repo, queries, registry: { valid: registryValid, problems: problems.length }, bootId,
+    agentsAvailable, tokens, budget,
     startup(): NexusStartupReport {
       // The seeded principals must resolve; a missing one throws platform_unavailable.
       principals.localUser();
@@ -231,6 +281,8 @@ export function createNexusPlatform(db: Database.Database, opts?: NexusPlatformO
       const r = workspaces.reconcileLegacyPrimaries(system);
       // No agent runtime is attached across a restart: sessions first, then the jobs.
       const s = sessions.recoverAfterRestart(system);
+      // B2b: the key is new with this boot, so no earlier token verifies; their rows are revoked as well (`restart`).
+      const tokensRevoked = tokens ? tokens.revokeLiveAgentTokens(system, 'restart') : null;
       // By the FILE's schema version: v9 runs restart recovery's phase A (hold mode while execution is off); v7/v8 B1's routine.
       const x = isV9File(db) ? exec.recoverPhaseA(system, bootId, now()) : null;
       const j = x ? x.jobs : jobs.recoverAfterRestart(system);
@@ -246,7 +298,8 @@ export function createNexusPlatform(db: Database.Database, opts?: NexusPlatformO
         primaries: { set: r.set, cleared: r.cleared },
         sessions: { interrupted: s.interrupted },
         jobs: { interrupted: j.interrupted, requeued: j.requeued },
-        ...(x ? { execution: x } : {})
+        ...(x ? { execution: x } : {}),
+        ...(tokensRevoked !== null ? { agents: { tokensRevoked } } : {})
       };
     }
   };

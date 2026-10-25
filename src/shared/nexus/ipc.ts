@@ -145,7 +145,8 @@ export interface DomainSpecView {
   modules: { id: string; label: string; kinds: string[]; subPhase: SubPhase }[];
   /** The sub-phase from which a project can take part in the domain. */
   availableFromSubPhase: SubPhase;
-  /** This build's sub-phase. */
+  /** The delivered sub-phase (DELIVERED_SUB_PHASE): what this build has proven end to end. Every claim the rail
+   *  derives from it (future, delivered, the summary) is a delivery claim; it is not the registry's CURRENT_SUB_PHASE. */
   currentSubPhase: SubPhase;
   /** True only when every step of every completion rule runs in this build (never claimed otherwise). */
   executableEndToEnd: boolean;

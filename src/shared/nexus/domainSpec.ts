@@ -17,8 +17,13 @@ export const STEP_STATUSES: readonly StepStatus[] = ['REAL', 'PARTIAL', 'FUTURE'
 export type SubPhase = 'B1' | 'B2a' | 'B2b' | 'B2c' | 'B3' | 'B4' | 'B5' | 'B6';
 /** In delivery order. */
 export const SUB_PHASES: readonly SubPhase[] = ['B1', 'B2a', 'B2b', 'B2c', 'B3', 'B4', 'B5', 'B6'];
-/** The sub-phase this build implements. */
+/** The sub-phase this build implements: the registry's soundness checks (which steps may be REAL, which actions
+ *  are planned) are made against it. It is never a claim to the user that a step runs. */
 export const CURRENT_SUB_PHASE: SubPhase = 'B2b';
+/** The sub-phase this build has proven end to end; Task 16 sets it to CURRENT_SUB_PHASE in the commit that empties
+ *  B2B_E2E_STUB. Every user-facing or derived claim (delivered, "In this release", executable end to end, the
+ *  summary) reads against it, never against CURRENT_SUB_PHASE. */
+export const DELIVERED_SUB_PHASE: SubPhase = 'B2a';
 
 export function isSubPhase(v: unknown): v is SubPhase {
   return typeof v === 'string' && (SUB_PHASES as readonly string[]).includes(v);
@@ -114,8 +119,9 @@ export interface LifecycleStep {
   e2eTestId?: string;
 }
 
-/** True only when every step of every completion rule is REAL or PARTIAL and delivered at `at`. */
-export function isExecutableEndToEnd(spec: DomainSpec, at: SubPhase = CURRENT_SUB_PHASE): boolean {
+/** True only when every step of every completion rule is REAL or PARTIAL and delivered at `at` (default: the
+ *  delivered sub-phase, what this build has proven end to end; pass CURRENT_SUB_PHASE for the registry-level fact). */
+export function isExecutableEndToEnd(spec: DomainSpec, at: SubPhase = DELIVERED_SUB_PHASE): boolean {
   if (spec.tier !== 'first-class' || spec.lifecycle.length === 0 || spec.completionRules.length === 0) return false;
   if (!isAtOrBefore(spec.participationFromSubPhase, at)) return false;
   return spec.completionRules.every((rule) => rule.steps.every((id) => {

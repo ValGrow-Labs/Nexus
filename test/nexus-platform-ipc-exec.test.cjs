@@ -158,15 +158,19 @@ test('I-E5 B2A_IMPL equals main\'s registered recipe, validator and ingest maps 
   const m = mainImplementation();
   const sorted = (xs) => [...xs].sort();
   // B2b Task 1 (the registry flip): main checks the registry against B2B_IMPL; the B2b ids its later tasks land
-  // (B2B_PENDING) are left out of the comparison, so main's maps still equal exactly B2B_IMPL less B2B_PENDING = B2a.
-  assert.deepEqual(sorted(B2B_IMPL.recipes.filter((r) => !B2B_PENDING.recipes.includes(r))), sorted(B2A_IMPL.recipes), 'B2B_IMPL less pending is B2a');
+  // (B2B_PENDING) are left out of the comparison. Task 7 landed the six git engine recipes and emptied
+  // B2B_PENDING.recipes (it can only shrink), so recipes now equal B2B_IMPL in full; the register validators
+  // (Task 8) and git.applies_cleanly (Task 9) are still pending, so validators still equal exactly B2A_IMPL.
+  assert.deepEqual(sorted(B2B_IMPL.recipes.filter((r) => !B2B_PENDING.recipes.includes(r))), sorted(B2B_IMPL.recipes), 'no recipe is still pending');
   assert.deepEqual(sorted(B2B_IMPL.validators.filter((v) => !B2B_PENDING.validators.includes(v))), sorted(B2A_IMPL.validators));
-  assert.deepEqual(sorted(m.recipes), sorted(B2A_IMPL.recipes), 'recipes main can plan');
+  assert.deepEqual(sorted(m.recipes), sorted(B2B_IMPL.recipes), 'recipes main can plan');
   assert.deepEqual(sorted(m.validators), sorted(B2A_IMPL.validators), 'validators main runs');
-  assert.deepEqual(sorted([...m.ingest, ...m.notIngested]), sorted(B2A_IMPL.recipes), 'every recipe is ingested or named as never ingested');
+  assert.deepEqual(sorted([...m.ingest, ...m.notIngested]), sorted(B2B_IMPL.recipes), 'every recipe is ingested or named as never ingested');
   assert.deepEqual(m.ingest.filter((x) => m.notIngested.includes(x)), [], 'never both');
-  // Fix round 1 (the ruled defect): a dependency install has its own evidence rule; only the dev deployment is never ingested.
-  assert.deepEqual(sorted(m.notIngested), ['sde.preview.start']);
+  // Fix round 1 (the ruled defect): a dependency install has its own evidence rule; only the dev deployment is never
+  // ingested at B2a. Task 7 adds four git-write recipes whose ingest lands in Task 8/9: a finished job of one is
+  // refused (`ingest_unavailable`) rather than completed, so unfinished work never completes in the meantime.
+  assert.deepEqual(sorted(m.notIngested), sorted(['sde.preview.start', 'changeset.collect', 'changeset.merge_check', 'changeset.accept', 'repo.ff']));
   assert.ok(m.ingest.includes('sde.deps.node') && m.ingest.includes('sde.deps.python'));
   assert.ok(m.validators.includes('sde.deps.lock_matches'));
   assert.deepEqual(implementationProblems(), []);

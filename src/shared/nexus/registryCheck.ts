@@ -88,7 +88,8 @@ export const B2B_IMPL: RegistryImpl = deepFreeze({
  * (`agents_unavailable`) while the agents part is off, so nothing pending can be started.
  */
 export const B2B_PENDING: { recipes: readonly string[]; validators: readonly string[] } = deepFreeze({
-  recipes: ['repo.worktree', 'changeset.collect', 'changeset.merge_check', 'changeset.accept', 'changeset.accept_rollback', 'repo.ff'],
+  // B2b Task 7 landed the six git engine recipes (planBuilder plans each; ingest rules or NOT_INGESTED name each).
+  recipes: [],
   validators: ['git.diff_nonempty', 'git.paths_in_scope', 'sec.secret_scan', 'sec.entropy_notes', 'cs.tests_pass', 'git.applies_cleanly']
 });
 

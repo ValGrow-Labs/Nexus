@@ -41,6 +41,13 @@
  *   `sde.tests_pass` result as `case` evidence (failures first, at most MAX_LISTED_CASES and CASE_EVIDENCE_BUDGET, names
  *   redacted and capped), the per-case table the junit_summary preview pages.
  *
+ * - a session worktree (B2b Task 7, the `worktree` rule): the runner's `git-facts` re-validated against what main derives
+ *   from the job's own params (the ref and folder named after the session, lowercased; the integration ref of its
+ *   branch; two full commits; locked), then ONE `session_worktrees` row (v10) in this transaction: the row exists only
+ *   once the worktree does (task 2's ruling). A row already recorded for the session with the same identity is the
+ *   answer (idempotent); one with another identity is refused.
+ * - a rollback of an unfinished accept (B2b Task 7, the `gitFacts` rule): its facts re-validated; the job completes.
+ *
  * A recipe without an ingest rule here is refused with `ingest_unavailable` / `no_ingest_rule`: unfinished work is never
  * completed.
  */
@@ -65,6 +72,7 @@ import type { AttemptExited, IngestContext, IngestDecision, IngestPort } from '.
 import { MAX_DISCOVERED_FILES } from './planBuilder';
 import { acceptManifestReport, APP_MANIFEST_MAX_BYTES, readAppManifest } from '../repo/repoService';
 import { buildDiagnosticReport, type ProbeTable } from './diagnosticReport';
+import { appendActivityRow } from '../activity/writer';
 
 export type { AttemptExited };
 
@@ -99,17 +107,26 @@ const jsonBytes = (v: unknown): number => Buffer.byteLength(JSON.stringify(v), '
 export const MAX_TREE_FILES = 5000;
 
 /** The ingest rule of each recipe: the one dispatch table of `ingestTx` (B2a Task 13 pins it to the registry's B2A_IMPL). */
-export const INGEST_RULES: Readonly<Record<string, 'snapshot' | 'discovery' | 'testRun' | 'build' | 'assemble' | 'diagnose' | 'deps'>> = Object.freeze({
+export const INGEST_RULES: Readonly<Record<string, 'snapshot' | 'discovery' | 'testRun' | 'build' | 'assemble' | 'diagnose' | 'deps' | 'worktree'
+  | 'gitFacts'>> = Object.freeze({
   'repo.snapshot': 'snapshot', 'sde.test.discover': 'discovery', 'sde.test.node': 'testRun', 'sde.test.pytest': 'testRun',
   'sde.build.node': 'build', 'sde.build.python': 'build', 'sde.app.assemble': 'assemble', 'sde.diagnose': 'diagnose',
-  'sde.deps.node': 'deps', 'sde.deps.python': 'deps'
+  'sde.deps.node': 'deps', 'sde.deps.python': 'deps',
+  // B2b Task 7: the session worktree row, and an accept's rollback.
+  'repo.worktree': 'worktree', 'changeset.accept_rollback': 'gitFacts'
 });
 /**
  * The implemented recipes whose outputs are never ingested, each with why: a dev deployment is a service (its evidence is
  * `app.preview_health`, recorded while it runs).
  */
 export const NOT_INGESTED: Readonly<Record<string, string>> = Object.freeze({
-  'sde.preview.start': 'a service: its evidence is app.preview_health'
+  'sde.preview.start': 'a service: its evidence is app.preview_health',
+  // B2b Task 7 plans and runs these git writes; what their facts become is recorded by the services that queue them. Until
+  // that ingest lands, a finished job of these recipes is refused (`ingest_unavailable`): unfinished work never completes.
+  'changeset.collect': 'its change_set version, lineage and register validators are recorded by the change-set service (B2b Task 8)',
+  'changeset.merge_check': 'its result is the git.applies_cleanly validation, recorded by the change-set checks (B2b Task 8)',
+  'changeset.accept': 'its promotion and accept row are recorded by the accept service in one transaction with a rollback (B2b Task 9)',
+  'repo.ff': 'its repo_merges row is recorded by the accept service after the dialog-confirmed merge (B2b Task 9)'
 });
 /**
  * The validators an ingest rule records that are not run through `runPure` (the registry check derives main's dispatched
@@ -191,6 +208,8 @@ export class IngestService implements IngestPort {
       case 'assemble': return this.assemble(ctx);
       case 'diagnose': return this.diagnose(ctx);
       case 'deps': return this.depsInstall(ctx);
+      case 'worktree': return this.worktree(ctx);
+      case 'gitFacts': return this.rollbackFacts(ctx);
       default: return refuse('ingest_unavailable', 'no_ingest_rule', `outputs of ${ctx.recipe.id} are not ingested in this build`);
     }
   }
@@ -277,6 +296,56 @@ export class IngestService implements IngestPort {
     return !this.db.prepare(`SELECT 1 FROM validations v WHERE v.version_id = ? AND v.stage = 'register' AND v.blocking = 1 AND v.status <> 'passed'
       AND NOT EXISTS (SELECT 1 FROM validations w WHERE w.version_id = v.version_id AND w.validator_id = v.validator_id AND w.blocking = 1
         AND (w.finished_at > v.finished_at OR (w.finished_at = v.finished_at AND w.rowid > v.rowid)))`).get(versionId);
+  }
+
+  // ---------- B2b git writes (engine) ----------
+
+  private gitFacts(ctx: IngestContext): Record<string, unknown> | null {
+    const f = ctx.exited.parsed.find((p) => p.parser === 'git-facts')?.normalized;
+    return isObj(f) && f.ok === true ? f : null;
+  }
+
+  /** `repo.worktree`: one session_worktrees row, only for facts that match what main derives (see the header). */
+  private worktree(ctx: IngestContext): IngestDecision {
+    const { job, system } = ctx;
+    const f = this.gitFacts(ctx);
+    if (!f) return refuse('invalid_output', 'parser_contract', 'the worktree facts were not usable');
+    const params = parse(job.params_json);
+    const sessionId = isObj(params) && typeof params.sessionId === 'string' && /^[0-9A-Za-z]{26}$/.test(params.sessionId) ? params.sessionId : null;
+    const branch = isObj(params) && typeof params.branch === 'string' ? params.branch : null;
+    if (!sessionId || !branch) return refuse('invalid_output', 'bad_input', 'the worktree job has no session or branch');
+    const name = sessionId.toLowerCase();
+    const want = { ref: `refs/nexus/job/${name}`, worktree: `wt/${name}`, integrationRef: `refs/nexus/accepted/${branch}` };
+    if (f.ref !== want.ref || f.worktree !== want.worktree || f.locked !== true || typeof f.base !== 'string' || !COMMIT_RE.test(f.base)
+      || typeof f.integrationHead !== 'string' || !COMMIT_RE.test(f.integrationHead)) {
+      return refuse('invalid_output', 'parser_contract', 'the worktree facts do not match the session');
+    }
+    const hasTable = !!this.db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'session_worktrees'").get();
+    if (!hasTable) return refuse('ingest_unavailable', 'v10_missing', 'session worktrees are not recorded in this database yet');
+    const prior = this.db.prepare('SELECT * FROM session_worktrees WHERE session_id = ?').get(sessionId) as
+      { rel_path: string; ref: string; integration_ref: string; base_commit: string; removed_at: number | null } | undefined;
+    if (prior) {
+      if (prior.removed_at === null && prior.rel_path === want.worktree && prior.ref === want.ref && prior.integration_ref === want.integrationRef) return ok;
+      return refuse('invalid_output', 'worktree_recorded', 'the session already has another worktree record');
+    }
+    const now = this.deps.now();
+    this.db.prepare(`INSERT INTO session_worktrees (session_id, project_id, rel_path, ref, integration_ref, base_commit, locked, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, 1, ?)`).run(sessionId, job.project_id, want.worktree, want.ref, want.integrationRef, f.base, now);
+    appendActivityRow(this.db, { actorKind: system.kind, actorId: system.id, onBehalfOf: job.on_behalf_of, jobId: job.id, attemptN: ctx.attempt.n,
+      sessionId, projectId: job.project_id, workspaceId: job.workspace_id, entityType: 'worktree', entityId: sessionId, action: 'repo.worktree',
+      status: 'succeeded', details: { worktree: want.worktree, ref: want.ref, integrationRef: want.integrationRef, base: f.base,
+        integrationHead: f.integrationHead, integrationCreated: f.integrationCreated === true, reused: f.reused === true, locked: true } }, now);
+    return ok;
+  }
+
+  /** `changeset.accept_rollback`: the facts must name the move the job was queued for. */
+  private rollbackFacts(ctx: IngestContext): IngestDecision {
+    const f = this.gitFacts(ctx);
+    const params = parse(ctx.job.params_json);
+    if (!f || !isObj(params) || f.from !== params.from || f.to !== params.to || typeof f.to !== 'string' || !COMMIT_RE.test(f.to)) {
+      return refuse('invalid_output', 'parser_contract', 'the rollback facts do not match the job');
+    }
+    return ok;
   }
 
   // ---------- repository snapshot (engine) ----------

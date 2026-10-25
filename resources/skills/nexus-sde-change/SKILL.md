@@ -13,8 +13,8 @@ turn never does.
 
 ## Where things are
 
-- **Files.** The file tools (Read, Edit, Write, Glob, Grep) work inside the
-  session worktree only. Use paths relative to the worktree root. Never use an
+- **Files.** The file tools (read, edit, write, find and search files) work
+  inside the session worktree only. Use paths relative to the worktree root. Never use an
   absolute path, `..`, a link or a junction to leave it.
 - **Commands.** There is no shell on the host. Run every command with the
   `sandbox_exec` tool. It runs in this turn's own container, with the worktree

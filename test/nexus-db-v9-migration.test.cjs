@@ -256,18 +256,18 @@ test('M7 reopening at v9 is not_needed three times over with no backup; a damage
   assert.deepEqual(backups(file), before);
 });
 
-test('M8 a newer schema (v10) is opened for legacy use only: nothing migrated, platform off', () => {
+test('M8 a newer schema (v11) is opened for legacy use only: nothing migrated, platform off', () => {
   const file = v9File();
-  const pre = C.openRaw(file); pre.pragma('user_version = 10'); pre.close();
+  const pre = C.openRaw(file); pre.pragma('user_version = 11'); pre.close();
   const before = backups(file);
   const { s, logs } = openV9(file);
-  assert.equal(s.schemaVersion, 10); assert.equal(s.platformAvailable, false); assert.equal(s.platformDatabase(), null);
+  assert.equal(s.schemaVersion, 11); assert.equal(s.platformAvailable, false); assert.equal(s.platformDatabase(), null);
   assert.equal(s.executionAvailable, false); assert.equal(s.executionUnavailableReason, null);
   assert.equal(s.lastMigration.reason, 'newer_schema'); assert.equal(s.lastMigrationV8.reason, 'newer_schema'); assert.equal(s.lastMigrationV9.reason, 'newer_schema');
-  assert.ok(logs.some((l) => l.includes('schema v10 is newer than this build (v9)')), logs.join('\n'));
+  assert.ok(logs.some((l) => l.includes('schema v11 is newer than this build (v10)')), logs.join('\n'));
   assert.equal(s.getKv('window_bounds').width, 1200);
   s.close();
-  assert.deepEqual(backups(file), before); assert.equal(userVersion(file), 10);
+  assert.deepEqual(backups(file), before); assert.equal(userVersion(file), 11);
 });
 
 test('M9 a fresh database goes to v9 with no backups', () => {

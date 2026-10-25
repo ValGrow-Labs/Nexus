@@ -21,6 +21,8 @@
  *     `denied` (attempt failed); anything else interrupts the job;
  *   - an engine attempt (snapshot, assemble, diagnose; the work lived in the dead runner): abandoned; a leased job goes
  *     back to queued, a running one to retry_scheduled when its recipe is idempotent with attempts left, else interrupted;
+ *     a B2b git recipe follows its stated `recovery` class (`interrupted`: interrupted even with attempts left; `requeue`:
+ *     retried, idempotently: a `repo.worktree` keeps the refs and the worktree an earlier attempt made);
  *   - a check main executes (a validate job without a recipe): abandoned; leased -> queued; running -> interrupted and the
  *     same check queued again as a new job (the v7 state table has no running -> queued); the version stays a draft;
  *   - a container attempt whose container was never recorded (never provisioned): abandoned; a leased tool job goes
@@ -305,6 +307,31 @@ const REASON_TEXT: Record<string, string> = {
   unreconciled: 'the runner did not reconcile the attempt within 10 minutes of the restart',
   restarted: 'the app restarted while the image was being built'
 };
+/**
+ * The sentence of each git write refusal (B2b Task 7; src/runner/gitWrite.ts GIT_FAILURE_CODES). The job's error is the
+ * code and this sentence: shown as it is, never as a raw code.
+ */
+export const GIT_FAILURE_TEXT: Readonly<Record<string, string>> = Object.freeze({
+  git_missing: 'Git is not installed on this computer.',
+  bad_task: 'Nexus refused the git work: its plan was malformed.',
+  repo_layout_unsupported: 'This project folder is not a plain git repository (its .git is not a folder), so Nexus cannot make a worktree for it.',
+  repo_empty: 'The repository has no commits yet. Make a first commit, then ask again.',
+  branch_missing: 'The branch Nexus works from is no longer in the repository. Take a new repository snapshot, then ask again.',
+  worktree_tampered: 'The link from the session worktree to the repository was changed, so Nexus stopped and committed nothing.',
+  worktree_conflict: 'Git could not give the session worktree its expected name, so Nexus stopped.',
+  link_or_gitlink: 'The change holds a symbolic link or a nested repository entry, which Nexus does not commit.',
+  ref_moved: 'A Nexus ref moved while the work ran, so nothing was changed. Try again.',
+  unknown_commit: 'A commit Nexus recorded is no longer in the repository.',
+  merge_conflict: 'The change does not merge cleanly onto the accepted work.',
+  tree_dirty: 'Your working tree has uncommitted changes or an operation in progress, so nothing was merged.',
+  branch_mismatch: 'Another branch is checked out than the one the accepted work is for, so nothing was merged.',
+  not_fast_forward: 'Your branch has moved on, so the accepted work is no longer a fast-forward. Nothing was merged.',
+  git_failed: 'Git could not complete the work; nothing was changed.',
+  symlink_in_worktree: 'The session worktree holds a symbolic link or junction, so Nexus stopped and committed nothing.',
+  nested_repo: 'The session worktree holds a nested git repository, so Nexus stopped and committed nothing.',
+  worktree_too_large: 'The session worktree is larger than Nexus allows (8 GiB), so nothing was committed.',
+  file_too_large: 'A file in the session worktree is larger than Nexus allows (50 MiB), so nothing was committed.'
+});
 const reasonError = (reason: string): { code: string; message: string } => ({ code: reason, message: REASON_TEXT[reason] ?? 'the app restarted' });
 
 const isObj = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
@@ -350,6 +377,13 @@ export function exitDetail(exit: { code: number | null; signal?: string | null; 
 export function exitFailure(recipe: RecipeDef, exit: { code: number | null; signal?: string | null; oomKilled: boolean }, outputs: readonly StagedOutput[],
   parsed: readonly ParsedOutput[], outputError?: string | null): { outcome: string; error: { code: string; message: string } } | null {
   const tests = recipe.parsers.includes('junit');
+  // B2b: a git write the runner refused reports its code as a fact; main words it (never git's text, never a bare code).
+  if (recipe.executor === 'engine' && exit.code !== 0 && !exit.oomKilled && !outputError) {
+    const f = parsed.find((p) => p.parser === 'git-facts')?.normalized;
+    if (isObj(f) && f.ok === false && typeof f.code === 'string' && Object.prototype.hasOwnProperty.call(GIT_FAILURE_TEXT, f.code)) {
+      return { outcome: 'failed', error: { code: f.code, message: GIT_FAILURE_TEXT[f.code] } };
+    }
+  }
   const treeOutput = recipe.produces.some((k) => getKind(k)?.storage.includes('tree'));
   if (outputError) return { outcome: 'invalid_output', error: { code: outputError, message: `the outputs were refused: ${outputError}` } };
   if (exit.oomKilled) return { outcome: 'oom', error: { code: 'oom', message: `the container ran out of memory (${exitDetail(exit)})` } };
@@ -601,7 +635,11 @@ function phaseAJobTx(host: RecoveryHost, system: Principal, bootId: string, jobI
   const recipe = j.recipe_id ? getRecipe(j.recipe_id) : null;
   if (!recipe) return j.kind === 'validate' ? mainCheckTx(host, system, j, a, now) : interruptTx(host, system, j, a, 'no_recipe', now);
   if (recipe.executor === 'engine') {
-    return j.state === 'leased' ? requeueTx(host, system, j, a, 'engine_lost', now) : retryOrInterruptTx(host, system, j, a, 'engine_lost', now);
+    if (j.state === 'leased') return requeueTx(host, system, j, a, 'engine_lost', now);
+    // B2b: a recipe that states its recovery class follows it. `interrupted` work (a collect, an accept, a fast-forward)
+    // is never repeated blind; `requeue` work (a worktree, a merge check, a rollback) runs again, idempotently.
+    if (recipe.recovery === 'interrupted') return interruptTx(host, system, j, a, 'engine_lost', now);
+    return retryOrInterruptTx(host, system, j, a, 'engine_lost', now);
   }
   // A container is recorded once its preflight passed: what happened to it is phase B's to learn from the runner.
   if (a.container_id !== null) return { decision: null, count: 'pending' };

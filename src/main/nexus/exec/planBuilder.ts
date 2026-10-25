@@ -26,6 +26,12 @@
  * - Engine recipes (`repo.snapshot`, `sde.app.assemble`) get an `EnginePlan` whose repository
  *   folder is the one main accepted from the `projects` row (`acceptFsRoot`), never a param. `sde.diagnose` (B2a Task 12)
  *   gets one naming the subject's containers and attempt log ranges, all read by main from its own rows (no folder).
+ * - The B2b git write recipes (`repo.worktree`, `changeset.collect`, `changeset.merge_check`, `changeset.accept`,
+ *   `changeset.accept_rollback`, `repo.ff`; B2b Task 7) get an `EnginePlan` from the job's SYSTEM-written params
+ *   (`ctx.params`: a session id, a branch, commits; checked here again), the accepted project folder and the data home:
+ *   the worktree is `<dataHome>/wt/<session id lowercased>`, its git folder `<repo>/.git/worktrees/<same>`, the session
+ *   ref `refs/nexus/job/<same>` and the integration ref `refs/nexus/accepted/<branch>` (D-B13). Commit messages are
+ *   main's: the agent's commit carries the `Nexus-Job: <turn job>` trailer, an accept `Nexus-Accepted-By: user:local` (D-B8).
  * - The Nexus entry (infra/images/common/nexus-entry) receives its backstop in `NEXUS_WALL_SECONDS` (main's number: TWICE
  *   the container's wall clock, final batch item 2, the Task 7 R3 ruling: the in-container timeout is at least limit + cap,
  *   so it never ends work main still counts as in time; main's wall clock stays the authority) and bounds the whole run
@@ -177,6 +183,11 @@ export interface PlanContext {
   diagnose?: DiagnoseContext | null;
   /** Egress recipes only: the egress proxy's profile (sde-node) and the local id of its pinned image. */
   egressProxy?: { profile: SandboxProfile | null; imageId: `sha256:${string}` | null } | null;
+  /**
+   * The job's params as stored (`jobs.params_json`, parsed). Only the B2b git write recipes read them: the system writes
+   * them when it queues the job (WorktreeService, ChangeSetService, AcceptService), and every value is checked here.
+   */
+  params?: unknown;
 }
 
 /**
@@ -536,8 +547,85 @@ function buildDiagnosePlan(ctx: PlanContext, base: Omit<EnginePlan, 'kind' | 'ta
     wallClockMs: ctx.recipe.wallClockMs };
 }
 
-/** The engine recipes main plans (each has its branch below; B2a Task 13 pins this list to the registry's B2A_IMPL). */
-export const ENGINE_TASK_RECIPES: readonly string[] = Object.freeze(['repo.snapshot', 'sde.app.assemble', 'sde.diagnose']);
+/** The B2b git write recipes (B2b Task 7), each a system child job; their plans come from `buildGitEnginePlan`. */
+export const GIT_ENGINE_RECIPES: readonly string[] = Object.freeze(['repo.worktree', 'changeset.collect', 'changeset.merge_check', 'changeset.accept',
+  'changeset.accept_rollback', 'repo.ff']);
+/** The engine recipes main plans (each has its branch below; the registry check pins this list to B2B_IMPL). */
+export const ENGINE_TASK_RECIPES: readonly string[] = Object.freeze(['repo.snapshot', 'sde.app.assemble', 'sde.diagnose', ...GIT_ENGINE_RECIPES]);
+/** The collect guard's caps (F12): 50 MiB per file, 8 GiB per worktree (the runner's worktreeGuard defaults). */
+export const CHANGESET_MAX_FILE_BYTES = 50 * 2 ** 20;
+export const CHANGESET_MAX_TOTAL_BYTES = 8 * 2 ** 30;
+/** A branch name `refs/nexus/accepted/<branch>` may carry (check-ref-format's rules, conservatively; the runner's BRANCH_RE). */
+export const GIT_BRANCH_RE = /^(?!-)(?!.*\.\.)(?!.*\/\/)(?!.*@\{)(?!.*\/\.)(?!\.)(?!.*\.lock(?:\/|$))(?!.*[/.]$)[A-Za-z0-9._/-]{1,200}$/;
+const SESSION_ID_RE = /^[0-9A-HJKMNP-TV-Za-hjkmnp-tv-z]{26}$/;
+const SCOPE_RE = /^!?(?![:/\\])[^\0\r\n]{1,512}$/;
+export const MAX_SCOPE_ENTRIES = 64;
+
+/** The session's lowercased name: the worktree folder, the worktree's git folder and the session ref's last segment. */
+export function sessionName(sessionId: unknown): string {
+  if (typeof sessionId !== 'string' || !SESSION_ID_RE.test(sessionId)) return refuse('bad_input', 'the session id is malformed');
+  return sessionId.toLowerCase();
+}
+export const sessionRefOf = (sessionId: string): string => `refs/nexus/job/${sessionName(sessionId)}`;
+export function integrationRefOf(branch: unknown): string {
+  if (typeof branch !== 'string' || !GIT_BRANCH_RE.test(branch)) return refuse('bad_input', 'the branch name is not usable');
+  return `refs/nexus/accepted/${branch}`;
+}
+const oneLine = (v: unknown, fallback: string): string => {
+  const t = typeof v === 'string' ? v.replace(/[\u0000-\u001f\u007f]+/g, ' ').trim().slice(0, 200) : '';
+  return t.length > 0 ? t : fallback;
+};
+const commitParam = (p: Record<string, unknown>, k: string): string => {
+  const v = p[k];
+  if (typeof v !== 'string' || !COMMIT_RE.test(v)) return refuse('bad_input', `${k} is not a full commit id`);
+  return v;
+};
+const jobIdParam = (p: Record<string, unknown>, k: string): string => {
+  const v = p[k];
+  if (typeof v !== 'string' || !/^[0-9A-Za-z_-]{1,64}$/.test(v)) return refuse('bad_input', `${k} is not a job id`);
+  return v;
+};
+
+/** A B2b git write recipe's plan (see the module header). */
+function buildGitEnginePlan(ctx: PlanContext, base: Omit<EnginePlan, 'kind' | 'task' | 'wallClockMs'>, repoPath: string): EnginePlan {
+  const p = isPlainObject(ctx.params) ? ctx.params : null;
+  if (!p) return refuse('bad_input', 'a git job needs its params');
+  if (containsSecret(p)) return refuse('bad_input', 'the git job params hold a secret-shaped value');
+  const wallClockMs = ctx.recipe.wallClockMs;
+  const plan = (task: EnginePlan['task']): EnginePlan => ({ ...base, kind: 'engine', task, wallClockMs });
+  switch (ctx.recipe.id) {
+    case 'repo.worktree': {
+      const name = sessionName(p.sessionId);
+      return plan({ engine: 'repo.worktree', repoPath, worktreePath: underDataHome(ctx.dataHomeRoot, `wt/${name}`), ref: `refs/nexus/job/${name}`,
+        integrationRef: integrationRefOf(p.branch), branch: p.branch as string });
+    }
+    case 'changeset.collect': {
+      const name = sessionName(p.sessionId);
+      const scope = p.scope === undefined ? [] : p.scope;
+      if (!Array.isArray(scope) || scope.length > MAX_SCOPE_ENTRIES || !scope.every((x) => typeof x === 'string' && SCOPE_RE.test(x) && !x.includes('..'))) {
+        return refuse('bad_input', 'the scope is not a list of relative patterns');
+      }
+      const message = `${oneLine(p.title, 'Agent change')}\n\nNexus-Job: ${jobIdParam(p, 'turnJobId')}\n`;
+      return plan({ engine: 'changeset.collect', repoPath, worktreePath: underDataHome(ctx.dataHomeRoot, `wt/${name}`),
+        gitDir: path.join(repoPath, '.git', 'worktrees', name), ref: `refs/nexus/job/${name}`, integrationRef: integrationRefOf(p.branch),
+        scope: [...scope] as string[], message, maxFileBytes: CHANGESET_MAX_FILE_BYTES, maxTotalBytes: CHANGESET_MAX_TOTAL_BYTES });
+    }
+    case 'changeset.merge_check':
+      return plan({ engine: 'changeset.merge_check', repoPath, integrationRef: integrationRefOf(p.branch), head: commitParam(p, 'head') });
+    case 'changeset.accept': {
+      const message = `${oneLine(p.title, 'Accept the agent\'s change')}\n\nNexus-Accepted-By: user:local\n`;
+      return plan({ engine: 'changeset.accept', repoPath, integrationRef: integrationRefOf(p.branch), expectedOld: commitParam(p, 'expectedOld'),
+        head: commitParam(p, 'head'), message });
+    }
+    case 'changeset.accept_rollback':
+      return plan({ engine: 'changeset.accept_rollback', repoPath, integrationRef: integrationRefOf(p.branch), from: commitParam(p, 'from'), to: commitParam(p, 'to') });
+    case 'repo.ff': {
+      integrationRefOf(p.branch);
+      return plan({ engine: 'repo.ff', repoPath, branch: p.branch as string, sha: commitParam(p, 'sha') });
+    }
+    default: return refuse('not_in_this_build', `${ctx.recipe.id} is not an engine task of this build`);
+  }
+}
 
 /**
  * The recipes main can build a plan for: an engine recipe with its branch here, or a container recipe (tool or service)
@@ -555,6 +643,7 @@ function buildEnginePlan(ctx: PlanContext, base: Omit<EnginePlan, 'kind' | 'task
   const repoPath = ctx.repoPath;
   if (!repoPath) return refuse('project_folder_unavailable', 'the project folder is not available');
   if (ctx.recipe.id === 'repo.snapshot') return { ...base, kind: 'engine', task: { engine: 'repo.snapshot', repoPath }, wallClockMs: ctx.recipe.wallClockMs };
+  if (GIT_ENGINE_RECIPES.includes(ctx.recipe.id)) return buildGitEnginePlan(ctx, base, repoPath);
   if (ctx.recipe.id === 'sde.app.assemble') {
     const src = sourceOf(ctx.inputs);
     if (!src) return refuse('bad_input', 'assembly needs the commit of its build');
@@ -571,7 +660,9 @@ export function sandboxRecord(plan: AttemptPlan): Record<string, unknown> {
       // A diagnosis records exactly what it was planned to read (fix round 1, item 11: ingest holds the report to it).
       // Container ids sit under `sha256` keys (the redactor reads a hex digest as an integrity hash only there).
       ...(t.engine === 'sde.diagnose' ? { target: t.target, containers: t.containerIds.length, containerIds: t.containerIds.map((c) => ({ sha256: c })),
-        logRanges: t.logRanges.map((r) => ({ attemptId: r.attemptId, offset: r.offset, length: r.length, tail: r.tail })) } : {}) };
+        logRanges: t.logRanges.map((r) => ({ attemptId: r.attemptId, offset: r.offset, length: r.length, tail: r.tail })) } : {}),
+      // A git write records the refs and commits it was planned to write (never a host path).
+      ...gitRecord(t) };
   }
   if (plan.kind === 'service') {
     const rec = (c: ContainerSpec): Record<string, unknown> => ({
@@ -603,6 +694,20 @@ export function sandboxRecord(plan: AttemptPlan): Record<string, unknown> {
     noNewPrivileges: c.noNewPrivileges, tmpfs: { '/tmp': `${c.limits.tmpfsMb}m`, '/home/nexus': '256m' },
     sizeGuard: { outputMaxBytes: c.limits.outputMaxBytes, pollMs: 5000 }, ...egress
   });
+}
+
+/** What a git write's sandbox record names: its refs, branch, commits and scope (no host path, no message). */
+function gitRecord(t: EnginePlan['task']): Record<string, unknown> {
+  switch (t.engine) {
+    case 'repo.worktree': return { git: { ref: t.ref, integrationRef: t.integrationRef, branch: t.branch, worktree: `wt/${path.basename(t.worktreePath)}` } };
+    case 'changeset.collect': return { git: { ref: t.ref, integrationRef: t.integrationRef, worktree: `wt/${path.basename(t.worktreePath)}`, scope: t.scope.slice(0, MAX_SCOPE_ENTRIES),
+      maxFileBytes: t.maxFileBytes, maxTotalBytes: t.maxTotalBytes } };
+    case 'changeset.merge_check': return { git: { integrationRef: t.integrationRef, head: t.head } };
+    case 'changeset.accept': return { git: { integrationRef: t.integrationRef, expectedOld: t.expectedOld, head: t.head } };
+    case 'changeset.accept_rollback': return { git: { integrationRef: t.integrationRef, from: t.from, to: t.to } };
+    case 'repo.ff': return { git: { branch: t.branch, sha: t.sha } };
+    default: return {};
+  }
 }
 
 /** Drops every `argv` list (keeping `argvCount` and `argvSha256`) at any depth: what fits a record of any plan. */

@@ -287,21 +287,51 @@ test('SC3 AGENT_DEFAULTS are the D-B4 values; budgetDecision boundaries; clampCa
   assert.equal(decide({ dayUsdCents: 1000, turnsLastHour: 6, liveTurns: 1 }).reason, 'budget_exhausted');
   assert.equal(decide({ turnsLastHour: 6, liveTurns: 1 }).reason, 'rate_limited');
   // clampCaps: grants may only lower caps; a malformed or missing value takes the ceiling.
+  // Wave-1 review, finding 6 (a named edit, stricter than before): a whole number below 1 is refused (CapsRefused, code
+  // `invalid`), never kept, and the turn cap is lowered to the day cap; so every output satisfies the runtime_consents
+  // CHECK ranges (1..ceiling, turn <= day). The old pin `clampCaps({ turnUsdCents: 0 }).turnUsdCents === 0` is replaced
+  // by the refusal below.
   const requests = [{}, null, undefined, { turnUsdCents: 50 }, { dayUsdCents: 1e9, turnTokens: 1e12 },
-    { turnsPerHour: -1, toolCalls: 1.5, wallClockMs: NaN, childJobs: '3', concurrentTurns: Infinity }, { turnUsdCents: 0 },
-    Object.fromEntries(policy.AGENT_CAP_KEYS.map((k) => [k, D[k] + 1])), Object.fromEntries(policy.AGENT_CAP_KEYS.map((k) => [k, Math.floor(D[k] / 2)]))];
+    { toolCalls: 1.5, wallClockMs: NaN, childJobs: '3', concurrentTurns: Infinity, turnsPerHour: 1e300 }, { dayUsdCents: 150 }, { dayUsdCents: 1 },
+    Object.fromEntries(policy.AGENT_CAP_KEYS.map((k) => [k, D[k] + 1])), Object.fromEntries(policy.AGENT_CAP_KEYS.map((k) => [k, Math.max(1, Math.floor(D[k] / 2))])),
+    Object.fromEntries(policy.AGENT_CAP_KEYS.map((k) => [k, 1]))];
+  const { V10_CONSENT_CEILINGS } = loadTs('src/main/nexus/db/v10Seed.ts');
+  const CONSENT_COLS = { turnUsdCents: 'turn_usd_cents', dayUsdCents: 'day_usd_cents', turnsPerHour: 'turns_per_hour', concurrentTurns: 'concurrent_turns',
+    turnTokens: 'turn_tokens', toolCalls: 'tool_calls' };
+  // The two copies of the D-B4 caps agree: the shared defaults and the frozen v10 consent ceilings (and the DDL CHECKs).
+  assert.deepEqual(Object.keys(V10_CONSENT_CEILINGS).sort(), Object.keys(CONSENT_COLS).sort());
+  for (const k of Object.keys(CONSENT_COLS)) assert.equal(D[k], V10_CONSENT_CEILINGS[k], `${k}: AGENT_DEFAULTS equals V10_CONSENT_CEILINGS`);
+  const { V10_DDL } = loadTs('src/main/nexus/db/schemaV10.ts');
+  const consentDdl = V10_DDL.slice(V10_DDL.indexOf('CREATE TABLE IF NOT EXISTS runtime_consents'));
+  for (const [k, col] of Object.entries(CONSENT_COLS)) {
+    const range = k === 'concurrentTurns' ? new RegExp(`CHECK \\(${col} = ${D[k]}\\)`) : new RegExp(`CHECK \\(${col} BETWEEN 1 AND ${D[k]}\\)`);
+    assert.match(consentDdl, range, `${col} CHECK is 1..${D[k]}`);
+  }
+  assert.match(consentDdl, /CHECK \(turn_usd_cents <= day_usd_cents\)/);
+  /** The runtime_consents CHECK ranges, as the DDL above states them. */
+  const consentRowOk = (c) => Object.keys(CONSENT_COLS).every((k) => Number.isSafeInteger(c[k]) && c[k] >= 1 && c[k] <= V10_CONSENT_CEILINGS[k])
+    && c.turnUsdCents <= c.dayUsdCents;
   for (const r of requests) {
     const c = policy.clampCaps(r);
     assert.deepEqual(Object.keys(c).sort(), [...policy.AGENT_CAP_KEYS].sort());
     for (const k of policy.AGENT_CAP_KEYS) {
-      assert.ok(Number.isSafeInteger(c[k]) && c[k] >= 0 && c[k] <= D[k], `${JSON.stringify(r)} ${k}=${c[k]}`);
+      assert.ok(Number.isSafeInteger(c[k]) && c[k] >= 1 && c[k] <= D[k], `${JSON.stringify(r)} ${k}=${c[k]}`);
       const asked = r && r[k];
-      if (typeof asked === 'number' && Number.isSafeInteger(asked) && asked >= 0 && asked <= D[k]) assert.equal(c[k], asked, 'a lower value is kept');
+      if (k !== 'turnUsdCents' && typeof asked === 'number' && Number.isSafeInteger(asked) && asked >= 1 && asked <= D[k]) assert.equal(c[k], asked, 'a lower value is kept');
     }
+    assert.ok(consentRowOk(c), `${JSON.stringify(r)}: the clamped caps satisfy the runtime_consents CHECKs`);
   }
   assert.equal(policy.clampCaps({ turnUsdCents: 50 }).turnUsdCents, 50);
   assert.equal(policy.clampCaps({ turnUsdCents: 5000 }).turnUsdCents, 200);
-  assert.equal(policy.clampCaps({ turnUsdCents: 0 }).turnUsdCents, 0);
+  // The turn cap never exceeds a lowered day cap.
+  assert.deepEqual([policy.clampCaps({ dayUsdCents: 150 }).turnUsdCents, policy.clampCaps({ dayUsdCents: 150, turnUsdCents: 100 }).turnUsdCents], [150, 100]);
+  assert.equal(policy.clampCaps({ dayUsdCents: 1 }).turnUsdCents, 1);
+  // Below 1 is refused for every cap, with the field named; a malformed value (not a whole number) still takes the ceiling.
+  for (const k of policy.AGENT_CAP_KEYS) for (const bad of [0, -1, -1e9]) {
+    assert.throws(() => policy.clampCaps({ [k]: bad }), (e) => e instanceof policy.CapsRefused && e instanceof RangeError && e.code === 'invalid'
+      && e.field === k && e.message === `${k} must be at least 1`, `${k}=${bad}`);
+  }
+  assert.equal(policy.clampCaps({ turnsPerHour: 0.5 }).turnsPerHour, 6, 'a fraction is malformed: the ceiling');
   // Usage: capped tokens leave cache reads out (F10); an unreported cost is charged at the turn cap, estimated.
   const usage = { inputTokens: 100, outputTokens: 50, cacheCreationTokens: 25, cacheReadTokens: 1e6, costUsdCents: null, toolCalls: 3, estimated: true };
   assert.equal(policy.cappedTokens(usage), 175);
@@ -353,9 +383,65 @@ test('SC4 pathInScope and SENSITIVE_PATH_RE: .git in every spelling, streams, tr
     assert.equal(cs.isLockfilePath(p), true, p);
   for (const p of ['package.json', 'lock.json', 'yarn.lock.bak', 'src/go.sum.ts']) assert.equal(cs.isLockfilePath(p), false, p);
   // Refs live under refs/nexus/* only (D-B13).
-  assert.equal(cs.jobRefFor(ULID), `refs/nexus/job/${ULID}`);
+  // Wave-1 review, finding 3 (a named edit): the job ref and the worktree folder use the LOWERCASED session id, exactly
+  // the pair schema v10's tr_worktrees_insert accepts for a new worktree (a real insert is in nexus-db-v10-schema S10-2g).
+  assert.equal(cs.jobRefFor(ULID), `refs/nexus/job/${ULID.toLowerCase()}`);
+  assert.equal(cs.worktreeRelPathFor(ULID), `wt/${ULID.toLowerCase()}`);
+  assert.notEqual(cs.jobRefFor(ULID), `refs/nexus/job/${ULID}`, 'never the uppercase id');
+  assert.equal(cs.jobRefFor(ULID.toLowerCase()), cs.jobRefFor(ULID), 'case-insensitive in the id');
+  const { V10_DDL } = loadTs('src/main/nexus/db/schemaV10.ts');
+  const trigger = V10_DDL.slice(V10_DDL.indexOf('CREATE TRIGGER IF NOT EXISTS tr_worktrees_insert'));
+  const named = trigger.slice(0, trigger.indexOf('END;'));
+  assert.match(named, /NEW\.rel_path IS NOT \('wt\/' \|\| lower\(NEW\.session_id\)\)/);
+  assert.match(named, /NEW\.ref IS NOT \('refs\/nexus\/job\/' \|\| lower\(NEW\.session_id\)\)/);
+  // The trigger's own expressions, evaluated for this id (SQLite lower() folds ASCII, as toLowerCase does for a ULID).
+  const sqlLower = (s) => s.replace(/[A-Z]/g, (ch) => ch.toLowerCase());
+  assert.deepEqual([cs.worktreeRelPathFor(ULID), cs.jobRefFor(ULID)], ['wt/' + sqlLower(ULID), 'refs/nexus/job/' + sqlLower(ULID)]);
   assert.equal(cs.integrationRefFor('main'), 'refs/nexus/accepted/main');
   assert.ok(cs.jobRefFor(ULID).startsWith(cs.NEXUS_REF_PREFIX) && cs.integrationRefFor('x').startsWith(cs.NEXUS_REF_PREFIX));
+});
+
+// ----- SC4b: the token claims as a v10 row (wave-1 review, finding 2) -----
+
+test('SC4b claimsRowParts maps the claims onto the capability_tokens row and satisfies every v10 CHECK', () => {
+  const { claimsRowParts, JTI_RE } = loadTs('src/shared/nexus/tokens.ts');
+  const { V10_DDL } = loadTs('src/main/nexus/db/schemaV10.ts');
+  const caps = getDomain('sde').capabilities.map((c) => JSON.parse(JSON.stringify(c)));
+  const claims = { jti: 'AbCdEfGhIjKlMnOpQr_-01', sub: `agent:${ULID}`, onBehalfOf: 'user:local', projectId: 'p1', workspaceId: 'sde',
+    participationId: 'pw1', jobId: 'j1', sessionId: ULID, caps, inputs: [ULID], mcpTools: ['context_get', 'sandbox_exec'], maxChildJobs: 20,
+    iat: 1_000, exp: 1_000 + 30 * 60_000 };
+  const row = claimsRowParts(claims);
+  assert.deepEqual(Object.keys(row).sort(), ['caps_json', 'caps_sha256', 'expires_at', 'inputs_json', 'issued_at', 'job_id', 'jti', 'on_behalf_of',
+    'principal_id', 'session_id', 'tools_json'].sort(), 'exactly the claim columns: no project, workspace or participation, no token or MAC');
+  // The mapping the token service writes and reads back.
+  assert.equal(row.caps_json, JSON.stringify({ caps, maxChildJobs: 20 }));
+  assert.deepEqual(JSON.parse(row.caps_json), { caps, maxChildJobs: 20 });
+  assert.equal(row.caps_sha256, crypto.createHash('sha256').update(row.caps_json).digest('hex'));
+  assert.deepEqual([JSON.parse(row.inputs_json), JSON.parse(row.tools_json)], [[ULID], ['context_get', 'sandbox_exec']]);
+  assert.deepEqual([row.jti, row.job_id, row.session_id, row.principal_id, row.on_behalf_of, row.issued_at, row.expires_at],
+    ['AbCdEfGhIjKlMnOpQr_-01', 'j1', ULID, `agent:${ULID}`, 'user:local', 1_000, 1_000 + 30 * 60_000]);
+  // The v10 CHECKs, as the DDL states them (a real insert is in nexus-db-v10-schema S10-2a).
+  const table = V10_DDL.slice(V10_DDL.indexOf('CREATE TABLE IF NOT EXISTS capability_tokens'), V10_DDL.indexOf('CREATE INDEX IF NOT EXISTS ix_tokens_job'));
+  assert.match(table, /json_type\(caps_json\) = 'object' AND length\(caps_json\) <= 8192/);
+  assert.match(table, /json_type\(inputs_json\) = 'array' AND length\(inputs_json\) <= 8192/);
+  assert.match(table, /json_type\(tools_json\) = 'array' AND length\(tools_json\) <= 2048/);
+  const isObj = (t) => { const v = JSON.parse(t); return v !== null && typeof v === 'object' && !Array.isArray(v); };
+  assert.ok(row.jti.length === 22 && JTI_RE.test(row.jti));
+  assert.ok(isObj(row.caps_json) && row.caps_json.length <= 8192, 'caps_json is a JSON object (the array is never the column)');
+  assert.ok(Array.isArray(JSON.parse(row.inputs_json)) && row.inputs_json.length <= 8192);
+  assert.ok(Array.isArray(JSON.parse(row.tools_json)) && row.tools_json.length <= 2048);
+  assert.match(row.caps_sha256, /^[0-9a-f]{64}$/);
+  assert.ok(row.expires_at > row.issued_at);
+  assert.equal(row.principal_id, `agent:${row.session_id}`, 'tr_tokens_insert: the principal is the agent of its session');
+  // Never a token-shaped value or a MAC in the row.
+  for (const v of Object.values(row)) assert.ok(!isTokenShape(String(v)), String(v));
+  // Claims that cannot be a v10 row are refused, never mapped partially.
+  for (const [name, over] of [['a raw token as jti', { jti: 'AbCdEfGhIjKlMnOpQr_-01.x' }], ['another agent', { sub: 'agent:01J9ZQ4M6X8Y2V3T5R7P9N1K0J' }],
+    ['caps not a list', { caps: { id: 'artifact.read' } }], ['no job', { jobId: '' }], ['exp not after iat', { exp: 1_000 }],
+    ['a negative child-job budget', { maxChildJobs: -1 }], ['caps over 8 KiB', { caps: [{ id: 'x'.repeat(8200) }] }],
+    ['tools over 2 KiB', { mcpTools: ['x'.repeat(2100)] }]]) {
+    assert.throws(() => claimsRowParts({ ...claims, ...over }), TypeError, name);
+  }
 });
 
 // ----- SC5: the registry flip to B2b -----
@@ -396,10 +482,19 @@ test('SC5 the registry passes at B2b: SDE steps 5, 7 and 12 are REAL; the other 
   assert.equal(SKILLS.length, 4);
   for (const r of ['repo.worktree', 'changeset.collect', 'changeset.merge_check', 'changeset.accept', 'changeset.accept_rollback', 'repo.ff'])
     assert.ok(sde.recipes.includes(r), r);
-  // SDE is executable end to end at B2b by the registry; the other five domains are not.
-  assert.equal(spec.isExecutableEndToEnd(sde), true);
-  for (const d of DOMAINS.filter((x) => x.id !== 'sde')) assert.equal(spec.isExecutableEndToEnd(d), false, d.id);
+  // Wave-1 review, ruling on finding 1: SDE is executable end to end at B2b by the registry (status alone); as delivered
+  // (the default, DELIVERED_SUB_PHASE = B2a) no domain is, and the SDE notes keep their B2a words until Task 16.
+  assert.equal(spec.isExecutableEndToEnd(sde, 'B2b'), true);
+  for (const d of DOMAINS.filter((x) => x.id !== 'sde')) assert.equal(spec.isExecutableEndToEnd(d, 'B2b'), false, d.id);
+  for (const d of DOMAINS) assert.equal(spec.isExecutableEndToEnd(d), false, `${d.id} as delivered`);
   assert.ok(!/complete/i.test(sde.statusNote));
+  assert.match(sde.statusNote, /AI-assisted implementation, review and iteration arrive in B2b\.$/);
+  assert.equal(step('requirement').scopeNote, 'You write it in Nexus. Agent drafts arrive in B2b.');
+  // The delivery pin: DELIVERED_SUB_PHASE equals CURRENT_SUB_PHASE exactly when the e2e stub and the pending list are
+  // empty, so Task 16 cannot empty the stub without flipping the constant, nor flip it without writing the titles.
+  const pendingEmpty = B2B_PENDING.recipes.length === 0 && B2B_PENDING.validators.length === 0;
+  assert.equal(spec.DELIVERED_SUB_PHASE === spec.CURRENT_SUB_PHASE, B2B_E2E_STUB.length === 0 && pendingEmpty,
+    'DELIVERED_SUB_PHASE reaches CURRENT_SUB_PHASE in the same commit that empties B2B_E2E_STUB and B2B_PENDING');
   // B2B_IMPL extends B2A_IMPL; the e2e stub records the B2b ids in lifecycle order until Task 16 writes the titles.
   for (const k of ['recipes', 'validators', 'viewers', 'e2eTests']) for (const id of B2A_IMPL[k]) assert.ok(B2B_IMPL[k].includes(id), `${k}: ${id}`);
   assert.deepEqual([...B2B_E2E_STUB], ['e2e.sde.ai-implementation', 'e2e.sde.review', 'e2e.sde.iteration']);

@@ -1586,7 +1586,8 @@ export class ExecutionService {
       try {
         plan = buildPlan({ job: { id: j.id, projectId: j.project_id }, attempt: { id: attemptId, n }, bootId: this.bootId!, recipe,
           profile, imageId: (image?.imageId as `sha256:${string}` | undefined) ?? null, dataHomeRoot: home.root, workRel, logRel, inputs, repoPath,
-          approval: null, service, diagnose });
+          // B2b Task 7: the git write recipes plan from the params the system stored when it queued them.
+          approval: null, service, diagnose, params: parseJson(j.params_json) });
       } catch (e) {
         planError = refused(e);
       }
@@ -1753,7 +1754,7 @@ export class ExecutionService {
       const plan = buildPlan({ job: { id: j.id, projectId: j.project_id }, attempt: { id: a.id, n: a.n }, bootId: this.bootId ?? '', recipe,
         profile, imageId: (image?.imageId as `sha256:${string}` | undefined) ?? null, dataHomeRoot: this.deps.dataHome.root,
         workRel: this.deps.dataHome.attemptWorkRel(j.id, a.n), logRel: this.deps.dataHome.attemptLogPath(j.id, a.n),
-        inputs: this.planInputs(j.id), repoPath: this.repoPathOf(j.project_id), approval: approval ?? null,
+        inputs: this.planInputs(j.id), repoPath: this.repoPathOf(j.project_id), approval: approval ?? null, params: parseJson(j.params_json),
         // B2a stabilization (constraint 5): the install reaches its registries only through the job's egress proxy (sde-node image).
         egressProxy: { profile: (this.deps.profiles ?? []).find((pr) => pr.id === EGRESS_PROXY_PROFILE) ?? null,
           imageId: (usableImage(this.probe, EGRESS_PROXY_PROFILE)?.imageId as `sha256:${string}` | undefined) ?? null } });
