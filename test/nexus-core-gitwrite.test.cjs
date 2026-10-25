@@ -536,7 +536,8 @@ async function coreWorld() {
   port1.postMessage({ op: 'hello', bootId: boot, dataHome: home, home: homeLabel(home), profiles: [] });
   const until = async (pred, what) => { const t0 = Date.now(); while (!pred()) { if (Date.now() - t0 > 30_000) throw new Error(`timed out: ${what}`); await new Promise((r) => setTimeout(r, 5)); } };
   await until(() => got.some((m) => m.op === 'ready'), 'ready');
-  const close = () => { try { port1.close(); } catch { /* closed */ } };
+  // The runner starts a loopback MCP server at hello (Task 6); shutdown() closes it, or its listening socket keeps the process alive.
+  const close = async () => { try { await core.shutdown(); } catch { /* best effort */ } try { port1.close(); } catch { /* closed */ } };
   MADE.push(dir);
   return { dir, home, core, got, boot, send: (m) => port1.postMessage(m), until, close };
 }
@@ -580,5 +581,5 @@ test('the runner core runs a planned repo.worktree job (git-facts at exit 0), re
     await c.until(() => c.got.some((m) => m.op === 'git.read.result' && m.reqId === 'req-1'), 'git.read.result');
     const r = c.got.find((m) => m.op === 'git.read.result');
     assert.equal(r.result.ok, true); assert.equal(r.result.branch, 'main'); assert.equal(r.result.acceptedNotMerged, 0);
-  } finally { c.close(); }
+  } finally { await c.close(); }
 });
