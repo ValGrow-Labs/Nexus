@@ -60,6 +60,19 @@ export function forcedCut(p: string): number {
   return latest > 0 ? latest : limit;
 }
 
+/**
+ * A capability token exactly as it travels on the wire (shared/nexus/tokens.ts's TOKEN_RE), unanchored: redacted
+ * wherever it appears in a log line, the word "bearer" present or not. `redactSecretText`'s own bearer rule only
+ * catches `Bearer <value>` text; a sandboxed command that echoes the bare token (e.g. `echo $TOKEN`) would not match
+ * it, so this runs first (B2b Task 6).
+ */
+export const BEARER_TOKEN_RE = /[A-Za-z0-9_-]{22}\.[A-Za-z0-9_-]{43}/g;
+
+/** A line of text before it is framed: a capability token is redacted first, then the general redactor. Never logged unredacted. */
+export function scrub(text: string): string {
+  return redactSecretText(text.replace(BEARER_TOKEN_RE, '[redacted]'));
+}
+
 type Stream = 'stdout' | 'stderr' | 'nexus';
 type FileHandle = Awaited<ReturnType<RunnerFs['open']>>;
 
@@ -157,7 +170,7 @@ export class LogWriter {
 
   /** One logical line: redacted WHOLE first, then cut into frames (a secret never straddles a frame unredacted). */
   private frame(stream: Stream, line: string): void {
-    const clean = redactSecretText(line);
+    const clean = scrub(line);
     const MARK = '[redacted]';
     let i = 0;
     do {

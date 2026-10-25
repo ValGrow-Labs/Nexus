@@ -40,10 +40,12 @@ import {
   type SandboxProbe, type ServicePlan, type StagedOutput, type ToolPlan
 } from '../shared/nexus/execution';
 import {
-  EGRESS_EVENT_MAX, parseRunnerMessage, ULID_RE, type AttemptFailureClass, type AttemptPhase, type CancelReason, type ExitReason, type RefusalReason, type RunnerToMain
+  EGRESS_EVENT_MAX, parseRunnerMessage, ULID_RE, type AttemptFailureClass, type AttemptPhase, type CancelReason, type ExitReason, type McpReplyResult,
+  type RefusalReason, type RunnerToMain, type SandboxExecGrant
 } from '../shared/nexus/runnerProtocol';
 import { expectedNetworkName } from '../shared/nexus/preflightCheck';
 import { leaseFloorBytes } from '../shared/nexus/resourceGate';
+import { SANDBOX_EXEC_OUTPUT_MAX_BYTES } from '../shared/nexus/mcpTools';
 import { containsSecret, redactSecretText } from '../main/nexus/activity/redact';
 import { diagnose, diagnoseTaskProblem } from './diagnose';
 import { appManifestArgv, COMMIT_RE, GitRunner } from './git';
@@ -55,6 +57,7 @@ import {
 import { ImageBuilder } from './imageBuilder';
 import { discardUnmergedReport, mergePerFileJunit } from './junitMerge';
 import { lastFrameTs, LogWriter } from './logs';
+import { McpServer, type McpServerHandle } from './mcpServer';
 import { ObjectStore } from './objectStore';
 import { collectOut, outBytes, showEntry } from './outputs';
 import { parseDiscovery, discoveryFrameworkOf } from './parsers/discovery';
@@ -80,6 +83,8 @@ export const HEARTBEAT_MS = 15_000;
 export const RUNNER_WALL_FACTOR = 2;
 export const STOP_GRACE_MS = 10_000;
 export const LOG_DRAIN_MS = 5_000;
+/** B2b: the longest a relayed `mcp.call` waits for main's `mcp.reply` before the agent is told it timed out. */
+export const MCP_CALL_TIMEOUT_MS = 60_000;
 const ID_RE = /^[0-9A-Za-z_-]{1,64}$/;
 const SHA_RE = /^[0-9a-f]{64}$/;
 const MAX_GC_LIST = 20_000;
@@ -193,6 +198,12 @@ export class RunnerCore {
   private readonly builder: ImageBuilder;
   private stopped = false;
   private recordSeq = 0;
+  /** B2b Task 6: the loopback MCP server (started at `hello`), the relayed calls awaiting main's `mcp.reply`, and the
+   *  bearer -> {attemptId, containerId} registry a `sandbox_exec` grant is run against (never anything main's reply
+   *  names: it carries no container identity at all). */
+  private mcpServer: McpServerHandle | null = null;
+  private readonly pendingMcp = new Map<string, (r: McpReplyResult) => void>();
+  private readonly agentTurns = new Map<string, { attemptId: string; containerId: string }>();
 
   constructor(private readonly port: RunnerTransport, private readonly deps: RunnerDeps) {
     this.driver = deps.driver;
@@ -254,7 +265,8 @@ export class RunnerCore {
     if (this.stopped && m.op !== 'hello') return;
     try {
       switch (m.op) {
-        case 'hello': return this.onHello(m);
+        case 'hello': return await this.onHello(m);
+        case 'mcp.reply': this.onMcpReply(m); return;
         case 'probe': return await this.onProbe();
         case 'attempt.start': return await this.onStart(m.attemptId as string, m.plan as AttemptPlan);
         case 'attempt.cancel': return await this.onCancel(m.attemptId as string, m.graceMs as number, m.reason as CancelReason);
@@ -284,7 +296,7 @@ export class RunnerCore {
 
   // ---------- hello, probe ----------
 
-  private onHello(m: Record<string, unknown>): void {
+  private async onHello(m: Record<string, unknown>): Promise<void> {
     if (typeof m.bootId !== 'string' || !ULID_RE.test(m.bootId) || typeof m.dataHome !== 'string' || typeof m.home !== 'string') {
       this.log('[runner] hello is malformed'); return;
     }
@@ -300,8 +312,88 @@ export class RunnerCore {
     this.git = this.paths ? new GitRunner({ cwd: this.paths.root, resolve: this.deps.resolveGit }) : null;
     this.gitw = this.paths ? new HardenedGit({ cwd: this.paths.root, resolve: this.deps.resolveGit }) : null;
     this.stopped = false;
-    // No loopback MCP endpoint yet (B2b Task 6 starts it here and reports its URL): agent turns stay unavailable.
-    this.post({ op: 'ready', bootId: m.bootId, mcpUrl: null });
+    // B2b Task 6: a fresh loopback MCP server each hello (a prior one, if any, is closed first; a restart never
+    // leaves two listening). Relayed calls from before are abandoned: nothing still waits on their HTTP response.
+    await this.closeMcpServer();
+    let mcpUrl: string | null = null;
+    try {
+      this.mcpServer = await McpServer({
+        onCall: (callId, bearer, tool, args) => this.onMcpCall(callId, bearer, tool, args),
+        onExecGrant: (bearer, grant) => this.onExecGrant(bearer, grant),
+        log: this.log
+      });
+      mcpUrl = this.mcpServer.url;
+    } catch (e) { this.log(`[runner] the loopback MCP server could not start: ${msgOf(e)}`); }
+    this.post({ op: 'ready', bootId: m.bootId, mcpUrl });
+  }
+
+  private async closeMcpServer(): Promise<void> {
+    if (this.mcpServer) { try { await this.mcpServer.close(); } catch { /* best effort */ } this.mcpServer = null; }
+    this.pendingMcp.clear();
+    this.agentTurns.clear();
+  }
+
+  // ---------- B2b Task 6: the MCP relay and the sandbox exec it grants ----------
+
+  /**
+   * B2b: binds an agent turn's bearer token to the attempt whose own container a `sandbox_exec` grant for it must run
+   * inside (Task 11 calls this when an agent turn's container starts and runs; a test calls it directly). The exec
+   * relay below trusts only this registry for which container to run a grant in, never main's reply: a
+   * `SandboxExecGrant` carries no container identity at all, so a token whose turn has ended (unbound) is refused,
+   * never run against whatever container its old registration (or anything else) might otherwise suggest.
+   */
+  bindAgentTurn(bearer: string, attemptId: string, containerId: string): void { this.agentTurns.set(bearer, { attemptId, containerId }); }
+  /** The turn ended: its token no longer resolves to any container. */
+  unbindAgentTurn(bearer: string): void { this.agentTurns.delete(bearer); }
+
+  /** Relays one `tools/call` to main as `mcp.call`, and resolves with its `mcp.reply` (or a timeout). */
+  private onMcpCall(callId: string, bearer: string, tool: string, args: unknown): Promise<McpReplyResult> {
+    const msg: RunnerToMain = { op: 'mcp.call', callId, bearer, tool, args };
+    // Checked with main's own parser before anything is registered: a call that could never be sent (bounds, shape)
+    // answers now, so the HTTP request is never left waiting on a reply that will never come.
+    if (!parseRunnerMessage(msg)) return Promise.resolve({ ok: false, code: 'bad_args', message: 'the call could not be relayed' });
+    return new Promise((resolve) => {
+      const timer = this.timers.setTimeout(() => {
+        if (this.pendingMcp.delete(callId)) resolve({ ok: false, code: 'timeout', message: 'main did not answer in time' });
+      }, MCP_CALL_TIMEOUT_MS);
+      this.pendingMcp.set(callId, (r) => { this.timers.clearTimeout(timer); resolve(r); });
+      this.post(msg);
+    });
+  }
+
+  /** Main's answer to one relayed call. The first reply for a `callId` wins; a later or unknown one is ignored. */
+  private onMcpReply(m: Record<string, unknown>): void {
+    if (typeof m.callId !== 'string') return;
+    const resolve = this.pendingMcp.get(m.callId);
+    if (!resolve) return;
+    this.pendingMcp.delete(m.callId);
+    const r = m.result as { ok?: unknown };
+    if (!r || typeof r !== 'object' || typeof r.ok !== 'boolean') { resolve({ ok: false, code: 'bad_reply', message: 'main sent a malformed reply' }); return; }
+    resolve(m.result as McpReplyResult);
+  }
+
+  /**
+   * A granted `sandbox_exec`: run in the bearer's own registered container (defence in depth — never anywhere else),
+   * the redacted and capped output returned to the agent alone; main hears only `agent.exec.done` (counts and a
+   * sha256 of the raw stdout, never its text).
+   */
+  private async onExecGrant(bearer: string, grant: SandboxExecGrant): Promise<McpReplyResult> {
+    const reg = this.agentTurns.get(bearer);
+    if (!reg) return { ok: false, code: 'unknown_attempt', message: 'no running turn holds this token' };
+    const controller = new AbortController();
+    const timer = this.timers.setTimeout(() => controller.abort(), grant.timeoutMs + 5_000);
+    try {
+      const r = await this.driver.exec(reg.containerId, grant.argv, { timeoutMs: grant.timeoutMs, signal: controller.signal, maxOutputBytes: SANDBOX_EXEC_OUTPUT_MAX_BYTES });
+      const stdoutBytes = Buffer.byteLength(r.stdout, 'utf8');
+      const stderrBytes = Buffer.byteLength(r.stderr, 'utf8');
+      const stdoutSha256 = createHash('sha256').update(r.stdout, 'utf8').digest('hex');
+      this.post({ op: 'agent.exec.done', attemptId: reg.attemptId, execId: grant.execId, exit: r.exit, stdoutBytes, stderrBytes, stdoutSha256, truncated: r.truncated });
+      return { ok: true, value: { exit: r.exit, stdout: redactSecretText(r.stdout), stderr: redactSecretText(r.stderr), truncated: r.truncated } };
+    } catch (e) {
+      return { ok: false, code: 'exec_failed', message: msgOf(e) };
+    } finally {
+      this.timers.clearTimeout(timer);
+    }
   }
 
   private async onProbe(): Promise<void> {
@@ -1342,6 +1434,7 @@ export class RunnerCore {
   async shutdown(): Promise<void> {
     this.stopped = true;
     this.builder.cancelAll();
+    await this.closeMcpServer();
     const all = [...this.attempts.values()];
     await Promise.all(all.filter((a) => a.kind === 'service' && a.containerState === 'running')
       .map((a) => Promise.all(a.containers.map((c) => this.stopAndKill(c, 2_000)))));
