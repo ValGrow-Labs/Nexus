@@ -62,7 +62,7 @@ import { INLINE_MAX_BYTES } from '../artifact/versionRules';
 import type { BlobIndex, IngestToken } from '../blobs/blobIndex';
 import { PlatformError } from '../errors';
 import type { ResolveCommit, ValidationService } from '../validation/validationService';
-import { checkDiagnosis, checkDiscovery, checkGitFacts, COMMIT_RE, type ValidatorOutcome } from '../validation/normalized';
+import { checkDiagnosis, checkDiscovery, checkGitFacts, COMMIT_RE, errored, failed, type ValidatorOutcome } from '../validation/normalized';
 import * as tests from '../validation/validators/testsPass';
 import * as depsLock from '../validation/validators/depsLockMatches';
 import { MAX_CASE_TEXT } from '../validation/evidenceShape';
@@ -399,6 +399,8 @@ export class IngestService implements IngestPort {
     if (ref !== jobRefFor(sessionId)) return refuse('invalid_output', 'parser_contract', 'the collect facts do not match the session');
     if (job.participation_id === null) return refuse('invalid_output', 'bad_input', 'the collect job has no participation');
     const scope = isObj(params) && Array.isArray(params.scope) ? params.scope.filter((x): x is string => typeof x === 'string') : [];
+    // Fail closed: only an explicit `scanTruncated: false` says the runner's patch scan saw every added line.
+    const scanTruncated = !(isObj(f) && f.scanTruncated === false);
     const title = isObj(params) && typeof params.title === 'string' ? params.title : 'Agent change';
     const summary = isObj(params) && typeof params.summary === 'string' ? params.summary : '';
     const requirementIds = isObj(params) && Array.isArray(params.requirementVersionIds)
@@ -436,7 +438,7 @@ export class IngestService implements IngestPort {
     this.bindAttempt(v.id, job.id, attempt.n);
     this.deps.faults?.afterRows?.(ctx.recipe.id);
     const pathsFacts: pathsInScope.PathsInScopeFacts = { head, paths, pathsTruncated, scope };
-    const secretFacts: secretScan.SecretScanFacts = { head, secretHits: secretHitsTyped };
+    const secretFacts: secretScan.SecretScanFacts = { head, secretHits: secretHitsTyped, scanTruncated };
     const entropyFacts: secretEntropyNotes.SecretEntropyNotesFacts = { head, entropyHits: entropyHitsTyped };
     this.deps.validation.runRegisterTx(system, v.id, {
       [diffNonempty.ID]: diffFacts, [pathsInScope.ID]: pathsFacts, [secretScan.ID]: secretFacts, [secretEntropyNotes.ID]: entropyFacts
@@ -462,6 +464,14 @@ export class IngestService implements IngestPort {
     this.deps.validation.finalizeIfReady(system, versionId);
     return ok;
   }
+    // A refused merge check ({ok:false, code}: the integration ref moved, the commit is unknown, git failed) is a
+    // check that could not run, never a verdict on the change: recorded `error` (the draft stays; Revalidate re-runs it).
+    const raw = ctx.exited.parsed.find((p) => p.parser === 'git-facts')?.normalized;
+    if (versionId && isObj(raw) && raw.ok === false && typeof raw.code === 'string') {
+      this.deps.validation.recordOutcomeTx(versionId, appliesCleanly.ID,
+        errored('merge_check_refused', `Checks could not run: the merge check was refused (${/^[a-z_]{1,40}$/.test(raw.code) ? raw.code : 'refused'}).`), { jobId: job.id, attemptN: ctx.attempt.n });
+      return ok;
+    }
 
   // ---------- repository snapshot (engine) ----------
 
@@ -515,8 +525,8 @@ export class IngestService implements IngestPort {
     const changeSetParams = job.kind === 'validate' ? parse(job.params_json) : null;
     const changeSetVersionId = isObj(changeSetParams) && typeof changeSetParams.versionId === 'string' ? changeSetParams.versionId : null;
     const repo = changeSetVersionId
-      ? (this.db.prepare('SELECT id AS version_id, storage_ref_json, metadata_json FROM artifact_versions WHERE id = ? AND project_id = ?')
-          .get(changeSetVersionId, job.project_id) as { version_id: string; storage_ref_json: string; metadata_json: string } | undefined)
+      ? (this.db.prepare(`SELECT v.id AS version_id, v.storage_ref_json, v.metadata_json FROM artifact_versions v JOIN artifacts a ON a.id = v.artifact_id
+          WHERE v.id = ? AND v.project_id = ? AND a.kind = 'change_set'`).get(changeSetVersionId, job.project_id) as { version_id: string; storage_ref_json: string; metadata_json: string } | undefined)
       : this.inputs(job.id, 'repository')[0];
     if (!repo || job.participation_id === null) return refuse('invalid_output', 'bad_input', 'discovery has no repository input');
     const fromChangeSet = changeSetVersionId !== null;
@@ -554,9 +564,11 @@ export class IngestService implements IngestPort {
     const registerFacts = { 'suite.discovered': { discovery: parsed?.normalized ?? null, listSha256: parsed?.sourceSha256 ?? null, storedSha256: staged.sha256 } };
     const contentHash = sha256(`test_suite\n${commit}\n${staged.sha256}`);
     const artifactId = this.ownedArtifact(job.participation_id, 'test_suite', 'Test suite');
-    const prior = this.already(job.id, 'ids.txt') ?? (artifactId ? this.sameContent(artifactId, contentHash) : null);
+    // A change set's own discovery never deduplicates onto an earlier suite (its metadata names ANOTHER change set, so
+    // this one's `cs.tests_pass` would never be recorded) and links to no previous suite (which may still be a draft).
+    const prior = this.already(job.id, 'ids.txt') ?? (artifactId && !fromChangeSet ? this.sameContent(artifactId, contentHash) : null);
     if (prior) return this.dedupe(ctx, prior, 'suite.discovered', this.deps.validation.runPure('suite.discovered', registerFacts['suite.discovered']));
-    const previous = artifactId ? this.latestLive(artifactId) : null;
+    const previous = artifactId && !fromChangeSet ? this.latestLive(artifactId) : null;
     const v = this.deps.artifacts.insertSystemVersionTx(system, {
       ...(artifactId ? { artifactId } : { newArtifact: { kind: 'test_suite', name: 'Test suite', participation: job.participation_id } }),
       storage: { kind: 'git', commit }, contentHash, metadata,
@@ -573,7 +585,8 @@ export class IngestService implements IngestPort {
     this.deps.blobs!.attachTx(token, v.id, [{ sha256: staged.sha256, role: 'discovery', path: 'ids.txt' }]);
     this.deps.faults?.afterRows?.(ctx.recipe.id);
     this.deps.validation.runRegisterTx(system, v.id, registerFacts, { jobId: job.id, attemptN: attempt.n });
-    if (this.deps.validation.finalizeIfReady(system, v.id) === 'draft' && this.registerPassed(v.id)) {
+    const settled = this.deps.validation.finalizeIfReady(system, v.id);
+    if (settled === 'draft' && this.registerPassed(v.id)) {
       this.deps.validation.enqueueCandidate(system, v.id, { parentJobId: job.id });
     }
     return ok;
@@ -583,6 +596,13 @@ export class IngestService implements IngestPort {
 
   private testRun(ctx: IngestContext): IngestDecision {
     const { job, attempt, system } = ctx;
+    } else if (settled === 'failed' && changeSetVersionId) {
+      // No tests were found (or the list was refused): the suite's own check will never run, so the change set's
+      // cs.tests_pass fails here (CS6) rather than waiting for a result that cannot come.
+      const failedSuite = failed('discovery_failed', 'No usable tests were discovered at the head of the change.', []);
+      this.deps.validation.recordOutcomeTx(changeSetVersionId, csTestsPass.ID, csTestsPass.mirrorEvidence(failedSuite, { versionId: v.id, contentHash }),
+        { jobId: job.id, attemptN: attempt.n });
+      this.deps.validation.finalizeIfReady(system, changeSetVersionId);
     let suiteId: string | null = null;
     if (job.kind === 'validate') {
       const params = parse(job.params_json);
@@ -628,7 +648,7 @@ export class IngestService implements IngestPort {
     // the change set's own `cs.tests_pass` row.
     const changeSetId = isObj(meta) && typeof meta.changeSetVersionId === 'string' ? meta.changeSetVersionId : null;
     if (changeSetId) {
-      const mirrored = csTestsPass.mirrorEvidence(recorded, { contentHash: suite.content_hash });
+      const mirrored = csTestsPass.mirrorEvidence(recorded, { versionId: suite.id, contentHash: suite.content_hash });
       this.deps.validation.recordOutcomeTx(changeSetId, csTestsPass.ID, mirrored, { jobId: job.id, attemptN: attempt.n });
       this.deps.validation.finalizeIfReady(system, changeSetId);
     }

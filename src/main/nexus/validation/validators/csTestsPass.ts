@@ -16,8 +16,8 @@ export const VERSION = '1';
 const KEPT: readonly Evidence['type'][] = ['junit', 'hash', 'number'];
 
 /** The suite's own `sde.tests_pass` outcome, re-shaped for the change set: kept evidence plus the suite's hash. */
-export function mirrorEvidence(outcome: ValidatorOutcome, suite: { contentHash: string }): ValidatorOutcome {
+export function mirrorEvidence(outcome: ValidatorOutcome, suite: { versionId: string; contentHash: string }): ValidatorOutcome {
   const kept = outcome.evidence.filter((e): e is Evidence => KEPT.includes(e.type));
-  const evidence: Evidence[] = [...kept, { type: 'hash', label: 'suite', sha256: suite.contentHash }];
+  const evidence: Evidence[] = [...kept, { type: 'hash', label: `suite:${suite.versionId}`, sha256: suite.contentHash }];
   return { ...outcome, evidence };
 }

@@ -383,6 +383,9 @@ export class ValidationService {
         ORDER BY rowid DESC LIMIT 1`);
       for (const d of defs) {
         if (!d.kinds.includes(v.kind) || d.executes === 'deployment') continue;
+        // A change set's register validators were judged once, at ingest, over facts only that ingest had (the paths
+        // and scan hits are not stored); their rows stand, and a revalidation never re-runs them.
+        if (v.kind === 'change_set' && d.stage === 'register') continue;
         // B2b Task 8: a change set's two child-job candidate checks are not the generic single-recipe shape (their
         // jobs need a session/participation and task params no other validator's child job needs), so they are
         // enqueued here directly rather than through the generic recipe-matching branch below.
@@ -431,6 +434,26 @@ export class ValidationService {
     return j && j.session_id ? { sessionId: j.session_id, projectId: j.project_id, workspaceId: j.workspace_id } : null;
   }
 
+  /** The newest live job whose idempotency key matches `like`, or null (a check not yet finished is the answer). */
+  private liveChangeSetCheck(like: string): string | null {
+    const r = this.db.prepare(`SELECT id FROM jobs WHERE idempotency_key LIKE ? AND state IN ${LIVE_JOB_STATES} ORDER BY rowid DESC LIMIT 1`).get(like) as { id: string } | undefined;
+    return r?.id ?? null;
+  }
+  /**
+   * A change-set check that could not even be queued must not leave a draft with no check and no word: its row is
+   * recorded `error` ("Checks could not run", Revalidate offered), and the reason is logged.
+   */
+  private checkNotQueued(v: VersionFacts, validatorId: string, why: string): null {
+    this.log(`[nexus] validation: ${validatorId} was not queued for a change set (${why})`);
+    try {
+      this.recordOutcomeTx(v.id, validatorId, errored('enqueue_failed', 'Checks could not run: the check could not be queued.'), {});
+    } catch { /* the version is gone or settled; nothing to record against */ }
+    return null;
+  }
+  private countChangeSetChecks(like: string): number {
+    return (this.db.prepare('SELECT COUNT(*) AS n FROM jobs WHERE idempotency_key LIKE ?').get(like) as { n: number }).n;
+  }
+
   /**
    * B2b Task 8: `cs.tests_pass`'s first child job, `sde.test.discover` at the change set's own head commit. A draft
    * version cannot be a `job_inputs` row (`JobService.requireInputVersion`: candidate or active only), so, like
@@ -446,9 +469,14 @@ export class ValidationService {
     void _parentJobId;
     const s = this.changeSetSession(v);
     const recipe = getRecipe('sde.test.discover');
-    if (!s || !recipe) return null;
+    if (!s || !recipe) return this.checkNotQueued(v, csTestsPass.ID, 'no session or recipe');
     const meta = parse(v.metadata_json);
     const profile = isObj(meta) && typeof meta.profile === 'string' && recipe.profiles.includes(meta.profile as never) ? meta.profile : recipe.profiles[0];
+    // A live check of this change set is the answer; a settled one (it errored, or its runner failed) is re-run under a
+    // fresh key (revalidate), exactly as the generic branch bounds and re-queues its checks.
+    const live = this.liveChangeSetCheck('cs.tests_pass:' + v.id + ':discover%');
+    if (live) return live;
+    const seq = this.countChangeSetChecks('cs.tests_pass:' + v.id + ':discover%') + 1;
     let res: { job: { id: string }; created: boolean };
     try {
       // No sessionId and no parentJobId: the suite's own sde.tests_pass (the generic recipe-matching branch above)
@@ -456,10 +484,10 @@ export class ValidationService {
       // to equal its parent's exactly; a session-bearing discover job would make that generic child impossible.
       res = this.deps.jobs.createCheckTx(by, {
         kind: 'validate', projectId: s.projectId, workspaceId: s.workspaceId, validatorId: csTestsPass.ID,
-        idempotencyKey: `cs.tests_pass:${v.id}:discover`, recipeId: recipe.id,
+        idempotencyKey: `cs.tests_pass:${v.id}:discover:${seq}`, recipeId: recipe.id,
         params: { versionId: v.id }, retry: { idempotent: true, maxAttempts: 2, backoffMs: [10_000, 60_000] }
       });
-    } catch { return null; }
+    } catch (e) { return this.checkNotQueued(v, csTestsPass.ID, (e as { code?: string })?.code ?? 'error'); }
     if (res.created) {
       const cap = { action: 'cs.tests_pass.discover', recipe: recipe.id, recipeVersion: recipe.version, executor: recipe.executor, network: recipe.network, profile };
       const limits = recipe.limits
@@ -486,15 +514,18 @@ export class ValidationService {
     const meta = parse(v.metadata_json);
     const head = isObj(storage) && typeof storage.commit === 'string' ? storage.commit : null;
     const branch = isObj(meta) && typeof meta.branch === 'string' ? meta.branch : null;
-    if (!s || !recipe || !head || !branch) return null;
+    if (!s || !recipe || !head || !branch) return this.checkNotQueued(v, appliesCleanly.ID, 'no session, recipe, commit or branch');
+    const live = this.liveChangeSetCheck('git.applies_cleanly:' + v.id + ':merge_check%');
+    if (live) return live;
+    const seq = this.countChangeSetChecks('git.applies_cleanly:' + v.id + ':merge_check%') + 1;
     let res: { job: { id: string }; created: boolean };
     try {
       res = this.deps.jobs.createCheckTx(by, {
         kind: 'validate', projectId: s.projectId, workspaceId: s.workspaceId, sessionId: s.sessionId, validatorId: appliesCleanly.ID,
-        ...(parentJobId ? { parentJobId } : {}), idempotencyKey: `git.applies_cleanly:${v.id}:merge_check`, recipeId: recipe.id,
+        ...(parentJobId ? { parentJobId } : {}), idempotencyKey: `git.applies_cleanly:${v.id}:merge_check:${seq}`, recipeId: recipe.id,
         params: { versionId: v.id, branch, head }, retry: { idempotent: false, maxAttempts: 1, backoffMs: [] }
       });
-    } catch { return null; }
+    } catch (e) { return this.checkNotQueued(v, appliesCleanly.ID, (e as { code?: string })?.code ?? 'error'); }
     if (res.created) {
       const cap = { action: 'validate.git.applies_cleanly', recipe: recipe.id, recipeVersion: recipe.version, executor: recipe.executor, network: recipe.network };
       this.db.prepare('UPDATE jobs SET capabilities_json = ?, limits_json = ? WHERE id = ?')

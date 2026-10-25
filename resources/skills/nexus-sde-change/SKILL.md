@@ -36,10 +36,17 @@ turn never does.
    Follow the `nexus-sde-tests-first` skill when the change adds behaviour.
 4. Run the tests again with `sandbox_exec` until they pass. Command output is
    for you only: it is not evidence. Nexus runs its own tests on the change.
-5. Register the change with `changeset_register`, giving a short `message` that
-   says what changed and why, and a `clientKey` you reuse if you retry.
+5. Register the change with `changeset_register`, giving a `title` (one line),
+   a `summary` that says what changed and why, the `requirementVersionIds` it
+   implements when you were given requirements (at most five, optional), and a
+   `clientKey`. Use a FRESH `clientKey` for every new attempt: a retry of the
+   same call keeps its key, but reusing a key after a failed registration only
+   returns that same failed attempt. If the answer is `pending`, Nexus is still
+   collecting; poll `job_status` with the job id and do not register again.
 6. If a check fails after registration, read the result with
-   `validations_get`, fix the cause, and register again.
+   `validations_get`, fix the cause, and register again with the same `title`,
+   the `reviseArtifactId` set to the failed change set's artifact id (so the
+   new version is a revision of it), and a fresh `clientKey`.
 7. Call `review_request` with the version id and a one-line note when the
    change is ready for the user.
 

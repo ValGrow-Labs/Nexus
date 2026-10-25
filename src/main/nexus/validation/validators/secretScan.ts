@@ -12,7 +12,8 @@ export const VERSION = '1';
 export const MAX_LISTED = 100;
 
 export interface SecretHit { path: string; line: number; rule: 'provider_key' | 'private_key' }
-export interface SecretScanFacts { head: string; secretHits: SecretHit[] }
+/** `scanTruncated`: the runner's patch was cut at its cap, so not every added line was scanned (never a pass). */
+export interface SecretScanFacts { head: string; secretHits: SecretHit[]; scanTruncated?: boolean }
 
 const isHit = (x: unknown): x is SecretHit => !!x && typeof x === 'object'
   && typeof (x as SecretHit).path === 'string' && Number.isSafeInteger((x as SecretHit).line) && (x as SecretHit).line >= 1
@@ -21,6 +22,11 @@ const isHit = (x: unknown): x is SecretHit => !!x && typeof x === 'object'
 export function run(f: SecretScanFacts): ValidatorOutcome {
   if (!f || typeof f.head !== 'string' || !COMMIT_RE.test(f.head) || !Array.isArray(f.secretHits) || !f.secretHits.every(isHit)) {
     return errored('parser_contract', 'Checks could not run: the secret scan facts were not usable.');
+  }
+  if (f.scanTruncated === true) {
+    // A secret past the cut could not be seen: the scan fails (the agent revises a smaller change), it never passes.
+    return failed('scan_truncated', 'The change is too large to scan for secrets in full; split it into smaller changes.',
+      f.secretHits.slice(0, MAX_LISTED).map((h) => ({ type: 'location' as const, path: h.path, line: h.line, rule: h.rule })));
   }
   const evidence = f.secretHits.slice(0, MAX_LISTED).map((h) => ({ type: 'location' as const, path: h.path, line: h.line, rule: h.rule }));
   if (f.secretHits.length > 0) {

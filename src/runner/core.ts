@@ -92,8 +92,12 @@ export const STOP_GRACE_MS = 10_000;
 /** The longest an app-quit shutdown waits for an aborted agent turn to remove its own container. */
 export const AGENT_SHUTDOWN_WAIT_MS = 15_000;
 export const LOG_DRAIN_MS = 5_000;
-/** B2b: the longest a relayed `mcp.call` waits for main's `mcp.reply` before the agent is told it timed out. */
-export const MCP_CALL_TIMEOUT_MS = 60_000;
+/**
+ * B2b: the longest a relayed `mcp.call` waits for main's `mcp.reply` before the agent is told it timed out. It must
+ * exceed `changeset_register`'s own 120 s wait for ingest (CHANGESET_REGISTER_WAIT_MS), or the agent would get `timeout`
+ * at the relay and never the documented `{ pending }` answer.
+ */
+export const MCP_CALL_TIMEOUT_MS = 130_000;
 const ID_RE = /^[0-9A-Za-z_-]{1,64}$/;
 const SHA_RE = /^[0-9a-f]{64}$/;
 const MAX_GC_LIST = 20_000;

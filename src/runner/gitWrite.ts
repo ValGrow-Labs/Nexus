@@ -326,9 +326,21 @@ export interface CollectFacts {
   secretHits: { path: string; line: number; rule: 'provider_key' | 'private_key' }[];
   /** Advisory: an added line outside a lockfile that looks high-entropy (`looksSecret`): path and line only. */
   entropyHits: { path: string; line: number; rule: 'high_entropy' }[];
+  /**
+   * The patch the scan reads was cut at its stdout cap, so the scan did not see every added line: `sec.secret_scan`
+   * must FAIL on it (a secret past the cut would otherwise pass), never pass.
+   */
+  scanTruncated: boolean;
 }
 /** The most hits of each kind a collect reports (the count itself, and every `location` evidence item, stay bounded). */
 export const COLLECT_MAX_HITS = 500;
+/** The most patch text a collect scans (past it, `scanTruncated`). */
+export const COLLECT_PATCH_MAX_BYTES = 16 * 2 ** 20;
+/**
+ * Pathspecs every collect appends, whatever scope main supplied: the agent CLI writes its own settings under
+ * `<worktree>/.claude/` (Task 0), which must never be staged or committed.
+ */
+export const COLLECT_ALWAYS_EXCLUDE: readonly string[] = Object.freeze([':(glob,exclude).claude/**', ':(glob,exclude)**/.claude/**']);
 
 /**
  * Scans a zero-context unified diff (`git diff -U0`) for added lines, classifying each by `diffLineSecret` (blocking)
@@ -340,34 +352,60 @@ export function scanAddedLines(patch: string): { secretHits: CollectFacts['secre
   const entropyHits: CollectFacts['entropyHits'] = [];
   let currentPath: string | null = null;
   let newLine = 0;
+  // Counts left in the current hunk (`@@ -a,b +c,d @@`): while either is positive EVERY line is hunk content, so an
+  // added line whose text starts `++` (the diff line `+++...`) or `@@` is scanned as content, never read as a header.
+  let oldLeft = 0; let newLeft = 0;
   for (const raw of patch.split('\n')) {
     const line = raw.endsWith('\r') ? raw.slice(0, -1) : raw;
+    if (oldLeft > 0 || newLeft > 0) {
+      if (line.startsWith('\\')) continue;                                  // "\ No newline at end of file"
+      if (line.startsWith('-') && oldLeft > 0) { oldLeft--; continue; }
+      if (line.startsWith('+') && newLeft > 0) {
+        newLeft--;
+        const text = line.slice(1);
+        const at = newLine++;
+        const path = currentPath;
+        if (!path) continue;
+        const priv = PRIVATE_KEY_HEADER.test(text);
+        if (priv || hasProviderKey(text)) {
+          if (secretHits.length < COLLECT_MAX_HITS) secretHits.push({ path, line: at, rule: priv ? 'private_key' : 'provider_key' });
+        }
+        if (!isLockfilePath(path) && looksSecret(text)) {
+          if (entropyHits.length < COLLECT_MAX_HITS) entropyHits.push({ path, line: at, rule: 'high_entropy' });
+        }
+        continue;
+      }
+      oldLeft = 0; newLeft = 0;                                               // malformed: leave the hunk, read it as a header
+    }
     if (line.startsWith('+++ ')) {
-      const p = line.slice(4).trim();
-      currentPath = p === '/dev/null' ? null : p.startsWith('b/') ? p.slice(2) : p;
+      currentPath = patchPath(line.slice(4), 'b/');
       continue;
     }
     if (line.startsWith('@@ ')) {
-      const m = /^@@ -\d+(?:,\d+)? \+(\d+)(?:,\d+)? @@/.exec(line);
-      newLine = m ? Number(m[1]) : newLine;
-      continue;
+      const m = /^@@ -\d+(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/.exec(line);
+      if (m) { oldLeft = m[1] === undefined ? 1 : Number(m[1]); newLeft = m[3] === undefined ? 1 : Number(m[3]); newLine = Number(m[2]); }
     }
-    if (line.startsWith('+') && !line.startsWith('+++')) {
-      const text = line.slice(1);
-      const path = currentPath;
-      const at = newLine;
-      newLine++;
-      if (!path) continue;
-      if (PRIVATE_KEY_HEADER.test(text) || hasProviderKey(text)) {
-        if (secretHits.length < COLLECT_MAX_HITS) secretHits.push({ path, line: at, rule: PRIVATE_KEY_HEADER.test(text) ? 'private_key' : 'provider_key' });
-      }
-      if (!isLockfilePath(path) && looksSecret(text)) {
-        if (entropyHits.length < COLLECT_MAX_HITS) entropyHits.push({ path, line: at, rule: 'high_entropy' });
-      }
-    }
-    // A '-' (removed) line never advances the new-file line count; with -U0 there is no context line to handle.
   }
   return { secretHits, entropyHits };
+}
+
+/** A `---`/`+++` header's path: git's C-style quoting undone, a trailing tab (a name with a space) dropped, the prefix removed; null for /dev/null. */
+function patchPath(rest: string, prefix: string): string | null {
+  let p = rest.replace(/\t.*$/, '');
+  if (p.startsWith('"') && p.endsWith('"') && p.length >= 2) {
+    const bytes: number[] = [];
+    const inner = p.slice(1, -1);
+    for (let i = 0; i < inner.length; i++) {
+      const c = inner[i];
+      if (c !== '\\') { bytes.push(...Buffer.from(c, 'utf8')); continue; }
+      const n = inner[++i];
+      if (n >= '0' && n <= '7') { let o = n; while (o.length < 3 && inner[i + 1] >= '0' && inner[i + 1] <= '7') o += inner[++i]; bytes.push(parseInt(o, 8) & 0xff); }
+      else bytes.push(({ n: 10, t: 9, r: 13, a: 7, b: 8, f: 12, v: 11 } as Record<string, number>)[n] ?? n.charCodeAt(0));
+    }
+    p = Buffer.from(bytes).toString('utf8');
+  }
+  if (p === '/dev/null') return null;
+  return p.startsWith(prefix) ? p.slice(prefix.length) : p;
 }
 
 /**
@@ -396,7 +434,7 @@ export function scopePathspecs(scope: readonly string[]): string[] {
  */
 export async function collect(g: HardenedGit, t: { repoPath: string; worktreePath: string; gitDir: string; ref: string; integrationRef: string;
   scope: string[]; message: string; maxFileBytes: number; maxTotalBytes: number },
-  o: { dataRoot: string; signal?: AbortSignal; fs?: typeof fsp; guardFs?: GuardFs }): Promise<CollectFacts> {
+  o: { dataRoot: string; signal?: AbortSignal; fs?: typeof fsp; guardFs?: GuardFs; /** Tests only: a smaller patch cap. */ patchMaxBytes?: number }): Promise<CollectFacts> {
   const fs = o.fs ?? fsp;
   const name = worktreeName(o.dataRoot, t.worktreePath);
   if (t.ref !== `refs/nexus/job/${name}` || !isNexusRef(t.integrationRef, 'accepted') || typeof t.message !== 'string' || t.message.length === 0
@@ -412,7 +450,7 @@ export async function collect(g: HardenedGit, t: { repoPath: string; worktreePat
   const repo = t.repoPath;
   const parent = await resolveRef(g, repo, n, t.ref, o.signal);
   if (!parent) throw new GitFailure('ref_moved', 'the session ref is gone');
-  const add = await g.run(t.worktreePath, ['add', '-A', '--', ...scopePathspecs(t.scope)], { neutral: n, worktree: wt, signal: o.signal, timeoutMs: 10 * GIT_TIMEOUT_MS, eol: true });
+  const add = await g.run(t.worktreePath, ['add', '-A', '--', ...scopePathspecs(t.scope), ...COLLECT_ALWAYS_EXCLUDE], { neutral: n, worktree: wt, signal: o.signal, timeoutMs: 10 * GIT_TIMEOUT_MS, eol: true });
   // A scope that matches no file stages nothing (git answers 128 "did not match any files"); any other failure stops.
   if (add.code !== 0 && !/did not match any files/.test(add.stderr)) throw new GitFailure('git_failed', 'add failed');
   const ls = must(await g.run(t.worktreePath, ['ls-files', '-s', '-z'], { neutral: n, worktree: wt, signal: o.signal, maxStdout: 64 * 2 ** 20 }), 'ls-files');
@@ -449,10 +487,11 @@ export async function collect(g: HardenedGit, t: { repoPath: string; worktreePat
   }
   // F29/D-B14: a zero-context patch of the same base..head, scanned for secret- and entropy-shaped added lines. The
   // patch text is read only here, inside this function, and discarded; `scanAddedLines` returns path:line only.
-  const patch = must(await g.run(repo, ['-c', 'core.quotePath=false', 'diff', ...SAFE_DIFF_ARGS, '--no-renames', '-U0', base, head],
-    { neutral: n, signal: o.signal, maxStdout: 16 * 2 ** 20 }), 'diff -U0');
+  const patch = must(await g.run(repo, ['-c', 'core.quotePath=false', 'diff', ...SAFE_DIFF_ARGS, '--no-renames', '--src-prefix=a/', '--dst-prefix=b/', '-U0', base, head],
+    { neutral: n, signal: o.signal, maxStdout: o.patchMaxBytes ?? COLLECT_PATCH_MAX_BYTES }), 'diff -U0');
   const { secretHits, entropyHits } = scanAddedLines(patch.stdout);
-  return { ok: true, changed, parent, head, tree, base, ref: t.ref, diffstat, paths, pathsTruncated, secretHits, entropyHits };
+  // A patch cut at the cap was not fully scanned: reported, so main fails the secret scan (never passes it).
+  return { ok: true, changed, parent, head, tree, base, ref: t.ref, diffstat, paths, pathsTruncated, secretHits, entropyHits, scanTruncated: patch.truncated === true };
 }
 
 // ---------- changeset.merge_check, changeset.accept, changeset.accept_rollback ----------

@@ -74,15 +74,17 @@ export class ChangeSetService {
   }
 
   /**
-   * The `code.edit` capability's own scope (`paths`), never an agent-supplied argument. `pathInScope` (the
-   * `git.paths_in_scope` validator) reads an empty list as "nothing in scope", so a capability with no `scope` at
-   * all (unrestricted in the domain model) collects under the whole tree (`['**']`), not under nothing.
+   * The `code.edit` capability's own scope (`paths`), never an agent-supplied argument and never widened: a token
+   * without `code.edit`, or with no (or an empty) `paths` list, collects nothing (`invalid`, `no_code_edit_scope`),
+   * exactly as authorization treats a missing scope as "nothing" (every domain ceiling lists paths, and the token
+   * service requires them).
    */
   private scopeOf(claims: CapabilityClaims): string[] {
     const cap = claims.caps.find((c) => c.id === 'code.edit') as { scope?: { paths?: unknown } } | undefined;
     const paths = cap?.scope?.paths;
-    const list = Array.isArray(paths) ? paths.filter((x): x is string => typeof x === 'string') : [];
-    return list.length > 0 ? list : ['**'];
+    const list = Array.isArray(paths) ? paths.filter((x): x is string => typeof x === 'string' && x.length > 0) : [];
+    if (list.length === 0) throw new PlatformError('invalid', 'this turn has no code.edit path scope, so it cannot register a change', { reason: 'no_code_edit_scope' });
+    return list;
   }
 
   /** Every requirement version is a `requirement` of this project, not a draft. */
@@ -103,6 +105,9 @@ export class ChangeSetService {
     if (!a || a.project_id !== claims.projectId || a.kind !== 'change_set' || a.owner_participation_id !== claims.participationId) {
       throw new PlatformError('invalid', 'reviseArtifactId does not name a revisable change set', { reason: 'not_revisable' });
     }
+    // A draft prior version is still being checked and can never be a lineage source: revise it once it has settled.
+    const last = this.db.prepare('SELECT status FROM artifact_versions WHERE artifact_id = ? ORDER BY version_no DESC LIMIT 1').get(artifactId) as { status: string } | undefined;
+    if (!last || last.status === 'draft') throw new PlatformError('invalid', 'the change set is still being checked', { reason: 'not_revisable' });
   }
 
   async register(claims: CapabilityClaims, args: ChangeSetRegisterArgs): Promise<ChangeSetRegisterAnswer> {

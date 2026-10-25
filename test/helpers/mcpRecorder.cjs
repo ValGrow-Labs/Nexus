@@ -19,7 +19,7 @@ const DEFAULT_TOOLS = [
   {
     name: 'changeset_register',
     description: 'Register the change set made in this turn.',
-    inputSchema: { type: 'object', properties: { summary: { type: 'string' } }, required: ['summary'], additionalProperties: false }
+    inputSchema: { type: 'object', properties: { title: { type: 'string' }, summary: { type: 'string' }, requirementVersionIds: { type: 'array', items: { type: 'string' } }, reviseArtifactId: { type: 'string' }, clientKey: { type: 'string' } }, required: ['title', 'summary', 'clientKey'], additionalProperties: false }
   }
 ];
 

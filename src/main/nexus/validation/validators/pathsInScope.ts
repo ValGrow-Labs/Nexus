@@ -11,6 +11,8 @@ export const ID = 'git.paths_in_scope';
 export const VERSION = '1';
 /** The most offending paths named in the evidence (never the secret text; paths are not secrets). */
 export const MAX_NAMED = 20;
+/** A `.claude` path segment at any depth (case-insensitive: the folder name is case-folded on Windows). */
+export const AGENT_CONFIG_SEGMENT_RE = /(?:^|\/)\.claude[. ]*(?:\/|$)/i;
 
 export interface PathsInScopeFacts {
   head: string;
@@ -27,7 +29,8 @@ export function run(f: PathsInScopeFacts): ValidatorOutcome {
     return errored('paths_truncated', 'Checks could not run: the change touches more paths than the collect recorded; scope could not be fully judged.',
       [{ type: 'git', commit: f.head, check: 'paths_in_scope', detail: 'truncated' }]);
   }
-  const bad = f.paths.filter((p) => !pathInScope(p, f.scope));
+  // The agent CLI's own per-worktree settings folder (`.claude/`): never part of a change, whatever the scope says.
+  const bad = f.paths.filter((p) => !pathInScope(p, f.scope) || AGENT_CONFIG_SEGMENT_RE.test(p.replace(/\\/g, '/')));
   const detail = bad.length === 0 ? 'every path is in scope' : `${bad.length} path(s) out of scope, e.g. ${bad.slice(0, MAX_NAMED).join(', ')}`;
   const evidence = [{ type: 'git' as const, commit: f.head, check: 'paths_in_scope' as const, detail: detail.slice(0, 200) }];
   if (bad.length > 0) return failed('out_of_scope', `${bad.length} changed path(s) are outside the path scope.`, evidence);

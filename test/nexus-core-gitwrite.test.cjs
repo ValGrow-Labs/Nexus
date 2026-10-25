@@ -415,6 +415,71 @@ test('collect refuses a link or a gitlink in the index (link_or_gitlink) and com
 
 // ---------- merge check, accept, rollback, fast-forward, reads ----------
 
+// ---------- B2b Task 8 fix round 1: the collect's secret scan and the agent tool's settings folder ----------
+
+test('collect scans every added line of a real diff: ++-prefixed text, odd and spaced paths, exact lines; only path:line:rule leaves, never text', async () => {
+  const w = world({ 'a.txt': 'a\n' });
+  await ensureWorktree(w.g, w.task, { dataRoot: w.dataRoot });
+  fs.writeFileSync(path.join(w.wt, 'plus.txt'), '++AKIAABCDEFGHIJKLMNOP\nplain\n++-----BEGIN PRIVATE KEY-----\n+++ b/fake.txt\n');
+  fs.mkdirSync(path.join(w.wt, 'dir'), { recursive: true });
+  fs.writeFileSync(path.join(w.wt, 'dir', 'sp ace.txt'), 'x\nAKIAABCDEFGHIJKLMNOP\n');
+  fs.writeFileSync(path.join(w.wt, 'é.txt'), 'AKIAABCDEFGHIJKLMNOP\n');
+  const f = await collect(w.g, w.collectTask(), { dataRoot: w.dataRoot });
+  const key = (h) => `${h.path}:${h.line}:${h.rule}`;
+  assert.deepEqual(f.secretHits.map(key).sort(), ['dir/sp ace.txt:2:provider_key', 'plus.txt:1:provider_key', 'plus.txt:3:private_key', 'é.txt:1:provider_key']);
+  assert.equal(f.scanTruncated, false);
+  assert.ok(!JSON.stringify(f).includes('AKIA') && !JSON.stringify(f).includes('BEGIN'), 'no matched text in the facts');
+});
+
+test('collect: a patch cut at its cap reports scanTruncated (the scan never silently passes what it did not read)', async () => {
+  const w = world({ 'a.txt': 'a\n' });
+  await ensureWorktree(w.g, w.task, { dataRoot: w.dataRoot });
+  fs.writeFileSync(path.join(w.wt, 'aaa-padding.txt'), 'line of ordinary padding text\n'.repeat(400));
+  fs.writeFileSync(path.join(w.wt, 'zzz-secret.txt'), 'AKIAABCDEFGHIJKLMNOP\n');
+  const f = await collect(w.g, w.collectTask(), { dataRoot: w.dataRoot, patchMaxBytes: 2048 });
+  assert.equal(f.scanTruncated, true);
+  assert.deepEqual(f.secretHits, [], 'the secret file was past the cut: unseen, hence the flag');
+  const w2 = world({ 'a.txt': 'a\n' });
+  await ensureWorktree(w2.g, w2.task, { dataRoot: w2.dataRoot });
+  fs.writeFileSync(path.join(w2.wt, 'aaa-padding.txt'), 'line of ordinary padding text\n'.repeat(400));
+  fs.writeFileSync(path.join(w2.wt, 'zzz-secret.txt'), 'AKIAABCDEFGHIJKLMNOP\n');
+  const g = await collect(w2.g, w2.collectTask(), { dataRoot: w2.dataRoot });
+  assert.equal(g.scanTruncated, false);
+  assert.deepEqual(g.secretHits, [{ path: 'zzz-secret.txt', line: 1, rule: 'provider_key' }]);
+});
+
+test('collect never stages the agent tool\'s settings folder, whatever scope main supplied', async () => {
+  const w = world({ 'a.txt': 'a\n' });
+  await ensureWorktree(w.g, w.task, { dataRoot: w.dataRoot });
+  fs.mkdirSync(path.join(w.wt, '.claude'), { recursive: true });
+  fs.writeFileSync(path.join(w.wt, '.claude', 'settings.local.json'), '{}\n');
+  fs.mkdirSync(path.join(w.wt, 'x', '.claude'), { recursive: true });
+  fs.writeFileSync(path.join(w.wt, 'x', '.claude', 'y.txt'), 'y\n');
+  fs.writeFileSync(path.join(w.wt, 'a.txt'), 'a2\n');
+  for (const scope of [[], ['**']]) {
+    const f = await collect(w.g, w.collectTask({ scope }), { dataRoot: w.dataRoot });
+    assert.deepEqual(f.paths, ['a.txt'], JSON.stringify(scope));
+    assert.equal(git(w.repo, ['ls-tree', '-r', '--name-only', f.head]).stdout.includes('.claude'), false);
+  }
+});
+
+test('CS14 after the first change set is accepted, the next collect\'s base is the merge-base with the integration ref and its diffstat shows only the new work', async () => {
+  const w = world();
+  const c1 = await changed(w);
+  const old = refOf(w.repo, 'refs/nexus/accepted/main');
+  assert.equal(c1.base, old);
+  const a = await accept(w.g, { repoPath: w.repo, integrationRef: 'refs/nexus/accepted/main', expectedOld: old, head: c1.head,
+    message: 'Accept\n\nNexus-Accepted-By: user:local\n' }, { onPrepared: () => {} });
+  fs.writeFileSync(path.join(w.wt, 'b.txt'), 'new work\n');
+  const c2 = await collect(w.g, w.collectTask(), { dataRoot: w.dataRoot });
+  assert.equal(refOf(w.repo, 'refs/nexus/accepted/main'), a.new);
+  assert.equal(c2.base, c1.head, 'the merge-base of the moved integration ref and the new head');
+  assert.notEqual(c2.base, c1.base);
+  assert.deepEqual(c2.paths, ['b.txt']);
+  assert.deepEqual(c2.diffstat, { files: 1, insertions: 1, deletions: 0 }, 'only the new work, not the accepted one');
+});
+
+
 async function changed(w, content = 'changed\n') {
   await ensureWorktree(w.g, w.task, { dataRoot: w.dataRoot });
   fs.writeFileSync(path.join(w.wt, 'a.txt'), content);
