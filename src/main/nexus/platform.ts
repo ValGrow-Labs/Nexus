@@ -59,6 +59,9 @@ import { registryProblems } from './registryImpl';
 import { v10ShapeProblem } from './db/schemaV10';
 import { TokenService } from './agents/tokenService';
 import { BudgetService } from './agents/budgetService';
+import { ContextResolver } from './agents/contextResolver';
+import { Skills } from './agents/skills';
+import { McpGateway } from './agents/mcpGateway';
 import type { RunnerPort } from './exec/runnerPort';
 
 export interface NexusPlatform {
@@ -108,6 +111,12 @@ export interface NexusPlatform {
   tokens: TokenService | null;
   /** B2b: the runtime consent, today's usage and the start guards; null unless agents are available. */
   budget: BudgetService | null;
+  /** B2b Task 5: the MCP gateway (token/tool/scope/cap verification, one service call, audit); null unless agents are available. */
+  mcpGateway: McpGateway | null;
+  /** B2b Task 5: writes the turn's context file; null unless agents are available. */
+  contextResolver: ContextResolver | null;
+  /** B2b Task 5: writes the turn's skill bundle; null unless agents are available. */
+  skills: Skills | null;
   startup(): NexusStartupReport;
 }
 
@@ -161,6 +170,8 @@ export interface NexusPlatformOptions {
   agents?: boolean;
   /** Tests only: the token key and id source (default node:crypto). */
   randomBytes?: (n: number) => Buffer;
+  /** B2b Task 5: the app's `resources` folder (a skill's file is `<dir>/skills/<id>/SKILL.md`); null, Skills.write refuses. */
+  skillsResourcesDir?: string | null;
 }
 
 /**
@@ -246,6 +257,16 @@ export function createNexusPlatform(db: Database.Database, opts?: NexusPlatformO
   if ((opts?.agents ?? false) && !agentsAvailable) log('[nexus] agents unavailable: execution or the schema v10 shape is not in place');
   const tokens = agentsAvailable ? new TokenService(db, { auth, now, randomBytes: opts?.randomBytes }) : null;
   const budget = agentsAvailable ? new BudgetService(db, { auth, now }) : null;
+  // B2b Task 5: the context file, the skill bundle and the MCP gateway. The gateway needs ExecQueries (built just
+  // above, from `exec`) and so is bound into the execution core AFTER construction (bindMcpGateway), the same way
+  // `validation.setSender` reaches back into it from the other side.
+  const contextResolver = agentsAvailable ? new ContextResolver(db, { dataHome: opts?.dataHome ?? null, now, system: principals.system() }) : null;
+  const skills = agentsAvailable ? new Skills({ dataHome: opts?.dataHome ?? null, resourcesDir: opts?.skillsResourcesDir ?? null }) : null;
+  const mcpGateway = agentsAvailable && tokens && budget && queries
+    ? new McpGateway(db, { auth, tokens, budget, artifacts, jobs, exec, queries, dataHome: opts?.dataHome ?? null,
+      system: principals.system(), now, log })
+    : null;
+  exec.bindMcpGateway(mcpGateway);
   if (tokens) {
     // Every runner `ready` is a new runner process (it answers the one `hello` of its port): its MCP server is new, and
     // no token of an earlier runner may reach it. The revocation runs before the execution core sees the message.
@@ -271,7 +292,7 @@ export function createNexusPlatform(db: Database.Database, opts?: NexusPlatformO
   return {
     principals, auth, activity, workspaces, projects, artifacts, lineage, jobs, sessions, handoffs, handoffsAvailable, executionAvailable,
     exec, blobs, validation, approvals, deployments, repo, queries, registry: { valid: registryValid, problems: problems.length }, bootId,
-    agentsAvailable, tokens, budget,
+    agentsAvailable, tokens, budget, mcpGateway, contextResolver, skills,
     startup(): NexusStartupReport {
       // The seeded principals must resolve; a missing one throws platform_unavailable.
       principals.localUser();

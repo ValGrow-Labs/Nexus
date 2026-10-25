@@ -28,7 +28,7 @@ const SECRET_KEY = new RegExp([
   'conn(?:ection)?[-_ ]?str(?:ing)?'
 ].join('|'), 'i');
 /** Known non-secret integrity hash fields (controller ruling, Task 5). */
-const HASH_KEYS: ReadonlySet<string> = new Set(['backupSha256', 'sha256', 'contentHash', 'content_hash']);
+const HASH_KEYS: ReadonlySet<string> = new Set(['backupSha256', 'sha256', 'contentHash', 'content_hash', 'stdoutSha256', 'argvSha256']);
 const HEX_DIGEST = /^(?:git:)?[0-9a-f]{40,128}$/i;
 /** Exact keys whose NUMERIC values are token usage counts (never a credential). */
 const TOKEN_COUNT_KEYS: ReadonlySet<string> = new Set([

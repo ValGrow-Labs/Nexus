@@ -284,7 +284,9 @@ test('TK12 a malformed mcp.call is dropped without logging the bearer; drop() li
     { op: 'mcp.call', callId: 'c2', bearer: t.token, tool: 'context_get' },
     { op: 'mcp.call', bearer: t.token, tool: 'context_get', args: {}, extra: t.token },
     { op: 'mcp.call', callId: 'c3', bearer: `${t.token}${t.token}`, tool: 'context_get', args: {} },
-    { op: 'mcp.call', callId: 'c4', bearer: t.token, tool: 'context_get', args: {} }
+    // Task 5: a well-formed mcp.call is now handled (not dropped), so the fifth malformed shape here is a callId
+    // that is not opId-shaped (parseRunnerMessage refuses it before the gateway ever sees it).
+    { op: 'mcp.call', callId: 'not an op id', bearer: t.token, tool: 'context_get', args: {} }
   ];
   const before = w.logs.length;
   for (const m of sent) exec.onRunnerMessage(m);

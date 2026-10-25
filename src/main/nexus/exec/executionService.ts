@@ -104,7 +104,9 @@ import type { ParamsSchema } from '../../../shared/nexus/domainSpec';
 import { getRecipe, PREVIEW_IDLE_TTL_MS, RETRY_BACKOFF_MS, type RecipeDef } from '../../../shared/nexus/recipes';
 import { APPROVAL_TTL_MS, EXPIRY_SWEEP_MS, latestSucceededBuild, withdrawPendingApprovalsTx } from '../approvals/approvalService';
 import { previewBlocker, readAppManifest, REPOSITORY_CHECKED, type AppManifest } from '../repo/repoService';
-import { EPHEMERAL_PORT_MAX, EPHEMERAL_PORT_MIN, parseRunnerMessage, type CancelReason, type RunnerToMain } from '../../../shared/nexus/runnerProtocol';
+import {
+  EPHEMERAL_PORT_MAX, EPHEMERAL_PORT_MIN, parseRunnerMessage, type CancelReason, type McpReplyResult, type RunnerToMain
+} from '../../../shared/nexus/runnerProtocol';
 import { evaluateGate, leaseFloorBytes, type GateResult } from '../../../shared/nexus/resourceGate';
 import type { AuthService } from '../auth/authService';
 import { PrincipalResolver } from '../auth/principals';
@@ -247,6 +249,18 @@ export interface IngestPort {
   prepare?(ctx: IngestContext): unknown;
   ingestTx(ctx: IngestContext): IngestDecision;
 }
+/**
+ * B2b (Task 5): the MCP gateway's hooks into the runner messages. `call` runs the whole verify/authorize/run/audit
+ * pipeline for one relayed `mcp.call` and resolves with the value ExecutionService sends back as `mcp.reply`; it never
+ * throws (a thrown service call is turned into a refusal result by the gateway itself). `onExecDone` records a granted
+ * `sandbox_exec`'s reported exit; it returns false for an execId the gateway never granted or that names another
+ * attempt, which ExecutionService drops with one log line (F1) and never writes for.
+ */
+export interface McpGatewayPort {
+  call(m: Extract<RunnerToMain, { op: 'mcp.call' }>): Promise<McpReplyResult>;
+  onExecDone(m: Extract<RunnerToMain, { op: 'agent.exec.done' }>): boolean;
+}
+
 /** The validation framework's hooks into the scheduler and the runner messages (Task 8). */
 export interface ValidationHooks {
   /** The scheduler's pass: the framework does work only when some is due. */
@@ -266,6 +280,12 @@ export interface ExecDataHome extends Partial<BlobStoreFiles> {
   root: string; attemptWorkRel(jobId: string, n: number): string; attemptLogPath(jobId: string, n: number): string;
   /** A stored object's bytes (at most `maxBytes`), read through its confined path: what an install's ingest re-reads. */
   readObjectBytes?(sha256: string, maxBytes: number): Promise<Buffer | 'too_large' | null>;
+  /**
+   * B2b: the per-job folder main writes an agent turn's own files into (`jobs/<jobId>`), and the data home's
+   * confinement, reused by ContextResolver and Skills (agents/contextResolver.ts, agents/skills.ts).
+   */
+  jobRel(jobId: string): string;
+  confineToDataHome(rel: string): Promise<string | null>;
 }
 
 export interface ExecutionDeps {
@@ -297,6 +317,13 @@ export interface ExecutionDeps {
    * the runner sent back `waiting:git` is leased again only once this finds one (final batch item 3).
    */
   findGit?: (() => Promise<string | null>) | null;
+  /**
+   * B2b (Task 5): the MCP gateway; null drops `mcp.call` and `agent.exec.done` with one log line each (no agent
+   * services in this build). Platform.ts builds this AFTER the execution core (ExecQueries needs `exec`), so it is
+   * bound in with `bindMcpGateway` rather than passed here at construction (the same late-binding `validation` uses
+   * through `setSender`, in the other direction).
+   */
+  mcpGateway?: McpGatewayPort | null;
 }
 
 interface ExecJobRow extends JobRow {
@@ -491,6 +518,10 @@ export class ExecutionService {
   private reconcileOutstanding = false;
   /** Ingests that went asynchronous (main's git answers, a wait for blob GC, or a large output list). */
   private readonly pendingIngest = new Set<Promise<unknown>>();
+  /** B2b (Task 5): the MCP gateway, bound in after construction (bindMcpGateway); null drops mcp.call/agent.exec.done. */
+  private mcpGateway: McpGatewayPort | null = null;
+  /** In-flight `mcp.call` gateway promises (each resolves to the `mcp.reply` this sends); tracked so a caller may await them in tests. */
+  private readonly pendingMcp = new Set<Promise<unknown>>();
   /** The port state the last tick saw (leaving `ready` is a runner-wide fault for outstanding re-hashes). */
   private lastPortState: string | null = null;
   /** The images as the runner last reported them (the cached probe holds them judged against the image builds). */
@@ -514,7 +545,14 @@ export class ExecutionService {
     this.principals = new PrincipalResolver(db);
     this.log = deps.log ?? (() => {});
     this.caps = { ...DEFAULT_CAPS, ...(deps.caps ?? {}) };
+    this.mcpGateway = deps.mcpGateway ?? null;
   }
+
+  /** B2b: binds the MCP gateway after construction (platform.ts builds it once the execution core and ExecQueries exist). */
+  bindMcpGateway(gateway: McpGatewayPort | null): void { this.mcpGateway = gateway; }
+
+  /** Test-only: resolves once every `mcp.call` reply in flight has been sent. */
+  async mcpCallsSettled(): Promise<void> { await Promise.all([...this.pendingMcp]); }
 
   /**
    * When the scheduler last ran the approval expiry sweep (`approvals.expireDue`), or null when it never has. Read-only:
@@ -618,11 +656,31 @@ export class ExecutionService {
           if (this.deps.validation) this.deps.validation.onBlobVerified(m.sha256, m.ok);
           else this.drop(m.op, 'no validation in this build');
           return;
+        case 'mcp.call': return this.onMcpCall(m);
+        case 'agent.exec.done':
+          if (!this.mcpGateway) { this.drop(m.op, 'no agent mcp gateway in this build'); return; }
+          if (!this.mcpGateway.onExecDone(m)) this.drop(m.op, 'unknown exec');
+          return;
         default: this.drop(m.op, 'not handled in this build');
       }
     } catch (e) {
       this.log(`[nexus] exec: runner message ${m.op} not applied: ${e instanceof PlatformError ? e.code : (e as Error)?.name ?? 'error'}`);
     }
+  }
+
+  /**
+   * B2b: routes one relayed `mcp.call` to the gateway and sends its answer back as `mcp.reply`. The gateway's own
+   * pipeline (verify, authorize, run, audit) never throws; it is still wrapped here because a caller that replaces
+   * `onRunnerMessage`'s guarantees ("never throws") must hold even if a future gateway implementation does.
+   */
+  private onMcpCall(m: Extract<RunnerToMain, { op: 'mcp.call' }>): void {
+    if (!this.mcpGateway) { this.drop(m.op, 'no agent mcp gateway in this build'); return; }
+    const gateway = this.mcpGateway;
+    const p = gateway.call(m)
+      .catch((e): McpReplyResult => ({ ok: false, code: 'error', message: e instanceof Error ? e.message.slice(0, 200) : 'the call failed' }))
+      .then((result) => { this.send({ op: 'mcp.reply', callId: m.callId, result }); });
+    this.pendingMcp.add(p);
+    p.finally(() => this.pendingMcp.delete(p));
   }
 
   /** The attempt a report names, when it is known and owned by this boot; else null (and one log line). */
