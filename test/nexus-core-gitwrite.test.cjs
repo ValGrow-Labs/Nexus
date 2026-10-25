@@ -18,7 +18,7 @@ const { MessageChannel } = require('node:worker_threads');
 const loadTs = require('./load-ts.cjs');
 
 const GW = loadTs('src/runner/gitWrite.ts');
-const { HardenedGit, ensureWorktree, collect, mergeCheck, accept, rollback, fastForward, isLocked, GitFailure, GIT_WRITE_CONFIG, mergeDriverNames, scopePathspecs } = GW;
+const { HardenedGit, ensureWorktree, collect, mergeCheck, accept, rollback, fastForward, isLocked, GitFailure, GIT_WRITE_CONFIG, GIT_EOL_CONFIG, mergeDriverNames, scopePathspecs } = GW;
 const { gitRead } = loadTs('src/runner/gitRead.ts');
 const { walk, isGitName } = loadTs('src/runner/worktreeGuard.ts');
 const { RunnerCore } = loadTs('src/runner/core.ts');
@@ -55,6 +55,9 @@ function world(files = { 'a.txt': 'a\n' }) {
   const repo = path.join(dir, 'repo'); const home = path.join(dir, 'nexus');
   fs.mkdirSync(repo); fs.mkdirSync(path.join(home, 'wt'), { recursive: true });
   git(repo, ['init', '-q', '-b', 'main']);
+  // Deterministic regardless of the host machine's own global gitconfig (this dev machine's is core.autocrlf=true):
+  // a test that wants a different repo-level setting (the EOL-scoping test below) sets it explicitly for itself.
+  git(repo, ['config', 'core.autocrlf', 'false']);
   for (const [f, c] of Object.entries(files)) { fs.mkdirSync(path.dirname(path.join(repo, f)), { recursive: true }); fs.writeFileSync(path.join(repo, f), c); }
   if (Object.keys(files).length) { git(repo, ['add', '-A']); git(repo, ['commit', '-q', '-m', 'init']); }
   const sid = newId(Date.now());
@@ -87,8 +90,8 @@ const failsWith = async (p, code) => {
 
 test('GW0 every write runs with the B2a hardening plus the write config; merge drivers are named for neutralising', () => {
   assert.deepEqual([...GIT_WRITE_CONFIG], ['-c', 'commit.gpgsign=false', '-c', 'tag.gpgsign=false', '-c', 'core.symlinks=false', '-c', 'core.longpaths=true',
-    '-c', 'gc.auto=0', '-c', 'maintenance.auto=false', '-c', 'submodule.recurse=false', '-c', 'protocol.file.allow=never',
-    '-c', 'core.autocrlf=false', '-c', 'core.eol=lf']);
+    '-c', 'gc.auto=0', '-c', 'maintenance.auto=false', '-c', 'submodule.recurse=false', '-c', 'protocol.file.allow=never']);
+  assert.deepEqual([...GIT_EOL_CONFIG], ['-c', 'core.autocrlf=false', '-c', 'core.eol=lf'], 'only on a call marked eol: true');
   assert.deepEqual(mergeDriverNames('merge.canary.driver\nmerge.conflictstyle\nmerge.a.b.name\n'), ['canary', 'a.b']);
   assert.equal(mergeDriverNames('merge.x=y.driver\n'), null);
   assert.equal(mergeDriverNames('core.x\n'), null);
@@ -100,7 +103,7 @@ test('GW0 every write runs with the B2a hardening plus the write config; merge d
   }
   assert.deepEqual(scopePathspecs(['docs/a:b.md']), [':(glob)docs/a:b.md'], 'a colon past the first segment is a name, not a drive');
   const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'runner', 'gitWrite.ts'), 'utf8');
-  assert.match(src, /runGit\(bin, \[\.\.\.gitPrefix\(repoPath, this\.hooksDir\), \.\.\.GIT_WRITE_CONFIG, \.\.\.o\.neutral\.args, \.\.\.wt, \.\.\.argv\]/);
+  assert.match(src, /runGit\(bin, \[\.\.\.gitPrefix\(repoPath, this\.hooksDir\), \.\.\.GIT_WRITE_CONFIG, \.\.\.\(o\.eol \? GIT_EOL_CONFIG : \[\]\), \.\.\.o\.neutral\.args, \.\.\.wt, \.\.\.argv\]/);
   assert.match(src, /neutralizeFilterArgs\(filters\)/);
   assert.match(src, /inertSignatureArgs\(bin\)/);
 });
@@ -473,6 +476,32 @@ test('repo.ff refuses a dirty tree, another branch and a non-fast-forward withou
   const userHead = out(w.repo, ['rev-parse', 'HEAD']);
   await failsWith(fastForward(w.g, { repoPath: w.repo, branch: 'main', sha: a2.new }), 'not_fast_forward');
   assert.equal(out(w.repo, ['rev-parse', 'HEAD']), userHead);
+});
+
+test('repo.ff and git reads never force the EOL config on the user\'s own repository: a CRLF checkout under the user\'s own core.autocrlf=true reads and fast-forwards clean', async () => {
+  const w = world();
+  // The user's own repository config, not Nexus's: autocrlf=true, as a common Windows default. Re-checked-out through
+  // git itself (not a raw byte write) so the index's own stat cache agrees, exactly like a real long-lived checkout
+  // under this setting.
+  git(w.repo, ['config', 'core.autocrlf', 'true']);
+  fs.rmSync(path.join(w.repo, 'a.txt'));
+  // Plain git, not the `git()` helper (which always forces -c core.autocrlf=false for its own setup calls): this
+  // checkout must run under the repo's own just-set autocrlf=true to reproduce a real CRLF checkout.
+  assert.equal(cp.spawnSync('git', ['checkout', '-q', '--', 'a.txt'], { cwd: w.repo }).status, 0);
+  assert.equal(fs.readFileSync(path.join(w.repo, 'a.txt'), 'utf8'), 'a\r\n', 'the user\'s own autocrlf=true checked this out with CRLF');
+  const untouched = await gitRead(w.g, { read: 'status', repoPath: w.repo, branch: 'main', integrationRef: 'refs/nexus/accepted/main' });
+  assert.equal(untouched.ok, true);
+  assert.equal(untouched.dirty, false, 'a CRLF file under the repo\'s own autocrlf=true is not forced to look modified');
+  const c = await changed(w, 'merged\n');
+  const old = refOf(w.repo, 'refs/nexus/accepted/main');
+  const a = await accept(w.g, { repoPath: w.repo, integrationRef: 'refs/nexus/accepted/main', expectedOld: old, head: c.head, message: 'Accept\n' }, { onPrepared: () => {} });
+  const st = await gitRead(w.g, { read: 'status', repoPath: w.repo, branch: 'main', integrationRef: 'refs/nexus/accepted/main' });
+  assert.equal(st.dirty, false, 'still clean with an accepted-but-unmerged commit waiting');
+  const r = await fastForward(w.g, { repoPath: w.repo, branch: 'main', sha: a.new });
+  assert.deepEqual(r, { ok: true, before: old, after: a.new, branch: 'main' }, 'the CRLF file never caused a spurious tree_dirty refusal');
+  // The committed blob is LF ('merged\n'); checked out under the repo's own autocrlf=true it becomes CRLF on disk —
+  // the user's own setting governs the checkout, not an LF override forced by Nexus.
+  assert.equal(fs.readFileSync(path.join(w.repo, 'a.txt'), 'utf8'), 'merged\r\n', 'the user\'s own autocrlf=true governs the checkout, not a forced LF');
 });
 
 test('git reads: status and a bounded, redacted diff between recorded commits; unknown commits and non-repositories answer codes', async () => {

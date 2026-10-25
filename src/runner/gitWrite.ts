@@ -10,10 +10,14 @@
  * hooks folder that does not exist), every configured filter driver switched off (`neutralizeFilterArgs`) with
  * `GIT_LFS_SKIP_SMUDGE=1` (`toolEnv`), and every signature program the git binary itself (`inertSignatureArgs`). On top:
  * - GIT_WRITE_CONFIG: no signing, no symlinks (a link in a commit checks out as a plain file), long paths, no automatic
- *   gc or maintenance (they would rewrite the user's object store), no submodule recursion, no `file://` transport, and
- *   the committed line endings (`core.autocrlf=false`, `core.eol=lf`, as B2a's `ARCHIVE_EOL_CONFIG`): a Windows default
- *   of autocrlf would check the session worktree out with CRLF for a Linux container, and a collect would then commit
- *   bytes the agent never wrote;
+ *   gc or maintenance (they would rewrite the user's object store), no submodule recursion, no `file://` transport;
+ * - GIT_EOL_CONFIG (`core.autocrlf=false`, `core.eol=lf`, as B2a's `ARCHIVE_EOL_CONFIG`): passed only on `run()` calls
+ *   marked `eol: true` — the session worktree's checkout (`worktree add`) and its stage (`collect`'s `add -A`). A
+ *   Windows default of autocrlf would otherwise check the session worktree out with CRLF for a Linux container, and a
+ *   collect would then commit bytes the agent never wrote. It is never passed on a call that reads or writes the
+ *   user's own checked-out repository (`fastForward`'s status/merge-ff-only, `gitRead`'s status): forcing it there
+ *   would compare or check out the user's tracked files against the user's own `core.autocrlf` setting, which can
+ *   make an untouched CRLF file look "modified" (a spurious `tree_dirty`) or write LF-only files into their tree.
  * - every configured merge driver switched off (`merge.<name>.driver=`): `merge-tree` runs a repository's merge driver
  *   program otherwise (verified with git 2.55); an attribute naming one then answers a conflict, never a program;
  * - `--ignore-submodules=all` on status and diff, `--no-ext-diff --no-textconv` on every diff.
@@ -36,9 +40,10 @@ import { walk, type GuardFs, type GuardRefusal } from './worktreeGuard';
 
 export const GIT_WRITE_CONFIG: readonly string[] = Object.freeze([
   '-c', 'commit.gpgsign=false', '-c', 'tag.gpgsign=false', '-c', 'core.symlinks=false', '-c', 'core.longpaths=true',
-  '-c', 'gc.auto=0', '-c', 'maintenance.auto=false', '-c', 'submodule.recurse=false', '-c', 'protocol.file.allow=never',
-  '-c', 'core.autocrlf=false', '-c', 'core.eol=lf'
+  '-c', 'gc.auto=0', '-c', 'maintenance.auto=false', '-c', 'submodule.recurse=false', '-c', 'protocol.file.allow=never'
 ]);
+/** Only on a call marked `eol: true` (session-worktree checkout and stage); see the header comment. */
+export const GIT_EOL_CONFIG: readonly string[] = Object.freeze(['-c', 'core.autocrlf=false', '-c', 'core.eol=lf']);
 /** Read-only: every configured `merge.*` key, one per line (exit 1 with no output when there is none). */
 export const MERGE_CONFIG_ARGV: readonly string[] = Object.freeze(['config', '--name-only', '--get-regexp', '^merge\\.']);
 /** Diff options on every diff Nexus runs: no external diff driver, no textconv, no submodule content. */
@@ -118,7 +123,7 @@ export class HardenedGit {
    * the pointer file first). `neutral` is required: a call never runs without the driver switches.
    */
   async run(repoPath: string, argv: readonly string[], o: { neutral: Neutral; signal?: AbortSignal; maxStdout?: number; timeoutMs?: number;
-    worktree?: { gitDir: string; workTree: string }; identity?: { name: string; email: string } }): Promise<RunResult> {
+    worktree?: { gitDir: string; workTree: string }; identity?: { name: string; email: string }; eol?: boolean }): Promise<RunResult> {
     if (typeof repoPath !== 'string' || !path.isAbsolute(repoPath) || repoPath.includes('\0')) throw new GitFailure('bad_task', 'the folder is not an absolute path');
     const bin = await this.bin();
     if (insideFolder(bin, repoPath) || insideFolder(bin, this.o.cwd) || (o.worktree && insideFolder(bin, o.worktree.workTree))) {
@@ -130,8 +135,8 @@ export class HardenedGit {
       env.GIT_AUTHOR_NAME = o.identity.name; env.GIT_AUTHOR_EMAIL = o.identity.email;
       env.GIT_COMMITTER_NAME = o.identity.name; env.GIT_COMMITTER_EMAIL = o.identity.email;
     }
-    const r = await runGit(bin, [...gitPrefix(repoPath, this.hooksDir), ...GIT_WRITE_CONFIG, ...o.neutral.args, ...wt, ...argv], { cwd: this.o.cwd, env,
-      timeoutMs: o.timeoutMs ?? GIT_TIMEOUT_MS, maxStdout: o.maxStdout ?? SMALL, maxStderr: 4096, signal: o.signal });
+    const r = await runGit(bin, [...gitPrefix(repoPath, this.hooksDir), ...GIT_WRITE_CONFIG, ...(o.eol ? GIT_EOL_CONFIG : []), ...o.neutral.args, ...wt, ...argv],
+      { cwd: this.o.cwd, env, timeoutMs: o.timeoutMs ?? GIT_TIMEOUT_MS, maxStdout: o.maxStdout ?? SMALL, maxStderr: 4096, signal: o.signal });
     if (r.error === 'ENOENT') { this.resolver.forget(); throw new GitFailure('git_missing', 'git is not installed'); }
     if (r.error) throw new GitFailure('git_failed', `git could not run (${r.error})`);
     return r;
@@ -288,7 +293,7 @@ export async function ensureWorktree(g: HardenedGit, t: { repoPath: string; work
     // A registered entry whose folder is gone (an interrupted earlier attempt, or a removed folder) is ours by name:
     // `add -f -f` replaces it; a fresh session adds a new one.
     const argv = ['worktree', 'add', ...(adminExists ? ['-f', '-f'] : []), '--detach', t.worktreePath, base];
-    const add = await g.run(repo, argv, { neutral: n, signal: o.signal, timeoutMs: 10 * GIT_TIMEOUT_MS });
+    const add = await g.run(repo, argv, { neutral: n, signal: o.signal, timeoutMs: 10 * GIT_TIMEOUT_MS, eol: true });
     if (add.code !== 0) throw new GitFailure('git_failed', 'the worktree could not be added');
     try { await verifyWorktreePointer(t.worktreePath, gitDir, fs); } catch { throw new GitFailure('worktree_conflict', 'git named the worktree entry differently'); }
   }
@@ -359,7 +364,7 @@ export async function collect(g: HardenedGit, t: { repoPath: string; worktreePat
   const repo = t.repoPath;
   const parent = await resolveRef(g, repo, n, t.ref, o.signal);
   if (!parent) throw new GitFailure('ref_moved', 'the session ref is gone');
-  const add = await g.run(t.worktreePath, ['add', '-A', '--', ...scopePathspecs(t.scope)], { neutral: n, worktree: wt, signal: o.signal, timeoutMs: 10 * GIT_TIMEOUT_MS });
+  const add = await g.run(t.worktreePath, ['add', '-A', '--', ...scopePathspecs(t.scope)], { neutral: n, worktree: wt, signal: o.signal, timeoutMs: 10 * GIT_TIMEOUT_MS, eol: true });
   // A scope that matches no file stages nothing (git answers 128 "did not match any files"); any other failure stops.
   if (add.code !== 0 && !/did not match any files/.test(add.stderr)) throw new GitFailure('git_failed', 'add failed');
   const ls = must(await g.run(t.worktreePath, ['ls-files', '-s', '-z'], { neutral: n, worktree: wt, signal: o.signal, maxStdout: 64 * 2 ** 20 }), 'ls-files');
