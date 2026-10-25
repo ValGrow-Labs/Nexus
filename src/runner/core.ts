@@ -1160,7 +1160,14 @@ stderr: ${r.stderr}` : ''}`
       bindAgentTurn: (bearer, attemptId, containerId) => this.bindAgentTurn(bearer, attemptId, containerId),
       unbindAgentTurn: (bearer) => this.unbindAgentTurn(bearer),
       runtime,
-      startHostEgressProxy: async (o) => { const proxy = await startProxy(o); egress.url = proxy.url; return proxy; },
+      startHostEgressProxy: async (o) => {
+        const proxy = await startProxy(o);
+        egress.url = proxy.url;
+        // The URL is only good while the proxy runs: once it is closed no runtime may be pointed at it any more.
+        const close = proxy.close.bind(proxy);
+        (proxy as { close: () => Promise<void> }).close = async () => { egress.url = null; await close(); };
+        return proxy;
+      },
       imagesDir: this.deps.imagesDir,
       guardRefusal: () => a.agentGuardRefusal ?? null,
       signal: a.abort.signal

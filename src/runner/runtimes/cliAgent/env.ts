@@ -58,3 +58,22 @@ export function agentEnv(base: NodeJS.ProcessEnv, o: AgentEnvOptions): Record<st
   if (typeof o.token === 'string' && o.token.length > 0) env.NEXUS_MCP_TOKEN = o.token;
   return env;
 }
+
+/** Names an overlay may never set, whatever else it says: the engine's config location and every proxy or CA setting. */
+const OVERLAY_NEVER = /^(CLAUDE_CONFIG_DIR|HTTP_PROXY|HTTPS_PROXY|ALL_PROXY|NO_PROXY|NODE_EXTRA_CA_CERTS|NEXUS_MCP_TOKEN)$/i;
+
+/**
+ * Adds the overlay's names to an environment `agentEnv` built, and drops every one it must not touch: a name `agentEnv`
+ * itself sets (compared case-insensitively, as Windows does), the engine's config dir, the proxy and CA settings, and
+ * the bearer. The overlay can add; it can never replace or override. Only the runner's test seams build one at all.
+ */
+export function mergeOverlay(env: Record<string, string>, overlay: Readonly<Record<string, string>> | undefined): Record<string, string> {
+  const out = { ...env };
+  const taken = new Set(Object.keys(env).map((k) => k.toLowerCase()));
+  for (const [k, v] of Object.entries(overlay ?? {})) {
+    if (typeof v !== 'string' || v.includes('\0') || !/^[A-Za-z_][A-Za-z0-9_]{0,63}$/.test(k)) continue;
+    if (taken.has(k.toLowerCase()) || OVERLAY_NEVER.test(k)) continue;
+    out[k] = v;
+  }
+  return out;
+}

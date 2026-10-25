@@ -14,6 +14,7 @@ const { spawnSync } = require('node:child_process');
 
 const ROOT = path.resolve(__dirname, '..');
 const H = require(path.join(ROOT, 'test', 'helpers', 'agentHarness.cjs'));
+const loadTs = require(path.join(ROOT, 'test', 'load-ts.cjs'));
 
 function runNode(files) {
   const r = spawnSync(process.execPath, ['--test', ...files.map((f) => path.join(ROOT, f))], { cwd: ROOT, stdio: 'inherit', windowsHide: true });
@@ -23,7 +24,8 @@ function runNode(files) {
 function main() {
   const scripted = runNode(['test/runtime-scripted-contract.test.cjs']);
   if (scripted !== 0) { console.error('test:runtime FAILED: the ScriptedRuntime contract (SR1-SR3).'); return 1; }
-  const cli = H.resolveCli();
+  // The same resolution the adapter uses (PATH, then the engine's own per-user folder); an explicit NEXUS_AGENT_CLI wins.
+  const cli = H.resolveCli() ?? (process.env.NEXUS_AGENT_CLI ? null : loadTs('src/runner/runtimes/cliAgent/binary.ts').resolveAgentCli());
   if (!cli) {
     console.error('test:runtime NOT RUN: the agent CLI is not installed, so the CLI contract (CR0-CR15) was not checked. The scripted contract (SR1-SR3) passed.');
     return 3;

@@ -38,7 +38,8 @@ const ROOT = path.resolve(__dirname, '..');
 const REPORT = JSON.parse(fs.readFileSync(path.join(ROOT, '.superpowers', 'sdd', '2026-10-21-nexus-b2b', 'task0-probe-report.json'), 'utf8'));
 const FAKE = path.join(__dirname, 'fixtures', 'agent', 'fake-cli.cjs');
 const AUTH_FIX = path.join(__dirname, 'fixtures', 'agent', 'probe');
-const BIN = H.resolveCli();
+// The same resolution the adapter uses (PATH, then the engine's own per-user folder); an explicit NEXUS_AGENT_CLI wins.
+const BIN = H.resolveCli() ?? (process.env.NEXUS_AGENT_CLI ? null : binaryMod.resolveAgentCli());
 const NO_CLI = BIN ? false : 'NOT RUN: the agent CLI is not installed';
 const TOKEN = `${'q'.repeat(22)}.${'r'.repeat(43)}`;
 
@@ -83,7 +84,7 @@ function mkReq(root, o = {}) {
 }
 
 async function withHarness(opts, fn) {
-  const h = await H.start({ home: 'fake', mcp: 'recorder', model: 'mock', proxy: 'deny-all', ...opts });
+  const h = await H.start({ home: 'fake', mcp: 'recorder', model: 'mock', proxy: 'deny-all', ...(BIN ? { bin: BIN } : {}), ...opts });
   try { return await fn(h); } finally { await h.stop(); }
 }
 
@@ -666,4 +667,109 @@ test('no egress proxy, no turn: the engine is never started without a proxy of t
   assert.match(events[events.length - 1].message, /no egress proxy/);
   assert.ok(!fs.existsSync(marker));
   assert.ok(defaultTaskkillBin().length > 0);
+});
+
+// ---------------------------------------------------------------- fix round 1: abort races, Grep and Glob, the overlay
+
+test('I1 a signal already aborted: a start and a cancel, and the engine is never started', async () => {
+  const marker = path.join(tmpDir(), 'm.txt');
+  const ac = new AbortController(); ac.abort();
+  let spawned = false;
+  const events = await collect(fakeAdapter(['--fake-quick', `--fake-marker=${marker}`], { onSpawned: () => { spawned = true; } }), mkReq(tmpDir()), ac.signal);
+  assertRuntimeContract(events, { terminal: 'run.cancelled' });
+  assert.ok(!spawned && !fs.existsSync(marker));
+});
+
+test('I1 an abort that lands during the file preparation: no process is started, and the turn ends run.cancelled', async () => {
+  const marker = path.join(tmpDir(), 'm.txt');
+  const ac = new AbortController();
+  let spawned = false;
+  // The abort fires while the adapter reads the context file (after its checks, before the spawn).
+  const fsHook = { ...fsp, stat: async (f, ...rest) => { if (String(f).endsWith('context.md')) ac.abort(); return fsp.stat(f, ...rest); } };
+  const events = await collect(fakeAdapter(['--fake-quick', `--fake-marker=${marker}`], { fs: fsHook, onSpawned: () => { spawned = true; } }), mkReq(tmpDir()), ac.signal);
+  assertRuntimeContract(events, { terminal: 'run.cancelled' });
+  assert.ok(!spawned, 'the engine was never started for a cancelled turn');
+  assert.ok(!fs.existsSync(marker), 'and no turn ran');
+});
+
+test('I1 an abort that lands the moment the process exists kills the tree; the turn never runs to completion', async () => {
+  const ac = new AbortController();
+  let spawned = null;
+  const events = await collect(fakeAdapter(['--fake-child'], { onSpawned: (i) => { spawned = i; ac.abort(); } }), mkReq(tmpDir()), ac.signal);
+  assertRuntimeContract(events, { terminal: 'run.cancelled' });
+  assert.ok(spawned);
+  await untilPidGone(spawned.pid);
+});
+
+test('M2 a throw from onSpawned kills the tree at once (no 3 s wait), and the error reaches the caller', async () => {
+  let spawned = null;
+  const t0 = Date.now();
+  const ad = fakeAdapter([], { onSpawned: (i) => { spawned = i; throw new Error('record failed'); } });
+  await assert.rejects(collect(ad, mkReq(tmpDir())), /record failed/);
+  assert.ok(Date.now() - t0 < 2800, `killed promptly, took ${Date.now() - t0} ms`);
+  await untilPidGone(spawned.pid, 5000);
+});
+
+test('M1 an overlay can add names but never replace one agentEnv sets, the proxy, the bearer, the PATH or the engine config dir', async () => {
+  const PROXY = 'http://127.0.0.1:4455';
+  const overlay = { HTTPS_PROXY: 'http://evil.example:1', HTTP_PROXY: 'http://evil.example:2', NO_PROXY: 'x', NEXUS_MCP_TOKEN: 'evil', PATH: 'C:\\evil', Path: 'C:\\evil2',
+    CLAUDE_CONFIG_DIR: 'C:\\evil-config', NODE_EXTRA_CA_CERTS: 'C:\\ca.pem', TEMP: 'C:\\evil-tmp', ADDED_NAME: 'yes' };
+  const ad = new CliAgentAdapter({ bin: process.execPath, argvPrefix: [FAKE, '--fake-dump-env'], baseEnv: { SystemRoot: process.env.SystemRoot, USERPROFILE: 'C:\\fake\\home' },
+    token: TOKEN, mcpUrl: 'http://127.0.0.1:1/mcp', proxyUrl: () => PROXY, envOverlay: overlay });
+  const req = mkReq(tmpDir());
+  const events = await collect(ad, req);
+  const env = Object.fromEntries(Object.entries(JSON.parse(events.find((e) => e.t === 'message.delta').text)).map(([k, v]) => [k.toLowerCase(), v]));
+  assert.equal(env.https_proxy, PROXY);
+  assert.equal(env.http_proxy, undefined);
+  assert.equal(env.no_proxy, '127.0.0.1');
+  assert.equal(env.nexus_mcp_token, TOKEN);
+  assert.ok(!/evil/i.test(env.path));
+  assert.equal(env.claude_config_dir, undefined);
+  assert.equal(env.node_extra_ca_certs, undefined);
+  assert.equal(env.temp, path.join(req.configDir, 'tmp'));
+  assert.equal(env.added_name, 'yes', 'a name nothing sets can be added');
+  // What the registry lets through from the runner's test-only dependency: the seam names and a stand-in's own names.
+  assert.deepEqual(seam.sanitizeOverlay({ ANTHROPIC_BASE_URL: 'http://127.0.0.1:1', ANTHROPIC_API_KEY: 'k', ELECTRON_RUN_AS_NODE: '1', FAKE_CLI_QUICK: '1', HTTPS_PROXY: 'x', PATH: 'y', CLAUDE_CONFIG_DIR: 'z', SOMETHING: '1' }),
+    { ANTHROPIC_BASE_URL: 'http://127.0.0.1:1', ANTHROPIC_API_KEY: 'k', ELECTRON_RUN_AS_NODE: '1', FAKE_CLI_QUICK: '1' });
+  assert.deepEqual(envMod.mergeOverlay({ A: '1', Path: 'p' }, { a: '2', PATH: 'q', B: '3', 'bad name': '4' }), { A: '1', Path: 'p', B: '3' });
+});
+
+test('I3 Grep and Glob: a content search for the .env canary, a search or a listing outside the worktree, and the sensitive names in a listing all return nothing sensitive', { skip: NO_CLI }, async () => {
+  const PEM = `PEM-GREP-SECRET-${crypto.randomBytes(4).toString('hex')}`;
+  const OUT = `OUTSIDE-GREP-SECRET-${crypto.randomBytes(4).toString('hex')}`;
+  const GIT = `GIT-GREP-SECRET-${crypto.randomBytes(4).toString('hex')}`;
+  await withHarness({ worktreeFiles: { 'certs/a.pem': `${PEM}\n`, '.git/config': `[core]\n${GIT}\n`, 'src/ok.txt': 'plain text\n' } }, async (h) => {
+    const outside = path.join(h.root, 'outdir');
+    fs.mkdirSync(outside);
+    fs.writeFileSync(path.join(outside, 'o.txt'), `${OUT}\n`);
+    const fwd = (p) => p.split(path.sep).join('/');
+    // The patterns are prefixes of the canaries, so a canary in a tool RESULT is told apart from the pattern in the tool call.
+    const calls = [
+      ['gr_env', 'Grep', { pattern: 'ENV-SECRET-CANARY', path: h.worktree, output_mode: 'content' }],
+      ['gr_env_cwd', 'Grep', { pattern: 'ENV-SECRET-CANARY', output_mode: 'content' }],
+      ['gr_pem', 'Grep', { pattern: 'PEM-GREP-SECRET', path: h.worktree, output_mode: 'content' }],
+      ['gr_git', 'Grep', { pattern: 'GIT-GREP-SECRET', path: h.worktree, output_mode: 'content' }],
+      ['gr_out', 'Grep', { pattern: 'OUTSIDE-GREP-SECRET', path: outside, output_mode: 'content' }],
+      ['gr_root', 'Grep', { pattern: 'OUTSIDE-GREP-SECRET', path: h.root, output_mode: 'content' }],
+      ['gl_out', 'Glob', { pattern: '*', path: outside }],
+      ['gl_abs', 'Glob', { pattern: `${fwd(outside)}/*` }],
+      ['gl_up', 'Glob', { pattern: '../*' }],
+      ['gl_env', 'Glob', { pattern: '**/.env*', path: h.worktree }],
+      ['gl_pem', 'Glob', { pattern: '**/*.pem', path: h.worktree }],
+      ['gl_all', 'Glob', { pattern: '**/*', path: h.worktree }]
+    ];
+    h.mock.setScript((_b, s) => (s < calls.length ? use(`toolu_${calls[s][0]}`, calls[s][1], calls[s][2]) : null));
+    const events = await collect(realAdapter(h), reqOf(h));
+    assertRuntimeContract(events, { terminal: 'run.completed' });
+    const last = h.mock.requests[h.mock.requests.length - 1];
+    const results = Object.fromEntries(M.toolResults(last.body).map((r) => [r.toolUseId.replace(/^toolu_/, ''), r]));
+    assert.equal(Object.keys(results).length, calls.length, 'every call was answered');
+    for (const id of ['gr_out', 'gr_root', 'gl_out', 'gl_abs']) assert.equal(results[id].isError, true, `${id}: outside the worktree is refused`);
+    for (const id of ['gr_env', 'gr_env_cwd', 'gr_pem', 'gr_git']) assert.ok(/No matches found/i.test(results[id].text), `${id}: ${results[id].text.slice(0, 120)}`);
+    for (const id of ['gl_env', 'gl_pem']) assert.ok(/No files found/i.test(results[id].text), `${id}: ${results[id].text.slice(0, 120)}`);
+    assert.ok(!/(^|[\\/])\.env|a\.pem|\.git[\\/]/.test(results.gl_all.text), `a full listing names no sensitive file: ${results.gl_all.text.slice(0, 200)}`);
+    assert.ok(/ok\.txt/.test(results.gl_all.text), 'the listing still shows ordinary files');
+    const raw = h.mock.requests.map((q) => q.raw).join('\n');
+    for (const secret of [h.canaries.envSecret, PEM, GIT, OUT]) assert.ok(!raw.includes(secret), 'a sensitive file reached the model');
+  });
 });

@@ -108,8 +108,17 @@ test('the agent CLI is spawned only by cliAgent/adapter.ts, with no shell, and w
   // The one spawn call: the resolved binary, never a shell, an explicit `env` (no inheritance), the turn's own cwd.
   assert.match(adapter, /spawn\(bin, \[\.\.\.\(this\.o\.argvPrefix \?\? \[\]\), \.\.\.args\], \{ cwd, env, windowsHide: true, shell: false, stdio: \['pipe', 'pipe', 'pipe'\] \}\)/);
   assert.equal([...adapter.matchAll(/\bspawn\s*\(/g)].length, 1, 'one spawn site');
-  // A health run and a turn each build the environment with agentEnv; nothing spreads the runner's environment into it.
-  assert.equal([...adapter.matchAll(/\bagentEnv\(/g)].length, 2, 'two builds, both through agentEnv');
+  // `launch` is called exactly twice (a health run and a turn), each with a variable named `env` that the line above it built
+  // with `mergeOverlay(agentEnv(...))`; a third launch, or one with another environment, fails here. Nothing spreads the
+  // runner's environment into it.
+  assert.equal([...adapter.matchAll(/\blaunch\(/g)].length, 3, 'the definition and exactly two calls');
+  assert.equal([...adapter.matchAll(/this\.launch\(bin, args, env, /g)].length, 2, 'both calls pass the built `env`');
+  assert.equal([...adapter.matchAll(/\benv = mergeOverlay\(agentEnv\(/g)].length, 2, 'both environments are built with agentEnv');
+  assert.equal([...adapter.matchAll(/\bagentEnv\(/g)].length, 2, 'agentEnv is not called anywhere else');
+  // The overlay is a test-seam name: only these files mention it, and the runner's entry never gives a runtime dependency.
+  const mentions = ts('src').filter((f) => /\benvOverlay\b/.test(code(f))).map(rel).sort();
+  assert.deepEqual(mentions, ['src/runner/runtimes/cliAgent/adapter.ts', 'src/runner/runtimes/cliAgent/testSeam.ts', 'src/runner/runtimes/registry.ts']);
+  assert.doesNotMatch(code(path.join(ROOT, 'src/runner/index.ts')), /agentRuntime|agentEnv|agentBin|makeRuntime/);
   for (const f of ts('src/runner/runtimes')) {
     assert.doesNotMatch(code(f), /\.\.\.\s*process\.env|env\s*:\s*process\.env|shell\s*:\s*true/, rel(f));
     if (rel(f) !== 'src/runner/runtimes/cliAgent/adapter.ts') assert.doesNotMatch(code(f), /node:child_process|['"]child_process['"]/, `${rel(f)} launches nothing`);

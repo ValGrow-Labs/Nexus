@@ -15,6 +15,7 @@
  */
 import type { AgentRuntime, RuntimeKind } from '../../shared/nexus/runtime';
 import { CLI_AGENT_KIND, createCliAgentAdapter, type Preflight, type TurnCaps } from './cliAgent/adapter';
+import { sanitizeOverlay } from './cliAgent/testSeam';
 import { SCRIPTED_KIND, ScriptedRuntime, type ScriptedStep } from './scripted';
 
 export { CLI_AGENT_KIND, SCRIPTED_KIND };
@@ -51,8 +52,8 @@ const PREFLIGHT_CACHE = new Map<string, Preflight>();
 export function runtimeFor(kind: RuntimeKind, ctx: RuntimeTurnContext): AgentRuntime {
   if (kind === SCRIPTED_KIND) return new ScriptedRuntime({ token: ctx.token, mcpUrl: ctx.mcpUrl, steps: ctx.steps ?? [], fetchImpl: ctx.fetchImpl });
   if (kind === CLI_AGENT_KIND) {
-    const overlay: Record<string, string> = {};
-    for (const [k, v] of Object.entries(ctx.agentEnv ?? {})) if (typeof v === 'string') overlay[k] = v;
+    // Only the test seams ever set `agentEnv`; whatever they give is cut down to the names a test may add.
+    const overlay = sanitizeOverlay(ctx.agentEnv);
     return createCliAgentAdapter({
       token: ctx.token, mcpUrl: ctx.mcpUrl, bin: ctx.agentBin, argvPrefix: ctx.agentArgvPrefix, envOverlay: overlay,
       proxyUrl: ctx.egressProxyUrl, caps: ctx.caps, mcpTools: ctx.mcpTools, onSpawned: ctx.onSpawned, onExited: ({ pid }) => ctx.onGone?.(pid),

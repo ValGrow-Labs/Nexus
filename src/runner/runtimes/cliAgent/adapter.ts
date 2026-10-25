@@ -29,7 +29,7 @@ import { killProcessTree } from '../../procTree';
 import type { RunnerFs } from '../../types';
 import { ARGV_MAX_BYTES, budgetCentsOf, buildArgs } from './args';
 import { SKILLS_FILE_FLAG, SUPPORTED_VERSION_RE, helpFlagsOf, isAgentBinary, missingFlags, parseSignedIn, parseVersion, resolveAgentCli } from './binary';
-import { agentEnv } from './env';
+import { agentEnv, mergeOverlay } from './env';
 import { MCP_SERVER_NAME, writeTurnFiles } from './files';
 import { StreamTranslator, newRunRef } from './stream';
 
@@ -124,7 +124,7 @@ export class CliAgentAdapter implements AgentRuntime {
   /** A short health run: output bounded, killed at the timeout, stdin closed. Never throws. */
   private async runOnce(bin: string, args: readonly string[], proxyUrl: string): Promise<RunResult> {
     let env: Record<string, string>;
-    try { env = { ...agentEnv(this.base(), { proxyUrl, cliDir: path.dirname(bin) }), ...(this.o.envOverlay ?? {}) }; }
+    try { env = mergeOverlay(agentEnv(this.base(), { proxyUrl, cliDir: path.dirname(bin) }), this.o.envOverlay); }
     catch { return { code: null, stdout: '', timedOut: false, spawnFailed: true }; }
     return new Promise<RunResult>((resolve) => {
       let child: ChildProcess;
@@ -226,13 +226,21 @@ export class CliAgentAdapter implements AgentRuntime {
   }
 
   async *start(req: RunRequest, signal: AbortSignal): AsyncIterable<RuntimeEvent> {
-    const at = (): number => Date.now();
-    const failed = (code: 'runtime_error' | 'auth' | 'limit' | 'protocol', message: string): RuntimeEvent => ({ t: 'run.failed', at: at(), code, message });
     const runRef = newRunRef();
     this.cancelled = false;
     this.killing = null;
+    // Registered FIRST, before the preflight and the file preparation: an abort at any point is never lost. Before the
+    // process exists it only sets `cancelled` (and `turn` then never spawns); after it exists it kills the tree.
+    const onAbort = (): void => { void this.cancel(runRef, 0); };
+    signal.addEventListener('abort', onAbort, { once: true });
+    try { yield* this.turn(req, signal, runRef); } finally { signal.removeEventListener('abort', onAbort); }
+  }
+
+  private async *turn(req: RunRequest, signal: AbortSignal, runRef: string): AsyncGenerator<RuntimeEvent> {
+    const at = (): number => Date.now();
+    const failed = (code: 'runtime_error' | 'auth' | 'limit' | 'protocol', message: string): RuntimeEvent => ({ t: 'run.failed', at: at(), code, message });
     yield { t: 'run.started', runRef, at: at() };
-    if (signal.aborted) { yield { t: 'run.cancelled', at: at() }; return; }
+    if (signal.aborted || this.cancelled) { yield { t: 'run.cancelled', at: at() }; return; }
 
     // Nothing starts without a loopback proxy of this turn's own: the engine would otherwise reach the network directly.
     const proxyUrl = this.o.proxyUrl?.() ?? null;
@@ -241,7 +249,7 @@ export class CliAgentAdapter implements AgentRuntime {
     if (!bin) { yield failed('runtime_error', 'not_installed: the agent CLI is not installed'); return; }
     const pf = await this.preflight(proxyUrl);
     if (!pf.ok) { yield failed('runtime_error', `${pf.reason ?? 'error'}: ${pf.detail}`); return; }
-    if (signal.aborted) { yield { t: 'run.cancelled', at: at() }; return; }
+    if (signal.aborted || this.cancelled) { yield { t: 'run.cancelled', at: at() }; return; }
 
     const cents = budgetCentsOf({ turnUsdCents: this.o.caps?.turnUsdCents, dayRemainingUsdCents: this.o.caps?.dayRemainingUsdCents, maxCostUsd: req.limits.maxCostUsd });
     if (cents <= 0) { yield failed('limit', 'no budget is left for this turn'); return; }
@@ -260,11 +268,14 @@ export class CliAgentAdapter implements AgentRuntime {
       const tools = this.o.mcpTools ?? MCP_TOOLS.map((t) => t.name);
       args = buildArgs({ dir: req.configDir, mcpJson: files.mcpJson, settingsJson: files.settingsJson, mcpTools: tools, budgetCents: cents, skillsFile });
       if (Buffer.byteLength([bin, ...args].join(' '), 'utf8') > ARGV_MAX_BYTES) { yield failed('protocol', 'the engine argv is too large'); return; }
-      env = { ...agentEnv(this.base(), { proxyUrl, token: this.o.token, tempDir: files.tempDir, cliDir: path.dirname(bin) }), ...(this.o.envOverlay ?? {}) };
+      env = mergeOverlay(agentEnv(this.base(), { proxyUrl, token: this.o.token, tempDir: files.tempDir, cliDir: path.dirname(bin) }), this.o.envOverlay);
     } catch {
       yield failed('runtime_error', 'the turn files could not be prepared');
       return;
     }
+
+    // An abort that arrived while the files were prepared: no process is ever started for a cancelled turn.
+    if (signal.aborted || this.cancelled) { yield { t: 'run.cancelled', at: at() }; return; }
 
     // Spawn.
     let child: ChildProcess;
@@ -290,14 +301,18 @@ export class CliAgentAdapter implements AgentRuntime {
     child.stdin?.on('error', () => { /* the process may already be gone */ });
     child.once('error', () => { spawnError = true; exited = true; resolveExit(); wake(); });
     child.once('close', (code) => { exitCode = code; exited = true; resolveExit(); wake(); });
-    const onAbort = (): void => { void this.cancel(runRef, 0); };
-    signal.addEventListener('abort', onAbort, { once: true });
     const wallMs = Math.max(1000, req.limits.wallClockMs);
     const wallTimer = setTimeout(() => { wallClock = true; void this.cancel(runRef, 0); }, wallMs);
     (wallTimer as { unref?: () => void }).unref?.();
 
+    // True once the turn ended through one of its own return paths; anything else (a throw from `onSpawned`, a consumer
+    // that stops early) is abnormal and the tree is killed at once.
+    let normalEnd = false;
     try {
+      // An abort that landed between the last check and the spawn: kill now that there is a process.
+      if (signal.aborted || this.cancelled) void this.cancel(runRef, 0);
       if (pid !== null) await this.o.onSpawned?.({ pid, imageName: this.imageName });
+      if (signal.aborted || this.cancelled) void this.cancel(runRef, 0);
       child.stdin?.end(preamble, 'utf8');
       let terminal = false;
       for (;;) {
@@ -308,14 +323,16 @@ export class CliAgentAdapter implements AgentRuntime {
           if (over) {
             yield ev;
             await this.cancel(runRef, 0);
+            normalEnd = true;
             yield failed('limit', over);
             return;
           }
-          if (ev.t === 'run.completed' || ev.t === 'run.failed' || ev.t === 'run.cancelled') terminal = true;
+          if (ev.t === 'run.completed' || ev.t === 'run.failed' || ev.t === 'run.cancelled') { terminal = true; normalEnd = true; }
           yield ev;
           if (terminal) return;
           if (tr.sawInit && (tr.mcpStatus === 'failed' || tr.mcpStatus === 'needs-auth')) {
             await this.cancel(runRef, 0);
+            normalEnd = true;
             yield failed('runtime_error', 'the Nexus MCP server did not connect');
             return;
           }
@@ -324,6 +341,7 @@ export class CliAgentAdapter implements AgentRuntime {
         if (exited) {
           for (const e of tr.flush()) queue.push(e);
           if (queue.length > 0) continue;
+          normalEnd = true;
           if (signal.aborted || this.cancelled) { yield wallClock ? failed('limit', 'the turn ran past its wall clock') : { t: 'run.cancelled', at: at() }; return; }
           if (spawnError) { yield failed('runtime_error', 'the agent CLI could not be started'); return; }
           yield this.endedWithoutResult(tr, exitCode);
@@ -333,9 +351,9 @@ export class CliAgentAdapter implements AgentRuntime {
       }
     } finally {
       clearTimeout(wallTimer);
-      signal.removeEventListener('abort', onAbort);
-      // No process remains: a normal end gets a moment to exit on its own, then the tree is killed.
-      if (!exited) await Promise.race([exitP, delay(EXIT_WAIT_MS)]);
+      // No process remains. An abnormal end kills the tree at once; a normal one gets a moment to exit on its own first.
+      if (!exited && !normalEnd) await this.cancel(runRef, 0);
+      else if (!exited) await Promise.race([exitP, delay(EXIT_WAIT_MS)]);
       if (!exited) { await this.cancel(runRef, 0); await Promise.race([exitP, delay(EXIT_WAIT_MS)]); }
       if (pid !== null) { try { await this.o.onExited?.({ pid }); } catch { /* best effort */ } }
       if (this.pid === pid) this.pid = null;

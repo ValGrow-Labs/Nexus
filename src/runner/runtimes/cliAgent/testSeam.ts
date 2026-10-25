@@ -12,6 +12,22 @@ import { CliAgentAdapter, type CliAdapterOptions } from './adapter';
 /** The two names a test overlay may carry, and no others. */
 export const TEST_SEAM_ENV_NAMES: readonly string[] = Object.freeze(['ANTHROPIC_BASE_URL', 'ANTHROPIC_API_KEY']);
 
+/** The names a stand-in executable's own tests may add (a process-tree test's idle or hanging mode), besides the two above. */
+const STAND_IN_ENV = /^(ELECTRON_RUN_AS_NODE|FAKE_CLI_[A-Z_]{1,40})$/;
+
+/**
+ * What the runner's registry lets through from `RunnerDeps.agentRuntime.agentEnv` (a test-only dependency: production and
+ * `src/runner/index.ts` never set it): the two seam names and a stand-in's own names, nothing else. The adapter drops
+ * anything `agentEnv` itself sets on top of this.
+ */
+export function sanitizeOverlay(overlay: Readonly<Record<string, string | undefined>> | undefined): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const [k, v] of Object.entries(overlay ?? {})) {
+    if (typeof v === 'string' && (TEST_SEAM_ENV_NAMES.includes(k) || STAND_IN_ENV.test(k))) out[k] = v;
+  }
+  return out;
+}
+
 export interface TestSeamOptions {
   /** `ANTHROPIC_BASE_URL` (a loopback mock) and/or a fake `ANTHROPIC_API_KEY`: nothing else is accepted. */
   envOverlay: Readonly<Record<string, string>>;
