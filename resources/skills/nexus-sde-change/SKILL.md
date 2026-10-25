@@ -46,9 +46,12 @@ turn never does.
 ## Dependencies
 
 The container has no network. When the project's dependencies are missing, ask
-for an install with `job_request` and the recipe `sde.deps.node` or
-`sde.deps.python`. The user approves the download first; wait for it. Never try
-to download anything from inside `sandbox_exec`.
+for an install with `job_request`, the recipe `sde.deps.node` or
+`sde.deps.python` (the one that matches the repository) and `inputs` holding
+exactly one repository version id, taken from the versions you were given. The
+same rule applies to `sde.test.discover`. A request without that input, or
+naming any other version, is refused. The user approves the download first;
+wait for it. Never try to download anything from inside `sandbox_exec`.
 
 ## Rules
 

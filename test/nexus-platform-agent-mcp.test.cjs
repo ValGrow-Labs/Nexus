@@ -500,3 +500,49 @@ test('FR6 a secret straddling the 4000-character cut of the diagnostic facts is 
   assert.doesNotMatch(text, /## Diagnostic facts/, 'the whole field is dropped');
   assert.equal(w.db.prepare("SELECT COUNT(*) AS n FROM activity WHERE action = 'context_redacted' AND job_id = ?").get(t.job.id).n, 1);
 });
+
+// ---------- fix round 2 ----------
+
+test("FR7 job_request inputs must be the turn's own: a readable repository version outside the token is denied and creates no job", async () => {
+  const w = await world();
+  const inTurn = addRepository(w);
+  const other = addRepository(w, 'sde-node', inTurn.artifactId, 'beef'.padEnd(40, '0'));   // readable by the user, not in the token
+  const t = w.turn({ inputs: [inTurn.versionId] });
+  const denials = () => w.db.prepare("SELECT * FROM activity WHERE action = 'auth.denied' ORDER BY seq").all();
+  const jobsBefore = w.db.prepare('SELECT COUNT(*) AS n FROM jobs').get().n;
+  const before = denials().length;
+  const r = await mcpCall(w, t, 'job_request', { recipeId: 'sde.test.discover', inputs: [other.versionId] });
+  assert.equal(r.ok, false); assert.equal(r.code, 'out_of_scope');
+  assert.ok(!JSON.stringify(r).includes(other.versionId), 'the reply never echoes the id');
+  assert.equal(denials().length, before + 1, 'one auth.denied row');
+  const row = denials().pop();
+  assert.equal(JSON.parse(row.details_json).reason, 'out_of_scope'); assert.equal(JSON.parse(row.details_json).field, 'versionId');
+  assert.equal(w.db.prepare('SELECT COUNT(*) AS n FROM jobs').get().n, jobsBefore, 'no job was created');
+  // Same for an install, and for a list that mixes an allowed version with a foreign one.
+  const dep = await mcpCall(w, t, 'job_request', { recipeId: 'sde.deps.node', inputs: [other.versionId] });
+  assert.equal(dep.code, 'out_of_scope');
+  const mixed = await mcpCall(w, t, 'job_request', { recipeId: 'sde.test.discover', inputs: [inTurn.versionId, other.versionId] });
+  assert.equal(mixed.code, 'out_of_scope');
+  assert.equal(w.db.prepare('SELECT COUNT(*) AS n FROM jobs').get().n, jobsBefore);
+  // The token's own repository still works.
+  const ok = await mcpCall(w, t, 'job_request', { recipeId: 'sde.test.discover', inputs: [inTurn.versionId] });
+  assert.equal(ok.ok, true, JSON.stringify(ok));
+});
+
+test('FR8 an exec granted under a token that has expired is dropped by the expiry sweep, not kept until the next runner ready', async () => {
+  const w = await world();
+  const gw = w.nx.mcpGateway;
+  const a = w.turn();
+  const ex = await mcpCall(w, a, 'sandbox_exec', { argv: ['echo'], cwd: '/workspace', timeoutMs: 5000 }, 'pe-1');
+  assert.equal(ex.ok, true);
+  assert.equal(gw.pendingExecs.size, 1);
+  w.advance(TOKEN_DEFAULT_TTL_MS + 5000);
+  const b = w.turn();
+  await mcpCall(w, b, 'artifact_list', {}, 'pe-2');
+  assert.equal(gw.pendingExecs.size, 0, 'the unfinished exec of the expired turn is gone');
+  // Its late agent.exec.done is dropped like any unknown exec.
+  const logsBefore = w.logs.length;
+  a.runner.report({ op: 'agent.exec.done', attemptId: a.attempt.id, execId: ex.value.grant.execId, exit: { code: 0, oomKilled: false, finishedAt: w.clock.t },
+    stdoutBytes: 1, stderrBytes: 0, stdoutSha256: '1'.repeat(64), truncated: false });
+  assert.ok(w.logs.slice(logsBefore).some((l) => l.includes('unknown exec')));
+});

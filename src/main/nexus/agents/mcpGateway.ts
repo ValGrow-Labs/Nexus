@@ -62,7 +62,7 @@ const asUser = (claims: CapabilityClaims): Principal => ({ id: claims.onBehalfOf
 /** The most bytes of a log file `job_logs` reads back to the agent in one call. */
 const JOB_LOGS_READ_MAX_BYTES = 64 * 1024;
 
-interface PendingExec { jobId: string; attemptId: string; attemptN: number; projectId: string; issuedAt: number }
+interface PendingExec { jobId: string; attemptId: string; attemptN: number; projectId: string; issuedAt: number; exp: number }
 
 export interface McpGatewayDeps {
   auth: AuthService;
@@ -142,6 +142,8 @@ export class McpGateway {
     for (const id of gone) {
       if (![...this.repliedCalls.values()].some((e) => e.jobId === id)) { this.callCounts.delete(id); }
     }
+    // An exec granted under a token that has expired can no longer be finished through this turn.
+    for (const [id, p] of this.pendingExecs) if (p.exp <= now) this.pendingExecs.delete(id);
   }
 
   /** The pipeline of one call after its token verified (steps 2 to 6 of the header). */
@@ -171,6 +173,16 @@ export class McpGateway {
         action: 'auth.denied', reason: 'out_of_scope', entityType: 'auth', jobId: claims.jobId, sessionId: claims.sessionId,
         onBehalfOf: claims.onBehalfOf, projectId: claims.projectId, workspaceId: claims.workspaceId, details: { requested: 'job.read', tool, field: 'jobId' } });
       return fail('out_of_scope', 'the call is refused: out_of_scope');
+    }
+
+    // job_request names its input versions: each must be one of the turn's inputs or an output of the turn's job or its
+    // children (the same rule artifact_read answers to), so a confined agent cannot run a recipe on, and then read,
+    // any other version of the project. One auth.denied row (authorizeWithToken's own); the reply never echoes the id.
+    if (tool === 'job_request' && Array.isArray(args.inputs)) {
+      for (const versionId of args.inputs as string[]) {
+        const input = this.deps.auth.authorizeWithToken(claims, 'artifact.read', { projectId: claims.projectId, versionId });
+        if (!input.allowed) return fail('out_of_scope', 'the call is refused: out_of_scope');
+      }
     }
 
     const used = (this.callCounts.get(claims.jobId) ?? 0) + 1;
@@ -338,7 +350,7 @@ export class McpGateway {
         data: { t: 'exec.pending', execId, argvSha256, argvCount: argv.length, cwd }
       }, now);
     });
-    this.pendingExecs.set(execId, { jobId: claims.jobId, attemptId: attempt.id, attemptN: attempt.n, projectId: claims.projectId, issuedAt: now });
+    this.pendingExecs.set(execId, { jobId: claims.jobId, attemptId: attempt.id, attemptN: attempt.n, projectId: claims.projectId, issuedAt: now, exp: claims.exp });
     return ok({ grant: { execId, argv, cwd, timeoutMs } });
   }
 
