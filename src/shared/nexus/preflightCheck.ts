@@ -378,8 +378,15 @@ function compare(spec: ContainerSpec, inspect: unknown): PreflightReport {
       else if ((mode === 'rw' || mode === 'ro') && (mode === 'rw') !== (rw === true)) problems.push(`mount ${clip(dst)} mode ${mode} contradicts its RW flag`);
     }
   }
+  // A `worktree` mount (an agent turn's session worktree, read-write at /workspace) is allowed only for a container
+  // labelled `nexus.kind: 'agent'`, and only read-write: no other container kind gets a read-write bind mount here.
+  const isAgentContainer = spec.labels['nexus.kind'] === 'agent';
   const wanted = new Set<string>();
   for (const w of spec.mounts) {
+    if (w.kind === 'worktree') {
+      if (!isAgentContainer) problems.push(`mount ${clip(w.containerPath)} is a worktree mount outside an agent container`);
+      if (w.readOnly) problems.push(`mount ${clip(w.containerPath)} is a read-only worktree mount, expected read-write`);
+    }
     wanted.add(w.containerPath);
     const got = byDst.get(w.containerPath);
     if (!got) { problems.push(`mount ${clip(w.containerPath)} is missing`); continue; }

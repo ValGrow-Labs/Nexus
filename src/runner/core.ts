@@ -36,8 +36,8 @@
 import * as path from 'node:path';
 import { createHash } from 'node:crypto';
 import {
-  IMAGE_VERSIONS_RE, STEP_SEPARATOR_TOKEN, type AttemptPlan, type ContainerSpec, type EnginePlan, type ExitInfo, type OutputErrorCode, type ParsedOutput, type SandboxProfile,
-  type SandboxProbe, type ServicePlan, type StagedOutput, type ToolPlan
+  IMAGE_VERSIONS_RE, STEP_SEPARATOR_TOKEN, type AgentPlan, type AttemptPlan, type ContainerSpec, type EnginePlan, type ExitInfo, type OutputErrorCode,
+  type ParsedOutput, type SandboxProfile, type SandboxProbe, type ServicePlan, type StagedOutput, type ToolPlan
 } from '../shared/nexus/execution';
 import {
   EGRESS_EVENT_MAX, parseRunnerMessage, ULID_RE, type AttemptFailureClass, type AttemptPhase, type CancelReason, type ExitReason, type McpReplyResult,
@@ -47,6 +47,7 @@ import { expectedNetworkName } from '../shared/nexus/preflightCheck';
 import { leaseFloorBytes } from '../shared/nexus/resourceGate';
 import { SANDBOX_EXEC_OUTPUT_MAX_BYTES } from '../shared/nexus/mcpTools';
 import { containsSecret, redactSecretText } from '../main/nexus/activity/redact';
+import { run as runAgentAttempt, type AgentAttemptPort } from './agentAttempt';
 import { diagnose, diagnoseTaskProblem } from './diagnose';
 import { appManifestArgv, COMMIT_RE, GitRunner } from './git';
 import { gitRead } from './gitRead';
@@ -65,7 +66,11 @@ import { JUNIT_MAX_BYTES, parseJunit } from './parsers/junit';
 import { APP_MANIFEST_MAX_BYTES, parseAppManifest } from './parsers/manifest';
 import { ensureDirUnder, errCode, HomePaths, noLinkUnder } from './paths';
 import { httpProbe, type HttpProbe } from './probe';
+import { ProcTree } from './procTree';
 import { findAttemptDir, readPlanRecord, reconcileAnswer, releaseByLabels, removeResources, type PlanRecord } from './reconcile';
+import { startHostEgressProxy } from './hostEgressProxy';
+import type { ScriptedStep } from './runtimes/scripted';
+import { runtimeFor } from './runtimes/registry';
 import { DEPS_VOLUME_RE, DockerError, SpecError } from './sandbox/dockerDriver';
 import type { DockerRunner } from './sandbox/dockerCli';
 import { DU_ARGV, GUARD_POLL_MS, guardDecision, parseDuKib, WORKSPACE_MAX_BYTES, type GuardTrip } from './sandbox/sizeGuard';
@@ -73,6 +78,7 @@ import { forwarderWithPort, mergePreflight, pickPort, serviceNetworkProblem } fr
 import { classifyProxyLine, egressTopologyProblem, LineSplitter, mergeProxyPreflight, PROXY_LOG_LINES_MAX, PROXY_READY_MS } from './egress';
 import { stageInputs } from './staging';
 import { REAL_TIMERS, type RunnerDriver, type RunnerFs, type RunnerTimers, type RunnerTransport } from './types';
+import { walk as guardWalk, type GuardRefusal } from './worktreeGuard';
 
 export const HEARTBEAT_MS = 15_000;
 /**
@@ -119,9 +125,24 @@ export interface RunnerDeps {
   onShutdown?: () => void;
   /** The git resolver (tests inject one); default: src/main/gitBinary.ts (a found binary is kept, a miss asked again). */
   resolveGit?: () => Promise<string | null>;
+  /**
+   * B2b Task 11: how an agent turn's runtime is built. Production never sets `agentBin` (no `cli-agent` turn runs in
+   * this build yet); tests use it for the `cli-agent` kind's process-tree behavior (the fake CLI stand-in), and
+   * `scriptFor` for the in-process `scripted` kind's fixture.
+   */
+  agentRuntime?: {
+    scriptFor?: (plan: AgentPlan) => readonly ScriptedStep[];
+    agentBin?: string;
+    agentEnv?: NodeJS.ProcessEnv;
+    agentArgvPrefix?: readonly string[];
+    fetchImpl?: typeof fetch;
+    taskkillBin?: string;
+    /** Test observability only: called whenever a `cli-agent` turn's process is spawned (after it is recorded). */
+    onSpawned?: (info: { pid: number; imageName: string }) => void;
+  };
 }
 
-type Kind = 'tool' | 'service' | 'engine';
+type Kind = 'tool' | 'service' | 'engine' | 'agent';
 
 interface AttemptState {
   id: string; jobId: string; n: number; kind: Kind;
@@ -156,6 +177,8 @@ interface AttemptState {
   hostPort?: number;
   /** An approved install's egress proxy container, its log stream, and how many decisions were reported. */
   proxy?: { id: string; logDone: Promise<void> | null; ready: boolean; onReady: (() => void) | null; events: number; lines: number; capped: boolean };
+  /** B2b Task 11: set by the MCP exec relay (onExecGrant) when the worktree guard refuses the tree after an agent's exec. */
+  agentGuardRefusal?: GuardRefusal;
 }
 
 /** What `exit.json` beside `/out` records at collect time (the exit is never re-derived from Docker after that). */
@@ -204,6 +227,8 @@ export class RunnerCore {
   private mcpServer: McpServerHandle | null = null;
   private readonly pendingMcp = new Map<string, (r: McpReplyResult) => void>();
   private readonly agentTurns = new Map<string, { attemptId: string; containerId: string }>();
+  /** B2b Task 11: this install's agent process trees (src/runner/procTree.ts); built once a data home is known. */
+  private procTree: ProcTree | null = null;
 
   constructor(private readonly port: RunnerTransport, private readonly deps: RunnerDeps) {
     this.driver = deps.driver;
@@ -284,6 +309,7 @@ export class RunnerCore {
         case 'gc.scan': return await this.onGcScan(m.scanId as string, m.olderThanMs as number);
         case 'gc.apply': return await this.onGcApply(m.objects as string[], m.workDirs as { jobId: string; attemptN: number }[]);
         case 'git.read': return await this.onGitRead(m.reqId, m.task);
+        case 'agent.shutdownTrees': await this.procTree?.shutdownTrees(); return;
         case 'shutdown': await this.shutdown(); this.deps.onShutdown?.(); return;
         default: this.log(`[runner] unknown op ${String(m.op).slice(0, 40)} ignored`);
       }
@@ -311,6 +337,11 @@ export class RunnerCore {
     // git runs from the data home (never from a repository folder), the repository named with -C.
     this.git = this.paths ? new GitRunner({ cwd: this.paths.root, resolve: this.deps.resolveGit }) : null;
     this.gitw = this.paths ? new HardenedGit({ cwd: this.paths.root, resolve: this.deps.resolveGit }) : null;
+    // B2b Task 11: a runner crash within this SAME main boot leaves orphaned agent process trees (their pidfiles);
+    // they are killed now. A pidfile from another main boot is only deleted (its process is inert: dead proxy, MCP
+    // port and token).
+    this.procTree = this.paths ? new ProcTree({ fs: this.fs, root: this.paths.root, taskkillBin: this.deps.agentRuntime?.taskkillBin, log: this.log }) : null;
+    if (this.procTree) await this.procTree.killRecorded(m.bootId);
     this.stopped = false;
     // B2b Task 6: a fresh loopback MCP server each hello (a prior one, if any, is closed first; a restart never
     // leaves two listening). Relayed calls from before are abandoned: nothing still waits on their HTTP response.
@@ -388,6 +419,21 @@ export class RunnerCore {
       const stderrBytes = Buffer.byteLength(r.stderr, 'utf8');
       const stdoutSha256 = createHash('sha256').update(r.stdout, 'utf8').digest('hex');
       this.post({ op: 'agent.exec.done', attemptId: reg.attemptId, execId: grant.execId, exit: r.exit, stdoutBytes, stderrBytes, stdoutSha256, truncated: r.truncated });
+      // B2b Task 11: the attempt log keeps a redacted record of every exec (LogWriter redacts it again regardless),
+      // and the worktree is re-walked after EVERY exec — whatever the agent's tools or this command planted in the
+      // read-write bind mount is caught before anything else (git, a later exec) looks at the tree.
+      const a = this.attempts.get(reg.attemptId);
+      if (a && a.kind === 'agent' && a.plan && a.plan.kind === 'agent') {
+        a.log?.nexus(`sandbox_exec ${grant.argv.join(' ')} -> exit ${r.exit.code ?? 'null'}${r.stdout ? `\nstdout: ${r.stdout}` : ''}${r.stderr ? `\nstderr: ${r.stderr}` : ''}`);
+        if (!a.agentGuardRefusal) {
+          const g = await guardWalk(a.plan.worktree.hostPath);
+          if (!g.ok) {
+            a.agentGuardRefusal = g.code;
+            a.log?.nexus(`the worktree guard refused the tree after an exec: ${g.code} (${g.entry})`);
+            a.abort.abort();
+          }
+        }
+      }
       return { ok: true, value: { exit: r.exit, stdout: redactSecretText(r.stdout), stderr: redactSecretText(r.stderr), truncated: r.truncated } };
     } catch (e) {
       return { ok: false, code: 'exec_failed', message: msgOf(e) };
@@ -542,7 +588,7 @@ export class RunnerCore {
   private async onStart(attemptId: string, plan: AttemptPlan): Promise<void> {
     if (typeof attemptId !== 'string' || !ULID_RE.test(attemptId) || !plan || typeof plan !== 'object') { this.log('[runner] attempt.start is malformed'); return; }
     if (this.attempts.has(attemptId)) { this.log('[runner] attempt.start for an attempt already held; ignored'); return; }
-    const kind: Kind = plan.kind === 'service' ? 'service' : plan.kind === 'engine' ? 'engine' : 'tool';
+    const kind: Kind = plan.kind === 'service' ? 'service' : plan.kind === 'engine' ? 'engine' : plan.kind === 'agent' ? 'agent' : 'tool';
     const a = this.newState(attemptId, String(plan.jobId), Number(plan.attemptN), kind, plan, String(plan.workDir), String(plan.logPath));
     // Heartbeats start now: staging, create and preflight can take a while, and main's lease must not run out meanwhile.
     this.startHeartbeat(a);
@@ -551,7 +597,7 @@ export class RunnerCore {
       if (bad) return await this.refuse(a, 'bad_plan', bad);
       if (plan.kind === 'engine') return await this.runEngine(a, plan);
       if (plan.kind === 'service') return await this.runService(a, plan);
-      if (plan.kind === 'agent') return await this.refuse(a, 'bad_plan', 'agent turns are not run by this runner yet');
+      if (plan.kind === 'agent') return await this.runAgent(a, plan);
       return await this.runTool(a, plan);
     } catch (e) {
       if (e instanceof Stop) return this.stopped ? undefined : await this.finishStopped(a);
@@ -576,9 +622,10 @@ export class RunnerCore {
     if (!this.paths.same(plan.workDir, this.paths.workDir(plan.jobId, plan.attemptN))) return 'the work folder is not this attempt\'s';
     if (!this.paths.same(plan.logPath, this.paths.logPath(plan.jobId, plan.attemptN))) return 'the log path is not this attempt\'s';
     if (plan.kind === 'engine') return plan.task?.engine === 'sde.diagnose' ? diagnoseTaskProblem(plan.task) : this.gitTaskProblem(plan);
-    // B2b: an agent turn's plan is refused until this runner runs turns (Task 11).
-    if (plan.kind === 'agent') return 'agent turns are not run by this runner yet';
     if (!this.home) return 'this install has no label';
+    // B2b Task 11: an agent turn's container carries its own labels and mounts only its own worktree, read-write, at
+    // the container level with no network (the host egress proxy, started per turn, is the only path out).
+    if (plan.kind === 'agent') return this.agentPlanProblem(attemptId, plan);
     if (plan.kind === 'tool' && plan.perFileJunit !== undefined) {
       const pf = plan.perFileJunit;
       const argv = plan.container.argv;
@@ -613,6 +660,28 @@ export class RunnerCore {
         }
       }
     }
+    return null;
+  }
+
+  /** B2b Task 11: an agent turn's own container, labels and mount (checked separately: it shares nothing with a tool plan's staging folders). */
+  private agentPlanProblem(attemptId: string, plan: AgentPlan): string | null {
+    const rl = plan.resourceLabels;
+    if (!rl || rl['nexus.home'] !== this.home || rl['nexus.attempt'] !== attemptId || rl['nexus.job'] !== plan.jobId) return 'the resource labels are not this attempt\'s';
+    const spec = plan.container;
+    const l = spec.labels;
+    if (l['nexus.attempt'] !== attemptId || l['nexus.home'] !== this.home || l['nexus.job'] !== plan.jobId) return 'the container\'s labels are not this attempt\'s';
+    if (l['nexus.kind'] !== 'agent') return 'an agent container must be labelled nexus.kind=agent';
+    if (spec.network.mode !== 'none') return 'an agent container runs with no network at the container level';
+    if (typeof plan.worktree?.hostPath !== 'string' || !path.isAbsolute(plan.worktree.hostPath)) return 'the worktree is not an absolute path';
+    let sawWorktree = false;
+    for (const m of spec.mounts) {
+      if (m.kind !== 'worktree') return 'an agent container may only mount its own worktree';
+      if (m.readOnly) return 'the worktree mount must be read-write';
+      if (!this.paths!.same(m.hostPath, plan.worktree.hostPath)) return 'the worktree mount is not this turn\'s worktree';
+      sawWorktree = true;
+    }
+    if (!sawWorktree) return 'the agent container has no worktree mount';
+    if (typeof plan.runtime?.token !== 'string' || plan.runtime.token.length === 0) return 'the turn has no capability token';
     return null;
   }
 
@@ -984,6 +1053,59 @@ export class RunnerCore {
     a.settled = true;
   }
 
+  // ---------- agent turns (B2b Task 11) ----------
+
+  /** Builds this turn's agentAttempt.ts port (post, log, the registry, the proxy starter, the guard-refusal flag) and runs it. */
+  private async runAgent(a: AttemptState, plan: AgentPlan): Promise<void> {
+    await this.openLog(a);
+    const runtime = runtimeFor(plan.runtime.kind, {
+      token: plan.runtime.token,
+      mcpUrl: this.mcpServer?.url ?? '',
+      steps: this.deps.agentRuntime?.scriptFor?.(plan) ?? [],
+      fetchImpl: this.deps.agentRuntime?.fetchImpl,
+      agentBin: this.deps.agentRuntime?.agentBin,
+      agentEnv: this.deps.agentRuntime?.agentEnv,
+      agentArgvPrefix: this.deps.agentRuntime?.agentArgvPrefix,
+      taskkillBin: this.deps.agentRuntime?.taskkillBin,
+      onSpawned: async (info) => {
+        await this.procTree?.record({ jobId: plan.jobId, pid: info.pid, imageName: info.imageName, mainBootId: this.bootId ?? '', runnerPid: process.pid });
+        this.deps.agentRuntime?.onSpawned?.(info);
+      }
+    });
+    const port: AgentAttemptPort = {
+      driver: this.driver,
+      fs: this.fs,
+      now: this.now,
+      log: (text) => a.log?.nexus(text),
+      phase: (phase) => this.event(a, phase),
+      provisioned: (containerId, imageDigest, preflight) => {
+        this.post({ op: 'attempt.provisioned', attemptId: a.id, containerId, imageDigest, preflight });
+        if (!preflight.ok) a.settled = true;
+      },
+      refuse: (reason, detail) => this.refuse(a, reason, detail),
+      fault: (failureClass, message) => this.fault(a, failureClass, message),
+      runtimeEvent: (event) => this.post({ op: 'attempt.runtime', attemptId: a.id, seq: ++a.seq, event }),
+      exited: (exit, reason) => {
+        if (a.released || a.cleaned) return;
+        this.post({ op: 'attempt.exited', attemptId: a.id, exit, outputs: [], parsed: [], logBytes: a.log?.bytes() ?? 0, ...(reason ? { reason } : {}) });
+        a.settled = true;
+      },
+      bindAgentTurn: (bearer, attemptId, containerId) => this.bindAgentTurn(bearer, attemptId, containerId),
+      unbindAgentTurn: (bearer) => this.unbindAgentTurn(bearer),
+      runtime,
+      startHostEgressProxy,
+      imagesDir: this.deps.imagesDir,
+      guardRefusal: () => a.agentGuardRefusal ?? null,
+      signal: a.abort.signal
+    };
+    try {
+      await runAgentAttempt(plan, port);
+    } finally {
+      try { await a.log?.close(); } catch { /* closed */ }
+      if (!a.settled && !a.cleaned) a.settled = true;
+    }
+  }
+
   // ---------- dev deployments ----------
 
   private async runService(a: AttemptState, plan: ServicePlan): Promise<void> {
@@ -1243,7 +1365,9 @@ export class RunnerCore {
     if (a.cancel || a.settled) return;
     a.cancel = { graceMs: grace, reason };
     a.log?.nexus(`stopping: ${reason}`);
-    if (a.kind === 'engine') { a.abort.abort(); return; }
+    // Engine and agent attempts hold no container RunnerCore tracks here: aborting is the whole cancel (the agent
+    // turn's own orchestrator, src/runner/agentAttempt.ts, stops and removes its container from this same signal).
+    if (a.kind === 'engine' || a.kind === 'agent') { a.abort.abort(); return; }
     if (a.containerState === 'running' && !a.stopIssued) { a.stopIssued = true; await Promise.all(a.containers.map((c) => this.stopAndKill(c, grace))); }
   }
 
@@ -1435,6 +1559,7 @@ export class RunnerCore {
     this.stopped = true;
     this.builder.cancelAll();
     await this.closeMcpServer();
+    await this.procTree?.shutdownTrees();
     const all = [...this.attempts.values()];
     await Promise.all(all.filter((a) => a.kind === 'service' && a.containerState === 'running')
       .map((a) => Promise.all(a.containers.map((c) => this.stopAndKill(c, 2_000)))));

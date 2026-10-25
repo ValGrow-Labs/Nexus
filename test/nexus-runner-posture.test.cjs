@@ -84,9 +84,13 @@ test('the only programs spawned under src/runner and src/main/nexusExec are dock
     for (const m of code(f).matchAll(/\b(spawn|execFile|fork)\s*\(\s*([^,)]+)/g)) sites.push({ file: rel(f), fn: m[1], first: m[2].trim() });
   }
   // Besides docker and git (both by their RESOLVED absolute paths): the runner itself (utilityProcess.fork of
-  // out/main/runner.js, pinned exactly below). Never spawn('git' (Windows would run a git.exe planted in the cwd).
+  // out/main/runner.js, pinned exactly below); `taskkill.exe` (src/runner/procTree.ts), the runner's own cleanup of an
+  // agent turn's process tree, resolved to `%SystemRoot%\System32\taskkill.exe`; and an agent turn's own CLI
+  // (src/runner/runtimes/registry.ts), by the caller's already-resolved `agentBin` (the test CLI stand-in in this
+  // build). Never spawn('git' (Windows would run a git.exe planted in the cwd).
   assert.deepEqual(sites.map((s) => `${s.file} ${s.fn}(${s.first}`).sort(),
-    ['src/runner/proc.ts spawn(gitBin', 'src/runner/proc.ts spawn(dockerBin', 'src/main/nexusExec/runnerHost.ts fork(join(__dirname'].sort());
+    ['src/runner/proc.ts spawn(gitBin', 'src/runner/proc.ts spawn(dockerBin', 'src/runner/procTree.ts spawn(taskkillBin',
+      'src/runner/runtimes/registry.ts spawn(agentBin', 'src/main/nexusExec/runnerHost.ts fork(join(__dirname'].sort());
   const { isGitBinary } = loadTs('src/main/gitBinary.ts');
   assert.equal(isGitBinary('C:\\Program Files\\Git\\cmd\\git.exe', 'win32'), true);
   for (const bad of ['git', 'git.exe', 'C:\\repo\\git.cmd', 'C:\\repo\\git.bat', 'C:\\x\\git.exe.bat']) assert.equal(isGitBinary(bad, 'win32'), false, bad);
