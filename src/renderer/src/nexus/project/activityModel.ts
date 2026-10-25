@@ -47,7 +47,9 @@ export const ACTIVITY_ACTIONS: readonly string[] = Object.freeze([
   'repo.worktree',
   // B2b Task 9: a user's review decision, an accepted change set (or an accept that was rolled back), the undo of an
   // accept that did not finish, and "Merge accepted work" (never a path, a sha or a comment: only the decision word).
-  'review.decide', 'changeset.accept', 'changeset.rollback', 'repo.merge'
+  'review.decide', 'changeset.accept', 'changeset.rollback', 'repo.merge',
+  // B2b Task 5 (sentences added in Task 9's fix round): an agent tool call, and context left out of a turn for looking like a secret.
+  'mcp.call', 'context_redacted'
 ]);
 
 /** Plain words for an action a person may be refused (every platform action). */
@@ -109,6 +111,8 @@ const ACTION_WORDS: Record<string, string> = {
   'repo.merge': 'merge accepted work',
   'repo.worktree': "prepare the agent's working copy",
   'changeset.rollback': 'undo an accept that did not finish',
+  'mcp.call': 'use a tool',
+  'context_redacted': "leave part of the agent's context out",
   'agent.consent': "change the agent's network permission",
   'token.mint': "issue the agent's turn permission",
   'token.revoke': "end the agent's turn permission",
@@ -368,6 +372,8 @@ function sentence(row: ActivityView, ctx: ActivityContext): string | null {
       if (d === 'reject') return 'The change was rejected';
       return 'A review was recorded';
     }
+    case 'mcp.call': return 'The agent used a tool';
+    case 'context_redacted': return "Part of the agent's context was left out because it looked like a secret";
     case 'changeset.accept': return 'The change was accepted; it waits on the Nexus branch until you merge it';
     case 'changeset.rollback': return 'An accept that did not finish was undone; the Nexus branch is back as it was';
     case 'repo.merge': return 'The accepted work was merged into your branch';

@@ -140,12 +140,22 @@ export function forwardIngestTx(d: AcceptIngestDeps, ctx: IngestContext): Ingest
   const branch = isObj(params) && typeof params.branch === 'string' ? params.branch : null;
   const sha = isObj(params) ? commitOf(params.sha) : null;
   const user = isObj(params) ? userOf(db, params.mergedBy) : null;
-  if (!branch || !sha || !isObj(params) || params.confirmedVia !== 'dialog') return refuse('invalid_output', 'bad_input', 'the merge job is malformed or was not confirmed in the dialog');
-  if (!user) return refuse('invalid_output', 'user_only', 'a merge is confirmed by a user');
-  if (!f || f.branch !== branch || f.after !== sha || !commitOf(f.before)) return refuse('invalid_output', 'parser_contract', 'the merge facts do not match the confirmed commit');
+  // The runner reported ok: the user's branch MOVED. A refusal below cannot undo that, so it is audited (before and after
+  // are commit ids, never secret) as a failed `repo.merge` row, written in the same transaction as the job's failure.
+  const refuseMoved = (code: string, message: string): IngestDecision => {
+    if (f) {
+      appendActivityRow(db, { actorKind: ctx.system.kind, actorId: ctx.system.id, jobId: job.id, attemptN: attempt.n, projectId: job.project_id,
+        workspaceId: job.workspace_id, entityType: 'job', entityId: job.id, action: 'repo.merge', status: 'failed',
+        details: { reason: code, before: commitOf(f.before), after: commitOf(f.after) } }, d.now());
+    }
+    return refuse('invalid_output', code, message);
+  };
+  if (!branch || !sha || !isObj(params) || params.confirmedVia !== 'dialog') return refuseMoved('bad_input', 'the merge job is malformed or was not confirmed in the dialog');
+  if (!user) return refuseMoved('user_only', 'a merge is confirmed by a user');
+  if (!f || f.branch !== branch || f.after !== sha || !commitOf(f.before)) return refuseMoved('parser_contract', 'the merge facts do not match the confirmed commit');
   const known = db.prepare('SELECT 1 FROM change_set_accepts WHERE project_id = ? AND integration_ref = ? AND ref_after = ? LIMIT 1')
     .get(job.project_id, `refs/nexus/accepted/${branch}`, sha);
-  if (!known) return refuse('invalid_output', 'not_accepted', 'the confirmed commit is not one Nexus accepted');
+  if (!known) return refuseMoved('not_accepted', 'the confirmed commit is not one Nexus accepted');
   const now = d.now();
   const id = newId(now);
   db.prepare(`INSERT INTO repo_merges (id, project_id, branch, before, after, sha_confirmed, merged_by, merged_at, confirmed_via, ff_job_id)

@@ -43,6 +43,7 @@ import type { ArtifactService } from '../artifact/artifactService';
 import type { AuthService } from '../auth/authService';
 import { requireStoredUser, type PrincipalResolver } from '../auth/principals';
 import { immediateTx } from '../db/tx';
+import { redactSecretText } from '../activity/redact';
 import { PlatformError } from '../errors';
 import type { JobService } from '../jobs/jobService';
 import { ProjectAccess } from '../project/projectAccess';
@@ -79,6 +80,11 @@ export interface MergeConfirmInfo {
   projectId: string; branch: string; from: string | null; to: string; commitCount: number;
   accepted: { versionId: string; title: string; mergeCommit: string; acceptedAt: number }[];
 }
+/**
+ * The dialog's answer. `confirmedVia: 'dialog'` on the merge job is SELF-ASSERTED by this service once `confirm` returned exactly
+ * `true` (anything else, a throw included, is a cancel). The IPC layer (Task 14) must therefore pass ONLY
+ * `ExecutionHandle.confirmMerge` (main's native dialog) as `confirm`: never a value from the renderer, never a stub that says yes.
+ */
 export type ConfirmMerge = (info: MergeConfirmInfo) => Promise<boolean> | boolean;
 
 export interface AcceptDeps {
@@ -90,6 +96,8 @@ export interface AcceptDeps {
   onQueued?: () => void;
   /** Overridden in tests: how long accept and merge wait for their job (default 120 s). */
   waitMs?: number;
+  /** One line per swallowed secondary failure (never a secret, a path or a sha); default: none. */
+  log?: (line: string) => void;
 }
 
 const isObj = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
@@ -197,19 +205,27 @@ export class AcceptService {
     }
     if (v.kind !== 'change_set') throw new PlatformError('invalid', 'only a change set is accepted', { reason: 'not_a_change_set' });
     if (!this.repoPathOf(v.project_id)) throw new PlatformError('unavailable', 'the project folder is not available', { reason: 'project_folder_unavailable' });
+    // An accept that ended without its rows is rolled back first (idempotent); one that could not even be queued still blocks below.
+    this.reconcileEnded();
     const now = this.deps.now();
     const jobId = immediateTx(this.db, () => {
       const cur = this.versionOf(v.id)!;
       if (cur.status !== 'candidate') throw new PlatformError('illegal_transition', `a ${cur.status} change set cannot be accepted`, { reason: 'not_candidate' });
       if (this.newestReview(v.id) !== 'approve') throw new PlatformError('illegal_transition', 'the change set has no approving review', { reason: 'not_approved' });
-      // A second click while the accept runs joins it.
+      // A second click on the SAME head while the accept runs joins it; a different head never does (the CAS answers it).
       const live = this.db.prepare(`SELECT id FROM jobs WHERE recipe_id = 'changeset.accept' AND json_extract(params_json, '$.versionId') = ?
-        AND state IN (${LIVE.map(() => '?').join(', ')}) ORDER BY rowid DESC LIMIT 1`).get(v.id, ...LIVE) as { id: string } | undefined;
+        AND json_extract(params_json, '$.expectedOld') = ? AND state IN (${LIVE.map(() => '?').join(', ')}) ORDER BY rowid DESC LIMIT 1`)
+        .get(v.id, expectedIntegrationHead, ...LIVE) as { id: string } | undefined;
       if (live) return live.id;
       const storage = parse(cur.storage_ref_json); const meta = parse(cur.metadata_json);
       const head = isObj(storage) && typeof storage.commit === 'string' && COMMIT_RE.test(storage.commit) ? storage.commit : null;
       const branch = isObj(meta) && typeof meta.branch === 'string' && GIT_BRANCH_RE.test(meta.branch) ? meta.branch : null;
       if (!head || !branch) throw new PlatformError('invalid', 'the change set records no commit or branch', { reason: 'no_commit' });
+      // O25 (I1): never accept on top of a ref Nexus has no record of. An accept whose rollback is still owed (queued, running,
+      // failed, or never queued) leaves the ref at an unrecorded commit that holds a change that was never accepted.
+      if (!this.consistent(cur.project_id, integrationRefFor(branch), expectedIntegrationHead) || this.rollbackOutstanding(cur.project_id, branch)) {
+        throw conflict('integration_unexpected', 'The accepted branch is not where Nexus recorded it (an earlier accept did not finish, or it was changed outside Nexus), so nothing was accepted.');
+      }
       const title = isObj(meta) && typeof meta.title === 'string' ? meta.title : 'Agent change';
       const seq = (this.db.prepare("SELECT COUNT(*) AS n FROM jobs WHERE recipe_id = 'changeset.accept' AND json_extract(params_json, '$.versionId') = ?").get(v.id) as { n: number }).n + 1;
       const workspaceId = cur.owner_workspace_id;
@@ -232,14 +248,16 @@ export class AcceptService {
   private async afterFailedAccept(v: VersionFacts, jobId: string, ended: JobLite, expected: string): Promise<never> {
     const code = this.errorCode(ended);
     this.reconcileEnded();
-    const info = { jobId };
+    // A rollback still owed after the pass (it could not be queued) is said so: the ref may hold an unrecorded commit.
+    const info = { jobId, ...(rollbackNeeded(this.db, jobId) ? { rollbackOwed: true } : {}) };
     if (code === 'ref_moved') {
       let current: string | null = null;
       try { current = (await this.readStatus(v.project_id, repoBranchOf(this.db, v.project_id)))?.integrationHead ?? null; } catch { current = null; }
       throw conflict('ref_moved', GIT_FAILURE_TEXT.ref_moved, { current, expected, ...info });
     }
     if (code === 'merge_conflict') {
-      this.recordAcceptTimeConflict(v, jobId, expected);
+      // A failure of the advisory row never replaces the refusal the user must see.
+      try { this.recordAcceptTimeConflict(v, jobId, expected); } catch (e) { this.note(`the accept-time check row was not written (${(e as { code?: string })?.code ?? (e as Error)?.name ?? 'error'})`); }
       throw conflict('merge_conflict', GIT_FAILURE_TEXT.merge_conflict, info);
     }
     if (code === 'accept_rolled_back') {
@@ -264,8 +282,8 @@ export class AcceptService {
    * Accept jobs that ended without an accept row but did report `accept.prepared`: the integration ref may be where the
    * accept left it, so the rollback is queued (idempotent by key; never a retry). Restart recovery does the same at startup.
    */
-  reconcileEnded(): number {
-    let queued = 0;
+  reconcileEnded(): { queued: number; failed: number } {
+    let queued = 0; let failed = 0;
     for (const id of endedAcceptJobIds(this.db)) {
       const n = rollbackNeeded(this.db, id);
       if (!n) continue;
@@ -273,10 +291,30 @@ export class AcceptService {
         immediateTx(this.db, () => enqueueAcceptRollbackTx(this.db, this.deps.jobs, this.deps.system, this.deps.now(),
           { jobId: n.job.id, projectId: n.job.project_id, workspaceId: n.job.workspace_id, branch: n.branch, versionId: n.versionId, move: n.move }));
         queued++;
-      } catch { /* queued by the next pass */ }
+      } catch (e) {
+        // Never silent: the rollback stays owed (accept and merge refuse meanwhile) and the next pass tries again.
+        failed++;
+        this.note(`a rollback of an unfinished accept could not be queued (${(e as { code?: string })?.code ?? (e as Error)?.name ?? 'error'}); it is retried`);
+      }
     }
     if (queued > 0) this.deps.onQueued?.();
-    return queued;
+    return { queued, failed };
+  }
+
+  private note(line: string): void {
+    try { this.deps.log?.(`[nexus] ${redactSecretText(line).slice(0, 300)}`); } catch { /* a logger never breaks the refusal */ }
+  }
+
+  /** True while an accept's rollback for this project and branch is owed: queued, running, failed or not yet queued. */
+  private rollbackOutstanding(projectId: string, branch: string): boolean {
+    const open = this.db.prepare(`SELECT 1 FROM jobs WHERE recipe_id = 'changeset.accept_rollback' AND project_id = ? AND state <> 'completed'
+      AND json_extract(params_json, '$.branch') = ? LIMIT 1`).get(projectId, branch);
+    if (open) return true;
+    for (const id of endedAcceptJobIds(this.db)) {
+      const n = rollbackNeeded(this.db, id);
+      if (n && n.job.project_id === projectId && n.branch === branch) return true;
+    }
+    return false;
   }
 
   // ---------- status (O25) ----------
@@ -296,8 +334,9 @@ export class AcceptService {
     const last = this.lastAccept(projectId, integrationRef);
     if (integrationHead === null) return last === null;
     if (last) return integrationHead === last.ref_after;
+    // Nothing accepted: the initial head must be known and equal (no record of one is not consistency).
     const initial = this.initialHead(projectId, integrationRef);
-    return initial === null || integrationHead === initial;
+    return initial !== null && integrationHead === initial;
   }
 
   private async readStatus(projectId: string, branch: string | null): Promise<AcceptStatus> {
@@ -351,7 +390,7 @@ export class AcceptService {
     this.reconcileEnded();
     const s = await this.readStatus(projectId, args.branch);
     // O25 first: a ref moved by hand (or by an accept that did not finish) is never offered for merging.
-    if (!s.integrationConsistent || s.lastAcceptedHead === null || s.integrationHead !== sha || s.lastAcceptedHead !== sha) {
+    if (!s.integrationConsistent || this.rollbackOutstanding(projectId, args.branch) || s.lastAcceptedHead === null || s.integrationHead !== sha || s.lastAcceptedHead !== sha) {
       throw conflict('integration_unexpected', 'The accepted work is not what Nexus recorded (its branch was changed outside Nexus, or an accept did not finish), so nothing was merged.');
     }
     if (s.checkedOutBranch !== args.branch) throw conflict('branch_mismatch', GIT_FAILURE_TEXT.branch_mismatch);

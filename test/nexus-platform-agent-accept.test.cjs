@@ -176,8 +176,10 @@ async function candidateWorld(o = {}) {
   const sid = turn.session.id; const name = sid.toLowerCase();
   world.name = name; world.wt = path.join(home, 'wt', name);
   const f = await ensureWorktree(g, { repoPath: repo, worktreePath: world.wt, ref: `refs/nexus/job/${name}`, integrationRef: 'refs/nexus/accepted/main', branch: 'main' }, { dataRoot: home });
-  w.db.prepare(`INSERT INTO session_worktrees (session_id, project_id, rel_path, ref, integration_ref, base_commit, locked, created_at)
-    VALUES (?, ?, ?, ?, ?, ?, 1, ?)`).run(sid, PROJECT, `wt/${name}`, f.ref, 'refs/nexus/accepted/main', f.base, w.clock.t);
+  if (!o.noWorktreeRow) {
+    w.db.prepare(`INSERT INTO session_worktrees (session_id, project_id, rel_path, ref, integration_ref, base_commit, locked, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, 1, ?)`).run(sid, PROJECT, `wt/${name}`, f.ref, 'refs/nexus/accepted/main', f.base, w.clock.t);
+  }
   world.service = new ChangeSetService(w.db, { jobs: w.nx.jobs, system: w.sys, now: () => w.clock.t, waitMs: 60_000 });
   void w0;
   return world;
@@ -607,31 +609,44 @@ test('RA14: merge uses the confirmed sha: a ref moved after the dialog is not me
   finish(world2.turn, attempt, { parsed: [gitFacts({ before: world2.initial, after: confirmed2, branch: 'main' })] });
   assert.equal(jobRow(w, res.job.id).state, 'failed');
   assert.equal(w.db.prepare('SELECT COUNT(*) AS n FROM repo_merges').get().n, 0);
+  // M1: the branch moved (the facts said so) and the row was refused: the move is audited as a failed repo.merge row.
+  const audit = w.db.prepare("SELECT details_json FROM activity WHERE action = 'repo.merge' AND status = 'failed'").get();
+  assert.ok(audit, 'a refused merge row is audited');
+  assert.deepEqual(JSON.parse(audit.details_json), { reason: 'bad_input', before: world2.initial, after: confirmed2 });
 });
 
 // ---------- the accept-time advisory re-check ----------
 
+
+/**
+ * A recorded accept of `a.txt = one`, then a second change that edits the same file from the ORIGINAL base (the session ref and
+ * worktree are reset to it), so merging it onto the accepted branch conflicts. Returns the second change and the recorded head.
+ */
+async function conflictingPair(world) {
+  const first = await makeChange(world, { file: 'a.txt', content: 'one\n', title: 'One' });
+  approve(world, first.versionId);
+  const { p } = await acceptWith(world, first.versionId, integrationHead(world));
+  await p;
+  const ref = `refs/nexus/job/${world.name}`;
+  git(world.repo, ['update-ref', ref, world.initial]);
+  git(world.wt, ['reset', '-q', '--hard', world.initial]);
+  const second = await makeChange(world, { file: 'a.txt', content: 'two\n', title: 'Two' });
+  approve(world, second.versionId);
+  return { second, recorded: integrationHead(world) };
+}
+
 test('RA15: a merge conflict at accept does not touch the version: accept answers merge_conflict and writes an ADVISORY failed git.applies_cleanly row', async () => {
   const world = await candidateWorld();
   const { w } = world;
-  const c = await makeChange(world, { file: 'a.txt', content: 'agent version\n', title: 'Edit a' });
-  approve(world, c.versionId);
-  // The integration ref gains a conflicting change to the same file after the candidate checks passed.
-  const tree = out(world.repo, ['rev-parse', `${world.initial}^{tree}`]);
-  void tree;
-  git(world.repo, ['checkout', '-q', '-b', 'tmp', world.initial]);
-  fs.writeFileSync(path.join(world.repo, 'a.txt'), 'conflicting version\n'); git(world.repo, ['add', 'a.txt']); git(world.repo, ['commit', '-q', '-m', 'conflict']);
-  const conflicting = out(world.repo, ['rev-parse', 'HEAD']);
-  git(world.repo, ['checkout', '-q', 'main']); git(world.repo, ['branch', '-q', '-D', 'tmp']);
-  git(world.repo, ['update-ref', 'refs/nexus/accepted/main', conflicting]);
-  const { p, r, job } = await acceptWith(world, c.versionId, conflicting);
+  const { second, recorded } = await conflictingPair(world);
+  const { p, r, job } = await acceptWith(world, second.versionId, recorded);
   assert.equal(r.refused, 'merge_conflict');
   await assert.rejects(p, (e) => e.code === 'conflict' && e.detail.reason === 'merge_conflict');
-  assert.equal(version(w, c.versionId).status, 'candidate', 'the version is not touched');
-  const row = w.db.prepare("SELECT * FROM validations WHERE version_id = ? AND validator_id = 'git.applies_cleanly' AND job_id = ?").get(c.versionId, job.id);
+  assert.equal(version(w, second.versionId).status, 'candidate', 'the version is not touched');
+  const row = w.db.prepare("SELECT * FROM validations WHERE version_id = ? AND validator_id = 'git.applies_cleanly' AND job_id = ?").get(second.versionId, job.id);
   assert.equal(row.status, 'failed'); assert.equal(row.advisory, 1); assert.equal(row.blocking, 0);
-  assert.equal(integrationHead(world), conflicting, 'no ref move');
-  assert.equal(w.db.prepare('SELECT COUNT(*) AS n FROM change_set_accepts').get().n, 0);
+  assert.equal(integrationHead(world), recorded, 'no ref move');
+  assert.equal(w.db.prepare('SELECT COUNT(*) AS n FROM change_set_accepts').get().n, 1, 'only the first accept');
 });
 
 test('RA16: the six validators and the accept rows are written by main only through the services (source pins)', () => {
@@ -662,4 +677,185 @@ test('RA17: the evidence backstop lets a record-only git job complete (worktree 
   const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'main', 'nexus', 'exec', 'executionService.ts'), 'utf8');
   assert.match(src, /RECORD_ONLY_RECIPES: readonly string\[\] = Object\.freeze\(\['repo\.worktree', 'changeset\.accept_rollback', 'repo\.ff'\]\)/);
   assert.match(src, /d\.durableRecord === true && RECORD_ONLY_RECIPES\.includes\(recipe\.id\)/);
+});
+
+// ---------- fix round 1 ----------
+
+function acceptSvc(w, log) {
+  return new (loadTs('src/main/nexus/repo/acceptService.ts').AcceptService)(w.db, { auth: w.nx.auth, principals: w.nx.principals, artifacts: w.nx.artifacts,
+    jobs: w.nx.jobs, validation: w.nx.validation, gitRead: w.nx.gitRead, system: w.sys, now: () => w.clock.t, acceptFsRoot: (r) => r, log });
+}
+const rejectNow = (world, versionId) => world.w.nx.reviews.decide(world.w.me, versionId, { decision: 'reject', comment: 'changed my mind', intentId: ulid() });
+
+/** Starts an accept, runs the real engine and holds its exit: the ref has moved, the ingest has not run. */
+async function heldAccept(world, svc, versionId, expected) {
+  const p = svc.accept(world.w.me, versionId, expected); p.catch(() => {});
+  const job = jobOf(world.w, 'changeset.accept');
+  const held = await runEngine(world.w, world, job.id, { hold: true });
+  return { p, job, held, moved: integrationHead(world) };
+}
+
+test('RA18 (I1): while an accept rollback is pending, accept refuses integration_unexpected (no job); once it completed, accept works', async () => {
+  const world = await candidateWorld();
+  const { w } = world;
+  const c1 = await makeChange(world, { file: 'one.txt', title: 'One' });
+  const c2 = await makeChange(world, { file: 'two.txt', title: 'Two' });
+  approve(world, c1.versionId); approve(world, c2.versionId);
+  const svc = acceptSvc(w);
+  const old = integrationHead(world);
+  const { p, held, moved } = await heldAccept(world, svc, c1.versionId, old);
+  rejectNow(world, c1.versionId);
+  held.finish();
+  await assert.rejects(p, (e) => e.detail.reason === 'accept_rolled_back');
+  const rb = findJobs(w, 'changeset.accept_rollback');
+  assert.equal(rb.length, 1); assert.equal(rb[0].state, 'queued', 'queued, not yet run: the ref still holds the rejected change');
+  assert.equal(integrationHead(world), moved);
+  // The caller passes the head it sees (the unrecorded one): consistency refuses. The stale one: the pending rollback refuses.
+  await assert.rejects(svc.accept(w.me, c2.versionId, moved), (e) => e.code === 'conflict' && e.detail.reason === 'integration_unexpected');
+  await assert.rejects(svc.accept(w.me, c2.versionId, old), (e) => e.code === 'conflict' && e.detail.reason === 'integration_unexpected');
+  assert.equal(findJobs(w, 'changeset.accept').length, 1, 'no second accept job was made');
+  assert.equal(integrationHead(world), moved);
+  await runEngine(w, world, rb[0].id);
+  assert.equal(integrationHead(world), old);
+  const { p: p2 } = await acceptWith(world, c2.versionId, old);
+  assert.equal((await p2).version.status, 'active');
+});
+
+test('RA18b (I1/M6/M7): an expected head Nexus has no record of never accepts; an unknown initial head is not consistency; a different head does not join a live job', async () => {
+  const world = await candidateWorld();
+  const { w } = world;
+  const c = await makeChange(world);
+  approve(world, c.versionId);
+  const svc = acceptSvc(w);
+  const old = integrationHead(world);
+  // Moved by hand: expecting that head is refused whatever the CAS would say.
+  const extra = out(world.repo, ['commit-tree', `${old}^{tree}`, '-p', old, '-m', 'by hand']);
+  git(world.repo, ['update-ref', 'refs/nexus/accepted/main', extra]);
+  await assert.rejects(svc.accept(w.me, c.versionId, extra), (e) => e.detail.reason === 'integration_unexpected');
+  assert.equal(findJobs(w, 'changeset.accept').length, 0);
+  git(world.repo, ['update-ref', 'refs/nexus/accepted/main', old]);
+  // A live accept at `old`; a click with another head neither joins it nor starts a second job.
+  const p1 = svc.accept(w.me, c.versionId, old); p1.catch(() => {});
+  await assert.rejects(svc.accept(w.me, c.versionId, 'f'.repeat(40)), (e) => e.detail.reason === 'integration_unexpected');
+  assert.equal(findJobs(w, 'changeset.accept').length, 1);
+  await runEngine(w, world, findJobs(w, 'changeset.accept')[0].id);
+  assert.equal((await p1).version.status, 'active');
+  // No worktree row, no accept: the initial head is unknown, so the ref is not "consistent".
+  const bare = await candidateWorld({ noWorktreeRow: true });
+  assert.equal((await bare.w.nx.accepts.status(bare.w.me, PROJECT)).integrationConsistent, false);
+});
+
+test('RA19 (I2): a rollback that cannot be queued is never silent: logged, counted, the error says rollbackOwed, accept stays blocked until it is queued; the ingest that threw rolled everything back', async () => {
+  const world = await candidateWorld();
+  const { w } = world;
+  const c1 = await makeChange(world, { file: 'one.txt', title: 'One' });
+  const c2 = await makeChange(world, { file: 'two.txt', title: 'Two' });
+  approve(world, c1.versionId); approve(world, c2.versionId);
+  const logs = [];
+  const svc = acceptSvc(w, (l) => logs.push(l));
+  const old = integrationHead(world);
+  const { p, job, held, moved } = await heldAccept(world, svc, c1.versionId, old);
+  rejectNow(world, c1.versionId);
+  const orig = w.nx.jobs.createTx;
+  w.nx.jobs.createTx = function patched(pr, i) { if (i.recipeId === 'changeset.accept_rollback') throw new Error('boom'); return orig.call(this, pr, i); };
+  try {
+    held.finish();   // the ingest's own rollback enqueue throws: the whole ingest transaction rolls back
+    await assert.rejects(p, (e) => e.detail.rollbackOwed === true && !/boom/.test(e.message));
+    assert.notEqual(jobRow(w, job.id).state, 'completed');
+    assert.equal(w.db.prepare('SELECT COUNT(*) AS n FROM change_set_accepts').get().n, 0, 'nothing of the ingest stayed');
+    assert.equal(version(w, c1.versionId).status, 'candidate');
+    assert.equal(findJobs(w, 'changeset.accept_rollback').length, 0, 'the rollback could not be queued');
+    assert.ok(logs.length > 0 && logs.every((l) => !/boom|[0-9a-f]{40}/.test(l)), JSON.stringify(logs));
+    assert.deepEqual(svc.reconcileEnded(), { queued: 0, failed: 1 });
+    assert.equal(integrationHead(world), moved, 'the ref is still at the unrecorded commit');
+    await assert.rejects(svc.accept(w.me, c2.versionId, old), (e) => e.detail.reason === 'integration_unexpected', 'blocked while the rollback is owed');
+  } finally { w.nx.jobs.createTx = orig; }
+  assert.deepEqual(svc.reconcileEnded(), { queued: 1, failed: 0 });
+  await runEngine(w, world, findJobs(w, 'changeset.accept_rollback')[0].id);
+  assert.equal(integrationHead(world), old);
+  const { p: p2 } = await acceptWith(world, c2.versionId, old);
+  assert.equal((await p2).version.status, 'active');
+});
+
+test('RA20: a rollback never clobbers a ref that moved again (it refuses ref_moved)', async () => {
+  const world = await candidateWorld();
+  const { w } = world;
+  const c = await makeChange(world);
+  approve(world, c.versionId);
+  const svc = acceptSvc(w);
+  const { p, held, moved } = await heldAccept(world, svc, c.versionId, integrationHead(world));
+  rejectNow(world, c.versionId);
+  held.finish();
+  await assert.rejects(p, (e) => e.detail.reason === 'accept_rolled_back');
+  const elsewhere = out(world.repo, ['commit-tree', `${moved}^{tree}`, '-p', moved, '-m', 'moved again']);
+  git(world.repo, ['update-ref', 'refs/nexus/accepted/main', elsewhere]);
+  const rb = findJobs(w, 'changeset.accept_rollback')[0];
+  const r = await runEngine(w, world, rb.id);
+  assert.equal(r.refused, 'ref_moved');
+  assert.equal(integrationHead(world), elsewhere, 'not clobbered');
+  assert.equal(jobRow(w, rb.id).state, 'failed');
+});
+
+test('RA21: an accept job whose user was disabled, or whose params name a non-user, is refused at ingest: rolled back, nothing promoted', async () => {
+  for (const how of ['disabled', 'forged']) {
+    const world = await candidateWorld();
+    const { w } = world;
+    const c = await makeChange(world);
+    approve(world, c.versionId);
+    const svc = acceptSvc(w);
+    const old = integrationHead(world);
+    const { p, job, held } = await heldAccept(world, svc, c.versionId, old);
+    if (how === 'disabled') w.db.prepare("UPDATE principals SET disabled_at = ? WHERE id = 'user:local'").run(w.clock.t);
+    else w.db.prepare("UPDATE jobs SET params_json = json_set(params_json, '$.acceptedBy', 'system') WHERE id = ?").run(job.id);
+    held.finish();
+    await assert.rejects(p, (e) => e.detail.reason === 'accept_rolled_back', how);
+    assert.equal(w.db.prepare('SELECT COUNT(*) AS n FROM change_set_accepts').get().n, 0, how);
+    assert.equal(version(w, c.versionId).status, 'candidate', how);
+    const rb = findJobs(w, 'changeset.accept_rollback');
+    assert.equal(rb.length, 1, how);
+    await runEngine(w, world, rb[0].id);
+    assert.equal(integrationHead(world), old, how);
+  }
+});
+
+test('RA22: the runner own tree check at job time: a tree made dirty AFTER the dialog but before the job runs refuses tree_dirty and keeps the user edit', async () => {
+  const world = await acceptedWorld();
+  const sha = integrationHead(world);
+  const { p, r } = await mergeWith(world, sha, () => { fs.writeFileSync(path.join(world.repo, 'a.txt'), 'edited after the dialog\n'); return true; });
+  assert.equal(r.refused, 'tree_dirty');
+  await assert.rejects(p, (e) => e.code === 'conflict' && e.detail.reason === 'tree_dirty');
+  assert.equal(fs.readFileSync(path.join(world.repo, 'a.txt'), 'utf8'), 'edited after the dialog\n');
+  assert.equal(out(world.repo, ['rev-parse', 'HEAD']), world.initial);
+  assert.equal(world.w.db.prepare('SELECT COUNT(*) AS n FROM repo_merges').get().n, 0);
+});
+
+test('RA23 (M3): only an exact true from the dialog confirms; the service and the wiring say so', async () => {
+  const world = await acceptedWorld();
+  for (const answer of ['yes', 1, {}, undefined, null]) {
+    await assert.rejects(merge(world, () => answer), (e) => e.detail.reason === 'cancelled', String(answer));
+  }
+  await assert.rejects(merge(world, () => Promise.resolve('true')), (e) => e.detail.reason === 'cancelled');
+  assert.equal(findJobs(world.w, 'repo.ff').length, 0);
+  const root = path.join(__dirname, '..');
+  const wiring = fs.readFileSync(path.join(root, 'src', 'main', 'nexusExec', 'execWiring.ts'), 'utf8');
+  assert.match(wiring, /\(await o\.mergeDialog\(info\)\) === true/);
+  const svc = fs.readFileSync(path.join(root, 'src', 'main', 'nexus', 'repo', 'acceptService.ts'), 'utf8');
+  assert.match(svc, /\(await confirm\(this\.mergeInfo\(projectId, s, sha\)\)\) === true/);
+  assert.match(svc, /pass ONLY[\s*]+`ExecutionHandle\.confirmMerge`/);
+});
+
+test('RA24 (M5): a failure writing the accept-time check row never replaces the merge_conflict answer', async () => {
+  const world = await candidateWorld();
+  const { w } = world;
+  const { second, recorded } = await conflictingPair(world);
+  const logs = [];
+  const svc = acceptSvc(w, (l) => logs.push(l));
+  const orig = w.nx.validation.recordOutcomeTx;
+  w.nx.validation.recordOutcomeTx = () => { throw new Error('disk full'); };
+  try {
+    const p = svc.accept(w.me, second.versionId, recorded); p.catch(() => {});
+    await runEngine(w, world, jobOf(w, 'changeset.accept').id);
+    await assert.rejects(p, (e) => e.code === 'conflict' && e.detail.reason === 'merge_conflict');
+  } finally { w.nx.validation.recordOutcomeTx = orig; }
+  assert.ok(logs.some((l) => /accept-time check row was not written/.test(l)));
 });

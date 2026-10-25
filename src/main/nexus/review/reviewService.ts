@@ -33,7 +33,13 @@ export const REVIEW_DECISIONS = ['approve', 'request_changes', 'reject'] as cons
 export type ReviewDecision = typeof REVIEW_DECISIONS[number];
 export const MAX_REVIEW_COMMENT_CHARS = 4000;
 
-/** Task 10's agent service implements it: starts the next turn of a session with the review as input, as `user`. */
+/**
+ * Task 10's agent service implements it: starts the next turn of a session with the review as input, as `user`.
+ * CONTRACT: `continueWith` is called INSIDE the caller's open IMMEDIATE transaction (the review row is already written
+ * there), so it must be synchronous (no awaits), must create its job inside that same transaction (a throw rolls the review
+ * back with it), and must be idempotent per review id. A replayed intent never calls it again: `decide` answers `{ review }`
+ * with no job.
+ */
 export interface TurnStarter {
   continueWith(user: Principal, sessionId: string, reviewId: string): { job: { id: string } };
 }
