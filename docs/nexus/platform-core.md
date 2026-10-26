@@ -1,6 +1,6 @@
-# Nexus platform core (schema v7, v8 and v9)
+# Nexus platform core (schema v7, v8, v9 and v10)
 
-This is the reference for the Nexus platform core. It has three parts.
+This is the reference for the Nexus platform core. It has four parts.
 
 **Part I (sections 1 to 19)** covers the B0b platform core: schema v7, the authorization chain, the activity log, the job, version and agent-session state tables, and the lineage vocabulary. It also has the v7 migration procedure and the operator runbook for backup, hold and restore.
 
@@ -16,11 +16,17 @@ This is the reference for the Nexus platform core. It has three parts.
 - evidence-based completion and the validators;
 - the 20 execution channels, the domain registry, the resource gate, the pending wiring and the known limitations.
 
-Part I is kept as the B0b reference. Where B1 or B2a changed a statement in it, the section says so and links to Part II or Part III.
+**[Part IV](#part-iv-schema-v10-and-b2b) (sections 49 to 61)** covers B2b, the agent:
+- schema v10 (token claims, reviews, accepts, merges, the runtime consent, session worktrees), opt-in until verification, and its runbook;
+- the vendor-neutral agent runtime, its CLI adapter and how a turn is isolated, network consent, capability tokens and the MCP tools;
+- worktrees and the git engine, change sets and their validators, review, accept and the dialog-confirmed merge, the caps, and the 10 agent channels;
+- the known limitations, the differences from the plan, and the feasibility probe's results with the STOP rules.
 
-**Why one document.** The B1 and B2a material is part of this file, not a separate `platform-b1.md` or `platform-b2a.md`, for three reasons:
-- the B1 and B2a briefs name this file;
-- v8 and v9 are built on v7's tables, rules and runbook, so the restore, hold and downgrade steps read best side by side;
+Part I is kept as the B0b reference. Where B1, B2a or B2b changed a statement in it, the section says so and links to Part II, Part III or Part IV.
+
+**Why one document.** The B1, B2a and B2b material is part of this file, not a separate `platform-b1.md`, `platform-b2a.md` or `platform-b2b.md`, for three reasons:
+- the B1, B2a and B2b briefs name this file;
+- v8, v9 and v10 are built on v7's tables, rules and runbook, so the restore, hold and downgrade steps read best side by side;
 - `test/nexus-core-identity-scan.test.cjs` scans this file, so the later text is covered by the same guard without widening that test.
 
 The code is the source of truth. Table, index and trigger names below are copied from `V7_DDL` and `V7_EXPECTED` in `src/main/nexus/db/schemaV7.ts`, and `test/nexus-db-migration.test.cjs` pins those names against a real database. Where the code differs from the B0b plan, the code is described and the difference is listed in [section 17](#17-differences-from-the-plan-and-the-architecture).
@@ -41,6 +47,8 @@ B1 changes three of these statements:
 Nothing executes in B1 either, and jobs and sessions are still created by no product path.
 
 B2a (Part III) builds the execution core: jobs, attempts, a sandboxed runner and evidence. It is **not yet switched on**. v9 is opt-in, and the app does not start the runner until the pending wiring lands ([section 45](#45-pending-wiring)). So on a real database, the two statements above still hold.
+
+B2b (Part IV) builds the agent on top of that. It is **not yet switched on either**: v10 is opt-in, and the agent runs only when both v9 and v10 are enabled. Part IV's [section 49](#49-status-what-b2b-is-and-is-not) says what is built and what is not yet proven.
 
 ---
 
@@ -100,6 +108,22 @@ B2a (Part III) builds the execution core: jobs, attempts, a sandboxed runner and
 46. [Known limitations](#46-known-limitations)
 47. [B2a: differences from the plan and rulings](#47-b2a-differences-from-the-plan-and-rulings)
 48. [Deferred after B2a](#48-deferred-after-b2a)
+
+[Part IV: Schema v10 and B2b](#part-iv-schema-v10-and-b2b)
+
+49. [Status: what B2b is, and is not](#49-status-what-b2b-is-and-is-not)
+50. [Where the B2b code lives](#50-where-the-b2b-code-lives)
+51. [Schema v10: tables, triggers, indexes and seeds](#51-schema-v10-tables-triggers-indexes-and-seeds)
+52. [The v10 migration and its runbook](#52-the-v10-migration-and-its-runbook)
+53. [The agent runtime and its isolation](#53-the-agent-runtime-and-its-isolation)
+54. [Network and consent](#54-network-and-consent)
+55. [Tokens and MCP](#55-tokens-and-mcp)
+56. [Worktrees, the git engine, change sets, accept and merge](#56-worktrees-the-git-engine-change-sets-accept-and-merge)
+57. [Caps and budgets](#57-caps-and-budgets)
+58. [The IPC surface (#42 to #51)](#58-the-ipc-surface-42-to-51)
+59. [Known limitations](#59-known-limitations)
+60. [B2b: differences from the plan and rulings](#60-b2b-differences-from-the-plan-and-rulings)
+61. [The Task 0 probe results and the STOP rules](#61-the-task-0-probe-results-and-the-stop-rules)
 
 ---
 
@@ -914,9 +938,9 @@ To check a restore without launching the app: open the restored `harness.db` wit
     - Since the final fix round (final review B7), the version alone is not trusted: the build takes `SOCAT_APK_SHA256`, refuses an empty or malformed value before fetching anything, fetches that version with `apk fetch`, checks it with `sha256sum -c`, and installs only that file. `lock.json` records `profiles.nexus-fwd.packages.socat = { version, apkSha256 }`, with `apkSha256: null` today.
     - **Until the hash is set at verification, the `nexus-fwd` build refuses.** Set it with `node tools/nexus-lock-images.cjs --pin-apk socat=<sha256>` (no network; it writes both fields and rehashes). `--check` fails when they disagree, and warns while the hash is null.
     - If the version pin is wrong, the build fails loudly. The fix is to edit the version, then run `--pin-apk` with the new file's hash and `--check`.
-32. **The real-Docker suites have not run.**
-    - The disk is far below the 30 GiB gate: `test:exec` last reported 3.5 GiB free at the Docker data volume, and exited 3. No image has been built.
-    - So none of the following is proven against Docker yet: K1 to K11 (sandbox), L1 to L16 (lifecycle and recovery), X1 to X12 (recipes), the Nexus entry inside the images, `npm ci` against the generated lockfile, pip with hashes, the forwarder, and `host.docker.internal` reaching a loopback listener.
+32. **The real-Docker suites passed in stabilization and have not run since.** (Corrected in Part IV; the earlier text of this item said otherwise.)
+    - During B2a stabilization `test:exec` passed 4 of 4 files, 39 of 39 tests, with the three images built; some runs failed on load-sensitive timing bounds ([section 42](#42-the-resource-gate-and-the-testexec-gate)).
+    - It has not run since: the gate refused at the B2a close (8.3 GiB free, under 30 GiB), and on 2026-10-26 Docker Desktop was not running and the free disk was about 29 GiB. The real registry path and a real install are still not covered by any automated test (item 26).
     - The same flows pass through the fake sandbox driver.
 33. **Windows has no `O_NOFOLLOW`.**
     - The runner opens `/out` files and stored objects with `O_RDONLY|O_NOFOLLOW`, which is a no-op on Windows.
@@ -3519,7 +3543,7 @@ From 30 to 40 GiB free it passes with a warning. Sizes are binary.
 - **The exit code:** 0 for a pass, 1 for a failure, and 3 for not run.
 - **No bypass.** Each heavy file also runs the preflight itself (`test/helpers/execGate.cjs`), and fails when it does not pass. No environment variable skips it. Under plain node, the files print the usual skip banner.
 
-**On this machine, test:exec has never passed its preflight.** Its last run printed `NOT RUN: free disk 3.5 GiB < 30 GiB at C:\Users\pc\AppData\Local\Docker\wsl …`, plus one line for each of the three missing images, and exited 3. So the real-Docker suites have never run: `nexus-exec-sandbox` (K1 to K11), `nexus-exec-lifecycle` (L1 to L12), `nexus-exec-recovery` (L13 to L16) and `nexus-exec-recipes` (X1 to X12).
+**On this machine, test:exec has passed.** During B2a stabilization it passed 4 of 4 files and 39 of 39 tests (sandbox 12, lifecycle 11, recovery 4, recipes 12) against real Docker, with the three images built. Some other runs on the same machine failed on timing under load (the L7 and L11 responsiveness bounds, and L13, L14 and L16 when a lease ran out during a slow restart); those are load-sensitive bounds. An earlier version of this paragraph said otherwise; that is corrected. **It has not run since.** At the B2a close the gate refused (`NOT RUN: free disk 8.3 GiB < 30 GiB at C:\Users\pc\AppData\Local\Docker\wsl …`, exit 3), and on 2026-10-26 Docker Desktop was not running and the free disk was about 29 GiB, still under the gate. So L7, L11, L13 and L14 against real Docker after the runner-restart lease hold ([section 35.8](#358-a-mid-session-runner-restart)), and B2b's own real-Docker checks, are still owed.
 
 **The images** are pinned in `infra/images/lock.json`: base digests, lockfiles, `contextSha256`, `estimatedBytes` and `versions`.
 - `sde-node` is node 20.20.2 (bookworm-slim), with jest-junit and mocha-junit-reporter installed by `npm ci --ignore-scripts`. About 205 MiB.
@@ -3717,7 +3741,7 @@ The B2a limitations are items 25 to 47 of [section 16](#16-known-limitations-and
 | 29 | A job waiting for git leaves one abandoned attempt row, then waits without being leased until main finds git |
 | 30 | Docker resources from a deleted data home need manual cleanup |
 | 31 | The socat pin is unverified |
-| 32 | The real-Docker suites have not run (the disk is below the 30 GiB gate) |
+| 32 | Corrected in Part IV: `test:exec` passed 39 of 39 during B2a stabilization. It has not run since (the disk gate, and Docker was not running); the real-Docker checks after the lease-hold change and B2b's own are owed ([section 42](#42-the-resource-gate-and-the-testexec-gate)) |
 | 33 | Windows has no `O_NOFOLLOW`; an identity re-check stands in |
 | 34 | Closed at the B2a close: the legacy git path runs no repository signature program, submodule filter, external diff driver or textconv, and `hive.ts` resolves git through `gitBinary.ts` |
 | 35 to 47 | What a checkout includes (LFS files as pointers); node:test attribution; dev deployment limits; the fixed data home; no GPU; no disk quota; log caps; the entry's timeout and host sleep; the v9 triggers on a file with v9 off; older builds on v9; image build deadlines; what an install proves; the data home after a restore |
@@ -3769,3 +3793,1070 @@ Each item records what the code does now, and the code wins. The "Ruling" lines 
 | GC of work folders, logs and dependency caches; the data home relocation | Later |
 | Verification items: Linux `cp -P` keeping links in `dist` (collection refuses them); the forwarder's supervising shell under real signals; the socat pin; how Windows sees container-made symlinks in `/out`; the real inspect capture for P7 | Verification |
 | Temp-folder teardown in pre-B2a tests that leak `nx-*` folders | Final batch, after asking the user |
+
+---
+
+# Part IV: Schema v10 and B2b
+
+B2b is the agent. It adds seven things:
+- **Schema v10.** It is additive and opt-in, and it runs with the v7, v8 and v9 safety procedure. It adds six tables: the claims of each capability token, user reviews, accepted change sets, dialog-confirmed merges, the user's consent to the agent's network destination, and one worktree per agent session.
+- **The agent runtime.** A vendor-neutral `AgentRuntime` interface, a CLI adapter behind it, and a scripted double for tests. A turn runs the agent CLI on the host under the runner, confined by policy to its own worktree. Every command it runs goes through `sandbox_exec` into a container with no network.
+- **Network consent and budgets.** One network destination, granted once by the user and revocable, and the caps the user approved: cost per turn and per day, turns per hour, tokens, tool calls, time and child jobs.
+- **Capability tokens and the MCP server.** One opaque token per turn, claims kept in the database, and 11 tools served by a loopback server in the runner that decides nothing: main verifies, authorizes and audits every call.
+- **Worktrees and the git engine.** Hidden refs under `refs/nexus/*`, a locked worktree per session under the data home, and six engine recipes that are Nexus's first writes into the user's `.git`, allowed only after a once-per-project approval.
+- **Change sets, review, accept and merge.** Nexus commits the agent's work, six validators judge it, a user reviews it, an accept moves one hidden ref with a durable marker and a rollback, and "Merge accepted work" is a dialog-confirmed fast-forward of the user's branch to the confirmed commit.
+- **10 more `nexus:*` channels** (#42 to #51), and the renderer's agent panel, change-set review and agent setup rows.
+
+Parts I to III still describe v7, v8, v9, B0b, B1 and B2a. Where B2b changed a statement there, [section 49](#49-status-what-b2b-is-and-is-not) lists it. As in the earlier parts, the code is the source of truth, and the task reports and the controller's rulings record why it differs from the B2b plan. [Section 60](#60-b2b-differences-from-the-plan-and-rulings) lists those differences, and [section 59](#59-known-limitations) states what B2b does not do and what is not yet proven. [Section 61](#61-the-task-0-probe-results-and-the-stop-rules) records what the feasibility probe measured on the installed CLI and the STOP rules that stay in force.
+
+## 49. Status: what B2b is, and is not
+
+**What exists, and how it is proven.**
+
+| Area | State | How it is exercised |
+|---|---|---|
+| Schema v10 and its migration | Landed. Opt-in: `V10_ENABLED_BY_DEFAULT = false` ([section 52](#52-the-v10-migration-and-its-runbook)). | Real SQLite files: the schema and every refusal, the migration with backup, hold, failure marker, restore-tool hint and downgrade. |
+| Tokens, consent, budgets, agent authorization | Landed in main ([sections 54, 55 and 57](#54-network-and-consent)). | Real platform services. |
+| MCP gateway and the runner's loopback MCP server | Landed ([section 55](#55-tokens-and-mcp)). | Main side: the real gateway with a fake runner. Runner side: plain-node tests of the server and the relay. |
+| The agent turn in the runner | Landed ([section 53](#53-the-agent-runtime-and-its-isolation)). | `ScriptedRuntime`, and the real adapter on a stand-in executable. |
+| The CLI adapter | Landed ([section 53.5](#535-the-cli-adapter)). | `npm run test:runtime` runs the adapter contract against the **installed CLI inside a fake-home harness only**: a fake home, a fake key, a loopback mock model and a deny-all proxy. |
+| Worktrees, change sets, accept, merge | Landed ([section 56](#56-worktrees-the-git-engine-change-sets-accept-and-merge)). | Real git in temporary repositories. Jobs run through the fake sandbox driver. |
+| IPC #42 to #51 | Landed ([section 58](#58-the-ipc-surface-42-to-51)). | The real platform behind the one registration wrapper. |
+| Renderer | Landed: the agent panel and session log, change-set review with accept and merge in the Changes tool, the agent's rows in the setup sheet, and the project-bound intent line. | Pure models under plain node, and the honesty audit. |
+
+At the last full run reported before this part was written (the agent IPC commit `c09e6cf5`), `npm run test:db` passed 43 of 43 files, and `npm run test:focused` failed only the 11 known baseline tests.
+
+**What is not proven.** [Section 59](#59-known-limitations) gives the exact list. In short, none of these has been run:
+- **A real model turn.** No test sends a request to a model. The mock model is a loopback server. `ScriptedRuntime` proves the platform wiring (tokens, gateway, relay, change sets, accept), not the behaviour of a real model.
+- **The user's real login, home folder or CLI store.** Every run of the installed CLI so far was inside the harness (a fake home and a fake key). What the CLI writes into a real home, and how `auth status` answers under a deny-all proxy on a real login, are measured only at the real-login smoke test, which the controller runs with the user's go-ahead.
+- **The whole flow on real fixtures and a real repository,** from requirement to merge, with a real model.
+- **A real-Docker run of an agent turn's container.** The turn's container is exercised through the fake sandbox driver. The gated real-Docker agent suite is not part of this evidence.
+- **`test:exec`, in B2a or B2b.** When last measured (2026-10-26), Docker Desktop was not running and the free disk was about 29 GiB, under the 30 GiB gate. So `npm run test:exec` and every run that needs real Docker are **not run** until the user starts Docker and frees disk. They also need the user's confirmation that the CLI is signed in, which one real repository to use, and that the user's own plan quota may be spent within the caps.
+- **The v10 migration on the user's real database.** It runs on a test copy first, then on the real file only with the user's go-ahead.
+
+**Wiring status.**
+- **v10 is opt-in.** `V10_ENABLED_BY_DEFAULT = false` in `src/main/db.ts`, and so is `V9_ENABLED_BY_DEFAULT`. The agent runs only when both are enabled. `NEXUS_ENABLE_V9=1` and `NEXUS_ENABLE_V10=1` enable them, and `NEXUS_DB_HOLD_V10=1` holds v10. Making either the default is a separate one-line commit after the user's verification go-ahead; it is not part of B2b's build.
+- **Execution is wired in main.** The B2a pending wiring ([section 45](#45-pending-wiring)) landed in commit `72444d7e`: `startExecution` runs after the platform startup, the execution channels are registered, and quit stops the runner with a bound. B2b added `agents`, `skillsResourcesDir` and `onQueued` to the platform composition, and the merge dialog to `startExecution`. The statements in [section 30](#30-status-what-b2a-is-and-is-not) and [section 45](#45-pending-wiring) that the app does not start the runner are superseded by that commit; with v9 off, which is the default, the runner still does not start.
+- **The registry.** `CURRENT_SUB_PHASE = 'B2b'` makes the registry list the B2b steps and recipes. `DELIVERED_SUB_PHASE` is the sub-phase the build has proven end to end, and the renderer's claims read against it, not against `CURRENT_SUB_PHASE`. It stays `'B2a'` until the end-to-end flows pass. When this part was written it had not been flipped.
+
+**Statements in Parts I to III that B2b changes.**
+
+| Where | Earlier statement | Now |
+|---|---|---|
+| [Section 36](#36-the-sandbox), "Checkouts never write the user's repository" | B2a creates no worktree and no ref in the user's `.git`. | With the user's once-per-project approval (`repo.write_refs`), Nexus writes refs under `refs/nexus/*`, a worktree entry under `.git/worktrees/<name>`, new objects, and a locked worktree under the data home. It never writes the user's branch, index or files, except in the dialog-confirmed fast-forward of "Merge accepted work" ([section 56](#56-worktrees-the-git-engine-change-sets-accept-and-merge)). |
+| [Section 36](#36-the-sandbox), "Env" | No secret ever reaches a container in B2a, because the secret store is B2b. | There is no secret store in B2b. The agent CLI keeps its own login in the user's home and Nexus never reads it ([section 53.5](#535-the-cli-adapter)). A container still gets no secret. |
+| [Section 30](#30-status-what-b2a-is-and-is-not) and [section 48](#48-deferred-after-b2a) | No agent runs; change-set review and accept, the AgentRuntime, tokens and spending caps are B2b. | They are built in B2b, and they are off until v9 and v10 are enabled. |
+| [Section 37](#37-networks-and-approvals) | A container's network is `none`, a job's egress is the allow-listed forwarder or proxy. | Unchanged for jobs. The agent's own process has a separate destination, through a runner proxy ([section 54](#54-network-and-consent)). |
+| [Section 42](#42-the-resource-gate-and-the-testexec-gate) and [section 46](#46-known-limitations), item 32 | `test:exec` has never passed. | Corrected in this part's commit: it passed 39 of 39 during B2a stabilization. |
+
+**What B2b is not.**
+- No QA, Data Scientist, ML or DL workflow, and no GPU use. The `CompletionEvaluator` arrives in B2c: B2b uses `stepStateFrom` and `isExecutableEndToEnd`.
+- No handoff or lineage tool for the agent, no signing, no tool that merges, accepts or answers an approval, and no secret or network tool ([section 55](#55-tokens-and-mcp)).
+- No resume of an agent conversation by the CLI: each turn is a new CLI process and its context is rebuilt by Nexus.
+- No removal of worktrees ([section 59](#59-known-limitations), item 54).
+
+---
+
+## 50. Where the B2b code lives
+
+| Path | Role |
+|---|---|
+| `src/main/nexus/db/schemaV10.ts`, `v10Seed.ts` | `V10_DDL` (frozen migration text), `V10_EXPECTED`, `v10ShapeProblem`, `verifyV10`, `applyV10`; the frozen D-B4 ceilings, the five revoke reasons, the three review decisions and the text limits. v10 inserts no rows. |
+| `src/main/db.ts` | `migrateV10` (a sibling of the v9 step), `V10_ENABLED_BY_DEFAULT`, `enableV10` and `holdV10`, `V10_FAILURE_LIMIT`, `agentsAvailable`, `agentsUnavailableReason`, `lastMigrationV10`. |
+| `src/main/nexus/agents/tokenService.ts`, `budgetService.ts` | `TokenService` (mint, verify, revoke) and `BudgetService` (the consent, today's usage, the start guards). |
+| `src/main/nexus/agents/agentService.ts` | The user's face (start, continue, end, cancel, list, get) and the execution core's (scheduler guards, preparation, the lease transaction's work, usage caps, settlement, revocation). |
+| `src/main/nexus/agents/mcpGateway.ts`, `contextResolver.ts`, `skills.ts` | The gateway behind every MCP call; the context file written for each turn; the skill text written for each turn. |
+| `src/main/nexus/agents/runtimeHealth.ts` | The bounded-age cache of the runtime's health, and the on-demand refresh. |
+| `src/main/nexus/repo/worktreeService.ts`, `gitRead.ts`, `changeSetService.ts`, `acceptService.ts`, `acceptRollback.ts` | Session worktrees and the `repo.write_refs` approval; the main side of the bounded `git.read`; change-set registration; accept, status and "Merge accepted work"; the rollback helper. |
+| `src/main/nexus/review/reviewService.ts` | User review decisions. |
+| `src/main/nexus/exec/acceptIngest.ts`, `ingest.ts`, `planBuilder.ts`, `recovery.ts`, `scheduler.ts`, `executionService.ts` | The ingest rules of `changeset.accept`, `changeset.accept_rollback` and `repo.ff`; the engine plans and `buildAgentPlan`; the accept and agent blocks of restart recovery; `agentTurnGuard`; the agent lease path and the token revocation choke point. |
+| `src/main/nexus/validation/validators/*` | `diffNonempty`, `pathsInScope`, `secretScan`, `secretEntropyNotes`, `appliesCleanly`, `csTestsPass` (the six change-set validators). |
+| `src/main/nexus/auth/policy.ts`, `authService.ts` | The new actions, `authorizeWithToken`, `ensureAgentPrincipalTx`. |
+| `src/main/nexusIpc/*`, `src/main/nexusExec/mergeDialog.ts`, `execWiring.ts` | Channels #42 to #51 and #23's `agent` row; the native merge confirmation; `confirmMerge` and `tickSoon`. |
+| `src/runner/agentAttempt.ts`, `procTree.ts`, `mcpServer.ts`, `hostEgressProxy.ts` | One agent turn end to end; the process trees and pidfiles; the loopback MCP server; the host egress proxy. |
+| `src/runner/gitWrite.ts`, `gitRead.ts`, `worktreeGuard.ts` | `HardenedGit` and the six git engine recipes; the bounded read; the lstat guard. |
+| `src/runner/runtimes/registry.ts`, `scripted.ts`, `probe.ts` | The runtime registry; `ScriptedRuntime`; the on-demand engine check. |
+| `src/runner/runtimes/cliAgent/*` | The CLI adapter: `adapter.ts`, `args.ts`, `binary.ts`, `env.ts`, `files.ts`, `stream.ts`, `testSeam.ts`. The only place that names the engine. |
+| `src/shared/nexus/runtime.ts`, `tokens.ts`, `mcpTools.ts`, `agentPolicy.ts`, `changeSet.ts` | The `AgentRuntime` contract; token claims and shapes; the 11 tools as data; the caps and the budget decision; the change-set path and ref rules. |
+| `src/shared/nexus/execution.ts`, `runnerProtocol.ts`, `ipc.ts`, `validators.ts`, `evidence.ts`, `secretShape.ts` | `AgentPlan`, the git engine tasks; `mcp.call`, `mcp.reply`, `agent.exec.done`, `attempt.runtime`, `git.read`; the agent views; the six validators; `location` evidence; the provider-key shapes. |
+| `resources/skills/nexus-sde-{change,tests-first,requirement-draft,app-manifest}/SKILL.md` | The four skills Nexus writes into a turn's skill file. |
+| `tools/run-runtime-tests.cjs`, `tools/nexus-agent-probe.cjs` | The `test:runtime` gate; the feasibility probe. |
+| `src/renderer/src/nexus/agent/*`, `data/useAgents.ts`, `project/ChangeSetReview.tsx`, `project/changeSetModel.ts` | The agent panel, the session log, their models and the change-set review. |
+| `test/nexus-db-v10-*.test.cjs`, `test/nexus-platform-agent-*.test.cjs`, `test/nexus-platform-ipc-agents.test.cjs`, `test/nexus-core-{agent-*,mcp-server,host-egress,gitwrite,runtime-probe}.test.cjs`, `test/runtime-*.test.cjs`, `test/nexus-ui-agent-models.test.cjs`, `test/nexus-core-docs-v10-names.test.cjs` | The tests of the above. |
+
+The process boundaries of B2a still hold and are pinned by the same tests. The runner opens no database. Its spawn sites are now the resolved `docker`, `git` and `taskkill.exe` binaries, the agent CLI adapter's one `spawn(bin`, and the runner fork itself, as an exact list (`test/nexus-runner-posture.test.cjs`). The runner's agent environment is built by one function, and nothing else under `src/runner/runtimes` reads `process.env` wholesale.
+
+---
+
+## 51. Schema v10: tables, triggers, indexes and seeds
+
+v10 is additive:
+- every statement is `CREATE … IF NOT EXISTS`;
+- no v1 to v9 table is altered, and no FK is added to one;
+- no trigger or index is put on a v1 to v9 table;
+- no v1 to v9 row is rewritten, and **v10 inserts no rows**;
+- `V7_DDL`, `V8_DDL` and `V9_DDL` are unchanged (their hashes are pinned in `test/nexus-db-v10-schema.test.cjs`, with CRLF normalized to LF).
+
+`V10_EXPECTED` holds:
+- **6 tables**, with their columns in DDL order;
+- **7 named indexes**;
+- **18 triggers**: three on each table.
+
+`test/nexus-db-v10-schema.test.cjs` pins these names and counts against a real database. `test/nexus-core-docs-v10-names.test.cjs` pins this section against `V10_EXPECTED` and `V10_DDL`.
+
+`V10_DDL` is migration text now: a later change needs a new migration. It is a plain template literal with no interpolation, so the docs test and the append-only source rule ([section 4](#4-triggers)) read it as text.
+
+### 51.1 Tables
+
+| Table | What it holds |
+|---|---|
+| `capability_tokens` | The **claims** of each per-turn token, keyed by `jti` (22 base64url characters, so a raw `jti.mac` token cannot fit): the job, the session, the agent principal (`agent:<session id>`), the user it acts for, `caps_json` (a JSON object of at most 8,192 characters holding `{ caps, maxChildJobs }`), `inputs_json` (an array, at most 8,192), `tools_json` (an array, at most 2,048), `caps_sha256` of exactly the `caps_json` text, `issued_at`, `expires_at`, and a revocation pair (`revoked_at`, `revoke_reason`). **Never the token text and never its MAC.** |
+| `reviews` | A user's decision on a change-set candidate: `approve`, `request_changes` or `reject`. A comment (1 to 4,000 characters) with its `comment_sha256` is required unless the decision is `approve`. `intent_id` is UNIQUE, so a replayed click is the same review. Append-only. |
+| `change_set_accepts` | One immutable row per accepted change set, keyed by its version: the project, the integration ref (`refs/nexus/accepted/<branch>`), `ref_before`, `ref_after`, the merge commit, the accept job and the accepting user. |
+| `repo_merges` | One append-only row per "Merge accepted work": the project, the branch, `before`, `after`, `sha_confirmed`, the merging user, `confirmed_via` (only `dialog`) and the fast-forward job (`ff_job_id`, NOT NULL). A table CHECK requires `after = sha_confirmed`. |
+| `runtime_consents` | The user's grant of the agent runtime: the runtime kind, the destinations (`hosts_json`, a non-empty array of at most 1,024 characters) and their `hosts_sha256`, and the six D-B4 caps as columns. At most **one live consent in total**. |
+| `session_worktrees` | One locked worktree per agent session: the project, `rel_path` (`wt/<lowercased session id>`), the session ref (`refs/nexus/job/<lowercased session id>`), the integration ref, `base_commit`, `locked`, `created_at`, `removed_at`, and `reused_from_session_id` (a UNIQUE self-reference, for a continuation of an interrupted session). |
+
+**The D-B4 ceilings are CHECKs,** so a grant can only lower them: `turn_usd_cents` 1 to 200, `day_usd_cents` 1 to 1,000, `turns_per_hour` 1 to 6, `concurrent_turns` exactly 1, `turn_tokens` 1 to 400,000, `tool_calls` 1 to 200, and `turn_usd_cents <= day_usd_cents`. The 30-minute wall clock and the 20 child jobs are enforced on the job and the token, not stored on the consent ([section 57](#57-caps-and-budgets)).
+
+**Ref names carry git's own rules.** `integration_ref`, `ref` and `branch` refuse what git itself refuses in a ref name: `..`, `@{`, `.lock`, control characters, a space, any of `~^:?*[` or a backslash, a component starting with `.`, an empty component, and a trailing `/` or `.`. `integration_ref` must start `refs/nexus/accepted/`, `ref` must start `refs/nexus/job/`, and a branch may not start `refs/` or `-`. So no v10 row can name a ref outside `refs/nexus/` as an integration or session ref (D-B13). A `repo_merges.branch` is the user's own branch name, in short form, which the merge dialog and the fast-forward job confirm.
+
+**ON DELETE behaviour.**
+- `change_set_accepts.version_id`, `change_set_accepts.project_id`, `reviews.version_id`, `repo_merges.project_id` and `session_worktrees.project_id` are RESTRICT. The other references name a row that no code deletes.
+- Every v10 table has an unconditional `BEFORE DELETE` trigger. v10 deletes nothing, ever.
+- `hasPlatformRecords` is unchanged: a project that has a session or a job already cannot be deleted ([section 12](#12-workspaces-participation-and-phase-a)).
+
+### 51.2 The DDL
+
+This is `V10_DDL`, as it runs, copied from `src/main/nexus/db/schemaV10.ts`. In the TypeScript source, the backslash of the one `NOT LIKE '%\%'` pattern is written `\\`, so that the template literal keeps it. The test named above compares this block with `V10_DDL` byte for byte.
+
+```sql
+-- ===== capability tokens: the claims of each per-turn token, keyed by its jti (no token text, no MAC) =====
+CREATE TABLE IF NOT EXISTS capability_tokens (
+  jti           TEXT PRIMARY KEY CHECK (length(jti) = 22 AND jti NOT GLOB '*[^A-Za-z0-9_-]*'),
+  job_id        TEXT NOT NULL REFERENCES jobs(id),
+  session_id    TEXT NOT NULL REFERENCES agent_sessions(id),
+  principal_id  TEXT NOT NULL REFERENCES principals(id),
+  on_behalf_of  TEXT NOT NULL REFERENCES principals(id),
+  caps_json     TEXT NOT NULL CHECK (json_valid(caps_json) AND json_type(caps_json) = 'object' AND length(caps_json) <= 8192),
+  inputs_json   TEXT NOT NULL CHECK (json_valid(inputs_json) AND json_type(inputs_json) = 'array' AND length(inputs_json) <= 8192),
+  tools_json    TEXT NOT NULL CHECK (json_valid(tools_json) AND json_type(tools_json) = 'array' AND length(tools_json) <= 2048),
+  caps_sha256   TEXT NOT NULL CHECK (length(caps_sha256) = 64 AND caps_sha256 NOT GLOB '*[^0-9a-f]*'),
+  issued_at     INTEGER NOT NULL,
+  expires_at    INTEGER NOT NULL,
+  revoked_at    INTEGER,
+  revoke_reason TEXT CHECK (revoke_reason IS NULL OR revoke_reason IN ('job_ended','session_cancelled','restart','runner_restart','budget')),
+  CHECK (expires_at > issued_at),
+  CHECK ((revoked_at IS NULL) = (revoke_reason IS NULL)),
+  CHECK (revoked_at IS NULL OR revoked_at >= issued_at)
+);
+CREATE INDEX IF NOT EXISTS ix_tokens_job ON capability_tokens(job_id);
+CREATE TRIGGER IF NOT EXISTS tr_tokens_insert BEFORE INSERT ON capability_tokens
+BEGIN
+  SELECT RAISE(ABORT, 'a token is minted live') WHERE NEW.revoked_at IS NOT NULL;
+  SELECT RAISE(ABORT, 'the token principal is the agent of its session')
+    WHERE NEW.principal_id IS NOT ('agent:' || NEW.session_id)
+       OR (SELECT kind FROM principals WHERE id = NEW.principal_id) IS NOT 'agent';
+  SELECT RAISE(ABORT, 'a token is minted for an agent turn job of its session')
+    WHERE NOT EXISTS (SELECT 1 FROM jobs j WHERE j.id = NEW.job_id AND j.session_id = NEW.session_id AND j.kind = 'agent.run');
+  SELECT RAISE(ABORT, 'a token acts on behalf of a user')
+    WHERE (SELECT kind FROM principals WHERE id = NEW.on_behalf_of) IS NOT 'user';
+END;
+CREATE TRIGGER IF NOT EXISTS tr_tokens_update BEFORE UPDATE ON capability_tokens
+BEGIN
+  SELECT RAISE(ABORT, 'token identity and claims are immutable')
+    WHERE NEW.jti IS NOT OLD.jti OR NEW.job_id IS NOT OLD.job_id OR NEW.session_id IS NOT OLD.session_id
+       OR NEW.principal_id IS NOT OLD.principal_id OR NEW.on_behalf_of IS NOT OLD.on_behalf_of
+       OR NEW.caps_json IS NOT OLD.caps_json OR NEW.inputs_json IS NOT OLD.inputs_json OR NEW.tools_json IS NOT OLD.tools_json
+       OR NEW.caps_sha256 IS NOT OLD.caps_sha256 OR NEW.issued_at IS NOT OLD.issued_at OR NEW.expires_at IS NOT OLD.expires_at;
+  SELECT RAISE(ABORT, 'a token revocation is recorded once')
+    WHERE OLD.revoked_at IS NOT NULL AND (NEW.revoked_at IS NOT OLD.revoked_at OR NEW.revoke_reason IS NOT OLD.revoke_reason);
+END;
+CREATE TRIGGER IF NOT EXISTS tr_tokens_no_delete BEFORE DELETE ON capability_tokens
+BEGIN SELECT RAISE(ABORT, 'capability tokens are never deleted'); END;
+
+-- ===== reviews: a user's decision on a change-set candidate (append-only) =====
+CREATE TABLE IF NOT EXISTS reviews (
+  id             TEXT PRIMARY KEY,
+  version_id     TEXT NOT NULL REFERENCES artifact_versions(id) ON DELETE RESTRICT,
+  principal_id   TEXT NOT NULL REFERENCES principals(id),
+  decision       TEXT NOT NULL CHECK (decision IN ('approve','request_changes','reject')),
+  comment        TEXT CHECK (comment IS NULL OR length(comment) BETWEEN 1 AND 4000),
+  comment_sha256 TEXT CHECK (comment_sha256 IS NULL OR (length(comment_sha256) = 64 AND comment_sha256 NOT GLOB '*[^0-9a-f]*')),
+  intent_id      TEXT NOT NULL UNIQUE CHECK (length(intent_id) BETWEEN 1 AND 128),
+  created_at     INTEGER NOT NULL,
+  CHECK ((comment IS NULL) = (comment_sha256 IS NULL)),
+  CHECK (decision = 'approve' OR comment IS NOT NULL)
+);
+CREATE INDEX IF NOT EXISTS ix_reviews_version ON reviews(version_id, created_at);
+CREATE TRIGGER IF NOT EXISTS tr_reviews_insert BEFORE INSERT ON reviews
+BEGIN
+  SELECT RAISE(ABORT, 'a review is decided by a user')
+    WHERE (SELECT kind FROM principals WHERE id = NEW.principal_id) IS NOT 'user';
+  SELECT RAISE(ABORT, 'a review decides a change-set candidate')
+    WHERE NOT EXISTS (SELECT 1 FROM artifact_versions v JOIN artifacts a ON a.id = v.artifact_id
+      WHERE v.id = NEW.version_id AND a.kind = 'change_set' AND v.status = 'candidate');
+END;
+CREATE TRIGGER IF NOT EXISTS tr_reviews_no_update BEFORE UPDATE ON reviews
+BEGIN SELECT RAISE(ABORT, 'reviews are append-only'); END;
+CREATE TRIGGER IF NOT EXISTS tr_reviews_no_delete BEFORE DELETE ON reviews
+BEGIN SELECT RAISE(ABORT, 'reviews are append-only'); END;
+
+-- ===== change-set accepts: one immutable row per accepted version, with the job that accepted it =====
+CREATE TABLE IF NOT EXISTS change_set_accepts (
+  version_id      TEXT PRIMARY KEY REFERENCES artifact_versions(id) ON DELETE RESTRICT,
+  project_id      TEXT NOT NULL REFERENCES projects(id) ON DELETE RESTRICT,
+  integration_ref TEXT NOT NULL CHECK (integration_ref GLOB 'refs/nexus/accepted/?*' AND length(integration_ref) <= 255
+                    AND integration_ref NOT GLOB '*[^!-~]*' AND integration_ref NOT GLOB '*[[~^:?*]*' AND instr(integration_ref, char(92)) = 0
+                    AND integration_ref NOT LIKE '%..%' AND integration_ref NOT LIKE '%//%' AND integration_ref NOT LIKE '%/.%'
+                    AND integration_ref NOT LIKE '%@{%' AND integration_ref NOT GLOB '*/' AND integration_ref NOT GLOB '*.'
+                    AND integration_ref NOT GLOB '*.lock'),
+  ref_before      TEXT NOT NULL CHECK (length(ref_before) = 40 AND ref_before NOT GLOB '*[^0-9a-f]*'),
+  ref_after       TEXT NOT NULL CHECK (length(ref_after) = 40 AND ref_after NOT GLOB '*[^0-9a-f]*'),
+  merge_commit    TEXT NOT NULL CHECK (length(merge_commit) = 40 AND merge_commit NOT GLOB '*[^0-9a-f]*'),
+  accept_job_id   TEXT NOT NULL REFERENCES jobs(id),
+  accepted_by     TEXT NOT NULL REFERENCES principals(id),
+  accepted_at     INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS ix_accepts_project ON change_set_accepts(project_id, accepted_at);
+CREATE INDEX IF NOT EXISTS ix_accepts_job     ON change_set_accepts(accept_job_id);
+CREATE TRIGGER IF NOT EXISTS tr_accepts_insert BEFORE INSERT ON change_set_accepts
+BEGIN
+  SELECT RAISE(ABORT, 'an accept records a change set of its project')
+    WHERE NOT EXISTS (SELECT 1 FROM artifact_versions v JOIN artifacts a ON a.id = v.artifact_id
+      WHERE v.id = NEW.version_id AND v.project_id = NEW.project_id AND a.kind = 'change_set');
+  SELECT RAISE(ABORT, 'an accepted change set version is active')
+    WHERE (SELECT status FROM artifact_versions WHERE id = NEW.version_id) IS NOT 'active';
+  SELECT RAISE(ABORT, 'the accept job belongs to the project')
+    WHERE (SELECT project_id FROM jobs WHERE id = NEW.accept_job_id) IS NOT NEW.project_id;
+  SELECT RAISE(ABORT, 'a change set is accepted by a user')
+    WHERE (SELECT kind FROM principals WHERE id = NEW.accepted_by) IS NOT 'user';
+END;
+CREATE TRIGGER IF NOT EXISTS tr_accepts_no_update BEFORE UPDATE ON change_set_accepts
+BEGIN SELECT RAISE(ABORT, 'change set accepts are immutable'); END;
+CREATE TRIGGER IF NOT EXISTS tr_accepts_no_delete BEFORE DELETE ON change_set_accepts
+BEGIN SELECT RAISE(ABORT, 'change set accepts are immutable'); END;
+
+-- ===== repo merges: "Merge accepted work", a dialog-confirmed fast-forward to the confirmed sha (append-only) =====
+CREATE TABLE IF NOT EXISTS repo_merges (
+  id            TEXT PRIMARY KEY,
+  project_id    TEXT NOT NULL REFERENCES projects(id) ON DELETE RESTRICT,
+  branch        TEXT NOT NULL CHECK (length(branch) BETWEEN 1 AND 255 AND branch NOT GLOB '*[^!-~]*' AND branch NOT GLOB '*[[~^:?*]*'
+                  AND instr(branch, char(92)) = 0 AND branch NOT LIKE '%..%' AND branch NOT GLOB '-*' AND branch NOT GLOB 'refs/*'),
+  before        TEXT NOT NULL CHECK (length(before) = 40 AND before NOT GLOB '*[^0-9a-f]*'),
+  after         TEXT NOT NULL CHECK (length(after) = 40 AND after NOT GLOB '*[^0-9a-f]*'),
+  sha_confirmed TEXT NOT NULL CHECK (length(sha_confirmed) = 40 AND sha_confirmed NOT GLOB '*[^0-9a-f]*'),
+  merged_by     TEXT NOT NULL REFERENCES principals(id),
+  merged_at     INTEGER NOT NULL,
+  confirmed_via TEXT NOT NULL CHECK (confirmed_via = 'dialog'),
+  ff_job_id     TEXT NOT NULL REFERENCES jobs(id),
+  CHECK (after = sha_confirmed)
+);
+CREATE INDEX IF NOT EXISTS ix_merges_project ON repo_merges(project_id, merged_at);
+CREATE TRIGGER IF NOT EXISTS tr_merges_insert BEFORE INSERT ON repo_merges
+BEGIN
+  SELECT RAISE(ABORT, 'a merge is confirmed by a user')
+    WHERE (SELECT kind FROM principals WHERE id = NEW.merged_by) IS NOT 'user';
+  SELECT RAISE(ABORT, 'the fast-forward job belongs to the project')
+    WHERE NEW.ff_job_id IS NOT NULL AND (SELECT project_id FROM jobs WHERE id = NEW.ff_job_id) IS NOT NEW.project_id;
+END;
+CREATE TRIGGER IF NOT EXISTS tr_merges_no_update BEFORE UPDATE ON repo_merges
+BEGIN SELECT RAISE(ABORT, 'repo merges are append-only'); END;
+CREATE TRIGGER IF NOT EXISTS tr_merges_no_delete BEFORE DELETE ON repo_merges
+BEGIN SELECT RAISE(ABORT, 'repo merges are append-only'); END;
+
+-- ===== runtime consents: the user's grant of the agent runtime, within the D-B4 ceilings; one live consent =====
+CREATE TABLE IF NOT EXISTS runtime_consents (
+  id               TEXT PRIMARY KEY,
+  runtime_kind     TEXT NOT NULL CHECK (length(runtime_kind) BETWEEN 1 AND 32),
+  hosts_json       TEXT NOT NULL CHECK (json_valid(hosts_json) AND json_type(hosts_json) = 'array' AND json_array_length(hosts_json) >= 1
+                     AND length(hosts_json) <= 1024),
+  hosts_sha256     TEXT NOT NULL CHECK (length(hosts_sha256) = 64 AND hosts_sha256 NOT GLOB '*[^0-9a-f]*'),
+  turn_usd_cents   INTEGER NOT NULL CHECK (turn_usd_cents BETWEEN 1 AND 200),
+  day_usd_cents    INTEGER NOT NULL CHECK (day_usd_cents BETWEEN 1 AND 1000),
+  turns_per_hour   INTEGER NOT NULL CHECK (turns_per_hour BETWEEN 1 AND 6),
+  concurrent_turns INTEGER NOT NULL CHECK (concurrent_turns = 1),
+  turn_tokens      INTEGER NOT NULL CHECK (turn_tokens BETWEEN 1 AND 400000),
+  tool_calls       INTEGER NOT NULL CHECK (tool_calls BETWEEN 1 AND 200),
+  granted_by       TEXT NOT NULL REFERENCES principals(id),
+  granted_at       INTEGER NOT NULL,
+  revoked_at       INTEGER,
+  revoked_by       TEXT REFERENCES principals(id),
+  CHECK (turn_usd_cents <= day_usd_cents),
+  CHECK ((revoked_at IS NULL) = (revoked_by IS NULL)),
+  CHECK (revoked_at IS NULL OR revoked_at >= granted_at)
+);
+CREATE UNIQUE INDEX IF NOT EXISTS ux_consent_live ON runtime_consents((revoked_at IS NULL)) WHERE revoked_at IS NULL;
+CREATE TRIGGER IF NOT EXISTS tr_consents_insert BEFORE INSERT ON runtime_consents
+BEGIN
+  SELECT RAISE(ABORT, 'a consent is granted live') WHERE NEW.revoked_at IS NOT NULL OR NEW.revoked_by IS NOT NULL;
+  SELECT RAISE(ABORT, 'a consent is granted by a user')
+    WHERE (SELECT kind FROM principals WHERE id = NEW.granted_by) IS NOT 'user';
+END;
+CREATE TRIGGER IF NOT EXISTS tr_consents_update BEFORE UPDATE ON runtime_consents
+BEGIN
+  SELECT RAISE(ABORT, 'a consent grant is immutable; its revocation is recorded once')
+    WHERE NEW.id IS NOT OLD.id OR NEW.runtime_kind IS NOT OLD.runtime_kind OR NEW.hosts_json IS NOT OLD.hosts_json
+       OR NEW.hosts_sha256 IS NOT OLD.hosts_sha256 OR NEW.turn_usd_cents IS NOT OLD.turn_usd_cents
+       OR NEW.day_usd_cents IS NOT OLD.day_usd_cents OR NEW.turns_per_hour IS NOT OLD.turns_per_hour
+       OR NEW.concurrent_turns IS NOT OLD.concurrent_turns OR NEW.turn_tokens IS NOT OLD.turn_tokens
+       OR NEW.tool_calls IS NOT OLD.tool_calls OR NEW.granted_by IS NOT OLD.granted_by OR NEW.granted_at IS NOT OLD.granted_at
+       OR (OLD.revoked_at IS NOT NULL AND (NEW.revoked_at IS NOT OLD.revoked_at OR NEW.revoked_by IS NOT OLD.revoked_by));
+  SELECT RAISE(ABORT, 'a consent is revoked by a user or the system')
+    WHERE NEW.revoked_by IS NOT NULL AND COALESCE((SELECT kind FROM principals WHERE id = NEW.revoked_by), '') NOT IN ('user','system');
+END;
+CREATE TRIGGER IF NOT EXISTS tr_consents_no_delete BEFORE DELETE ON runtime_consents
+BEGIN SELECT RAISE(ABORT, 'consents are never deleted'); END;
+
+-- ===== session worktrees: one locked worktree per agent session, under the Nexus data folder =====
+CREATE TABLE IF NOT EXISTS session_worktrees (
+  session_id      TEXT PRIMARY KEY REFERENCES agent_sessions(id),
+  project_id      TEXT NOT NULL REFERENCES projects(id) ON DELETE RESTRICT,
+  rel_path        TEXT NOT NULL CHECK (rel_path GLOB 'wt/?*' AND length(rel_path) <= 200 AND rel_path NOT LIKE '/%'
+                    AND rel_path NOT LIKE '%:%' AND rel_path NOT LIKE '%..%' AND rel_path NOT LIKE '%\%'),
+  ref             TEXT NOT NULL CHECK (ref GLOB 'refs/nexus/job/?*' AND length(ref) <= 255
+                    AND ref NOT GLOB '*[^!-~]*' AND ref NOT GLOB '*[[~^:?*]*' AND instr(ref, char(92)) = 0
+                    AND ref NOT LIKE '%..%' AND ref NOT LIKE '%//%' AND ref NOT LIKE '%/.%'
+                    AND ref NOT LIKE '%@{%' AND ref NOT GLOB '*/' AND ref NOT GLOB '*.' AND ref NOT GLOB '*.lock'),
+  integration_ref TEXT NOT NULL CHECK (integration_ref GLOB 'refs/nexus/accepted/?*' AND length(integration_ref) <= 255
+                    AND integration_ref NOT GLOB '*[^!-~]*' AND integration_ref NOT GLOB '*[[~^:?*]*' AND instr(integration_ref, char(92)) = 0
+                    AND integration_ref NOT LIKE '%..%' AND integration_ref NOT LIKE '%//%' AND integration_ref NOT LIKE '%/.%'
+                    AND integration_ref NOT LIKE '%@{%' AND integration_ref NOT GLOB '*/' AND integration_ref NOT GLOB '*.'
+                    AND integration_ref NOT GLOB '*.lock'),
+  base_commit     TEXT NOT NULL CHECK (length(base_commit) = 40 AND base_commit NOT GLOB '*[^0-9a-f]*'),
+  locked          INTEGER NOT NULL CHECK (locked IN (0,1)),
+  created_at      INTEGER NOT NULL,
+  removed_at      INTEGER,
+  reused_from_session_id TEXT UNIQUE REFERENCES session_worktrees(session_id),
+  CHECK (removed_at IS NULL OR removed_at >= created_at),
+  CHECK (reused_from_session_id IS NULL OR reused_from_session_id <> session_id)
+);
+CREATE INDEX IF NOT EXISTS ix_worktrees_project ON session_worktrees(project_id);
+CREATE TRIGGER IF NOT EXISTS tr_worktrees_insert BEFORE INSERT ON session_worktrees
+BEGIN
+  SELECT RAISE(ABORT, 'a worktree belongs to the project of its session')
+    WHERE (SELECT project_id FROM agent_sessions WHERE id = NEW.session_id) IS NOT NEW.project_id;
+  SELECT RAISE(ABORT, 'a worktree is recorded live') WHERE NEW.removed_at IS NOT NULL;
+  SELECT RAISE(ABORT, 'a new worktree is named after its session')
+    WHERE NEW.reused_from_session_id IS NULL AND (NEW.rel_path IS NOT ('wt/' || lower(NEW.session_id))
+       OR NEW.ref IS NOT ('refs/nexus/job/' || lower(NEW.session_id)));
+  SELECT RAISE(ABORT, 'a worktree is reused only from a live worktree of an interrupted session in this project, at the same path')
+    WHERE NEW.reused_from_session_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM session_worktrees p JOIN agent_sessions s ON s.id = p.session_id
+      WHERE p.session_id = NEW.reused_from_session_id AND p.project_id = NEW.project_id AND p.rel_path = NEW.rel_path
+        AND p.removed_at IS NULL AND s.status = 'interrupted');
+END;
+CREATE TRIGGER IF NOT EXISTS tr_worktrees_update BEFORE UPDATE ON session_worktrees
+WHEN NEW.session_id IS NOT OLD.session_id OR NEW.project_id IS NOT OLD.project_id OR NEW.rel_path IS NOT OLD.rel_path
+  OR NEW.ref IS NOT OLD.ref OR NEW.integration_ref IS NOT OLD.integration_ref OR NEW.base_commit IS NOT OLD.base_commit
+  OR NEW.created_at IS NOT OLD.created_at OR NEW.reused_from_session_id IS NOT OLD.reused_from_session_id
+  OR OLD.removed_at IS NOT NULL
+BEGIN SELECT RAISE(ABORT, 'worktree identity is immutable and a removed worktree is frozen'); END;
+CREATE TRIGGER IF NOT EXISTS tr_worktrees_no_delete BEFORE DELETE ON session_worktrees
+BEGIN SELECT RAISE(ABORT, 'worktrees are never deleted'); END;
+```
+
+### 51.3 Triggers
+
+| Trigger | Table and event | What it refuses |
+|---|---|---|
+| `tr_tokens_insert` | `capability_tokens`, before insert | A token inserted already revoked; a principal that is not `agent:<session id>` or not of kind `agent`; a job that is not an `agent.run` job of the token's session; an `on_behalf_of` that is not a user. |
+| `tr_tokens_update` | before update | Any change to the identity or the claims (job, session, principal, user, the three JSON columns, `caps_sha256`, `issued_at`, `expires_at`), and a second revocation. |
+| `tr_tokens_no_delete` | before delete | Every delete. |
+| `tr_reviews_insert` | `reviews`, before insert | A reviewer who is not a user, and a version that is not a `change_set` candidate. |
+| `tr_reviews_no_update`, `tr_reviews_no_delete` | before update, before delete | Every update and every delete. |
+| `tr_accepts_insert` | `change_set_accepts`, before insert | A version that is not a change set of the row's project; a version that is not `active`; an accept job of another project; an accepting principal that is not a user. |
+| `tr_accepts_no_update`, `tr_accepts_no_delete` | before update, before delete | Every update and every delete. |
+| `tr_merges_insert` | `repo_merges`, before insert | A merging principal that is not a user; a fast-forward job of another project. |
+| `tr_merges_no_update`, `tr_merges_no_delete` | before update, before delete | Every update and every delete. |
+| `tr_consents_insert` | `runtime_consents`, before insert | A consent inserted already revoked; a granting principal that is not a user. |
+| `tr_consents_update` | before update | Any change to a grant (kind, hosts, hash, the six caps, grantor, time), a second revocation, and a revoker that is neither a user nor the system. |
+| `tr_consents_no_delete` | before delete | Every delete. |
+| `tr_worktrees_insert` | `session_worktrees`, before insert | A worktree whose project is not its session's; a row inserted already removed; a new worktree not named after its session (`wt/<lower id>`, `refs/nexus/job/<lower id>`); a reuse that is not from a live worktree of an interrupted session of the same project at the same path. |
+| `tr_worktrees_update` | before update | A change to the identity, the refs, the base, `created_at` or `reused_from_session_id`, and any change to a removed worktree. `locked` may change while it is live. |
+| `tr_worktrees_no_delete` | before delete | Every delete. |
+
+**Known limit of the triggers (as v8 and v9).** `recursive_triggers` is off, so `INSERT OR REPLACE`, and an upsert's `DO UPDATE`, on a protected table delete or rewrite the old row without firing its `BEFORE DELETE` or `BEFORE UPDATE` guard. That is closed as a source rule: `test/nexus-core-append-only-writes.test.cjs` derives its protected set from `V7_DDL` to `V10_DDL`, so a source that uses either form on a v10 table fails it. `INSERT OR IGNORE` is fine: it never deletes.
+
+### 51.4 Indexes and their access reasons
+
+| Index | On | Read by |
+|---|---|---|
+| `ix_tokens_job` | `capability_tokens(job_id)` | Revoking a job's tokens at the end of its turn, and the claims read by job. |
+| `ix_reviews_version` | `reviews(version_id, created_at)` | The newest review of a version, which is what accept reads; the review list. |
+| `ix_accepts_project` | `change_set_accepts(project_id, accepted_at)` | The project's accepts: the integration-head consistency check and the accepts listed in the merge dialog. |
+| `ix_accepts_job` | `change_set_accepts(accept_job_id)` | Whether an accept job produced a row, for the rollback decision and for restart recovery. |
+| `ix_merges_project` | `repo_merges(project_id, merged_at)` | The newest merge of a project and branch. |
+| `ux_consent_live` | `runtime_consents((revoked_at IS NULL)) WHERE revoked_at IS NULL` | Enforces one live consent in total; the live consent read. |
+| `ix_worktrees_project` | `session_worktrees(project_id)` | The project's worktrees: the first worktree's base is the integration ref's initial head. |
+
+`ux_consent_live` allows one live consent in total, not one per runtime. The day cap is global, so two live consents could double it. A later migration may relax this.
+
+### 51.5 Seeds
+
+None. v10 inserts no rows, and no v10 trigger or backfill writes one. `v10Seed.ts` holds the values the CHECKs carry (the D-B4 ceilings, the five revoke reasons, the three review decisions, the text limits), so that the code that writes v10 rows can read them. `test/nexus-db-v10-schema.test.cjs` pins the DDL to them. The shared caps in `src/shared/nexus/agentPolicy.ts` carry the same numbers ([section 57](#57-caps-and-budgets)).
+
+### 51.6 The v10 name list
+
+This list is copied from `V10_EXPECTED`, in its order. `test/nexus-core-docs-v10-names.test.cjs` checks that it equals `V10_EXPECTED` exactly. It also checks that every `ix_`, `ux_` and `tr_` name in sections 51.3 and 51.4 is a v10 name.
+
+```text
+tables: capability_tokens, reviews, change_set_accepts, repo_merges, runtime_consents, session_worktrees
+indexes: ix_tokens_job, ix_reviews_version, ix_accepts_project, ix_accepts_job, ix_merges_project, ux_consent_live, ix_worktrees_project
+triggers: tr_tokens_insert, tr_tokens_update, tr_tokens_no_delete, tr_reviews_insert, tr_reviews_no_update, tr_reviews_no_delete, tr_accepts_insert, tr_accepts_no_update, tr_accepts_no_delete, tr_merges_insert, tr_merges_no_update, tr_merges_no_delete, tr_consents_insert, tr_consents_update, tr_consents_no_delete, tr_worktrees_insert, tr_worktrees_update, tr_worktrees_no_delete
+```
+
+---
+
+## 52. The v10 migration and its runbook
+
+### 52.1 Opt-in
+
+`PersistStore.open()` runs v10 only when it is enabled **and** execution is in place. Four things decide that:
+- **`PersistOpenOptions.enableV10`.** When the caller does not set it, the default is `V10_ENABLED_BY_DEFAULT`, which is **false**. `src/main/index.ts` maps `NEXUS_ENABLE_V10=1` to `enableV10: true` and otherwise passes `undefined`, never an explicit `false`, so a later default flip is not overridden.
+- **Execution not in place** (v9 not enabled, held, skipped or failed, or a v7, v8 or v9 shape problem). The outcome is `skipped: v9_unavailable`, and no v10 line is logged. Agents need execution, so `agentsUnavailableReason` is then the execution reason.
+- **v10 off, on a v9 file.** The file stays at v9. The log says `[db] v10 migration: not enabled; database stays at v9`, the outcome is `skipped: not_enabled`, and nothing is written: no backup, no marker and no v10 object. Execution is unchanged.
+- **v10 off, on a v10 file.** The v10 shape is still checked, no line is logged and nothing is written. Agents report `not_enabled`, and the platform, handoffs and execution work.
+
+Only tests and the environment switch enable v10 today. The default flip is one line, `V10_ENABLED_BY_DEFAULT = true`. It comes in a separate small commit after the user's verification go-ahead, together with the test edits that commit needs.
+
+### 52.2 Procedure
+
+`PersistStore.open()` runs the v7, v8 and v9 steps ([section 14](#14-migration-procedure), [section 22.1](#221-procedure), [section 33.2](#332-procedure)), then `migrateV10` through `migrateV10Guarded`. `open()` never throws because of v10: an unexpected throw logs `[db] v10 step: unexpected error=<redacted>; agents disabled`, and the platform, handoffs and execution stay as the v9 step left them.
+
+1. **Decide.**
+   - **Execution not in place:** `skipped: v9_unavailable`, with no v10 line.
+   - **`from > 10`:** the newer-schema branch logs `[db] schema v<n> is newer than this build (v10); opened for legacy use only, platform disabled, nothing migrated`.
+   - **Already at v10:** `v10ShapeProblem(db, true)` runs. A problem logs `[db] v10 shape check failed: <problem>; agents disabled`. The outcome is `not_needed`.
+   - **Not enabled:** `[db] v10 migration: not enabled; database stays at v9`.
+   - **Held** (`holdV10`, or `holdV9`, `holdV8` or `holdV7`, which imply it): the outcome is `skipped: held`.
+   - **The v10 failure marker counts 3 or more:** the outcome is `skipped: held` (`repeated_failure`), and no backup is taken.
+2. **Pre-checks.** These run only when the file held data before this `open()`:
+   - `integrity_check` is `ok`;
+   - free space in `backups` is at least 2 × (`harness.db` + `-wal`);
+   - the row counts of every table are taken.
+
+   A failure skips v10 (`precheck_failed` or `insufficient_disk`), and the file stays at v9.
+3. **Backup** of the v9 database: `userData/backups/harness-v9-<UTC>.db`. It is written, verified and hashed exactly like the earlier backups, with `user_version = 9`. A failure gives `skipped: backup_failed`. A fresh database takes no v10 backup.
+4. **Migrate**, in ONE `BEGIN IMMEDIATE` transaction: `applyV10`, then `user_version = 10`, then COMMIT. `applyV10` runs, in order:
+   1. `v7ShapeProblem`, `v8ShapeProblem` and `v9ShapeProblem` (each exact) must all be null;
+   2. `v10ShapeProblem(db, false)` refuses a pre-existing object of the wrong shape;
+   3. `V10_DDL`;
+   4. the `nexus_migrations` row 10;
+   5. one `db.migrated` activity row, only if that record is new;
+   6. `verifyV10`. It checks the exact v7, v8, v9 and v10 shapes and an empty `foreign_key_check`. It also checks that **every** pre-existing table kept its row count exactly, with these exceptions: `activity`, `nexus_migrations` and `sqlite_sequence`. v10 adds no row to any older table.
+5. **After COMMIT:** the v10 failure marker is deleted and `quick_check` runs. If it is not `ok`, agents stay off and the log names the backup. The platform, handoffs and execution stay on, because the v7 to v9 objects are unchanged.
+6. **On a throw in step 4:** SQLite rolls everything back, including `user_version`. The file stays at v9, the backup is kept, and the marker is incremented. A process killed inside the transaction leaves a v9 file with no v10 object.
+
+The outcome is `PersistStore.lastMigrationV10`. `lastMigration`, `lastMigrationV8` and `lastMigrationV9` keep their contracts.
+
+**Store getters.**
+- `platformAvailable`, `handoffsAvailable` and `executionAvailable` now hold at v10 as well; v10 leaves execution as the v9 step set it.
+- `agentsAvailable` is true only when all of these hold: v10 is enabled for this `open()`, the store is at v10 with the v10 post-check (or the reopen shape check) passed, and execution is available.
+
+The platform adds its own condition. `createNexusPlatform` builds the agent services (tokens, budgets, the gateway, sessions, worktrees, change sets, review and accept) only when the caller passes `agents: true`, execution is available, and `v10ShapeProblem` is null. Otherwise it logs `[nexus] agents unavailable: execution or the schema v10 shape is not in place`.
+
+### 52.3 The `nexus_migrations` row 10
+
+After a successful v10 step, `nexus_migrations` has a fourth row:
+- `version = 10` and `from_version = 9`;
+- `applied_at` (ms) and `app_version`;
+- `backup_file`: the basename (`harness-v9-<UTC>.db`). It is NULL for a fresh database;
+- `backup_sha256`: the same value as the `backup ok` line;
+- `backup_bytes`;
+- `row_counts_json`: the pre-migration counts;
+- `backfill_json` = `'{}'`.
+
+The `db.migrated` activity row has actor `system`, `entity_id` `'10'`, and details `{from: 9, to: 10, backupFile, backupSha256}`.
+
+### 52.4 Log lines, in order
+
+Every line is prefixed with an ISO timestamp. As before, lines never carry row contents, kv values or full paths.
+
+**First launch of a v9 database with v10 enabled (success):**
+```
+[db] schema version 9
+[db] v10 precheck ok integrity=ok integrityMs=<n> free=<bytes|unknown> needed=<n>
+[db] backup ok file=harness-v9-<UTC>.db bytes=<n> sha256=<hex> from=9 writeMs=<n> verifyMs=<n> hashMs=<n>
+[db] row counts <table>=<n> ...
+[db] v10 migration: start from=9
+[db] v10 migration: success to=10 durationMs=<n> tables=6
+```
+No v9 line appears: the v9 step only re-checks its shape.
+
+**v10 not enabled (today's default), on a v9 file:**
+```
+[db] schema version 9
+[db] v10 migration: not enabled; database stays at v9
+```
+
+**Fresh database:**
+- the earlier steps' lines;
+- `[db] fresh database: no v10 backup needed`;
+- the `start` and `success` lines.
+
+**Every later launch at v10:** `[db] schema version 10`, then the `[nexus]` lines. There is no second backup and no migration.
+
+**Held:**
+```
+[db] v10 migration: skipped reason=held (NEXUS_DB_HOLD_V10=1); database stays at v9
+```
+The parenthesis names `NEXUS_DB_HOLD_V9=1`, `NEXUS_DB_HOLD_V8=1` or `NEXUS_DB_HOLD_V7=1` when only one of those is set. The switches are read only when v10 is enabled and execution is in place.
+
+**The v10 transaction failed:**
+```
+[db] v10 migration: failed from=9 error=<redacted>; database left at v9; backup kept at harness-v9-<UTC>.db
+[db] v10 migration will be retried at the next launch (failure <n> of 3); set NEXUS_DB_HOLD_V10=1 to stay on v9
+```
+- On the third failure, the second line reads instead: `[db] v10 migration has failed 3 times in a row; it is held from the next launch (held: repeated_failure)`.
+- On a fresh database, the first line ends `no backup (fresh database)`.
+
+**Held after repeated failures:**
+```
+[db] v10 migration: skipped reason=held: repeated_failure count=3; database stays at v9; no new backup taken
+[db] to retry v10, quit and delete harness.db.v10-failures.json next to harness.db; existing backups are kept (restore one with the restore tool, tools/nexus-db-restore.cjs, if needed)
+```
+
+**Other skips (the file stays at v9):**
+- `[db] v10 migration: skipped reason=precheck_failed detail=…; database left at v9`, or `reason=insufficient_disk detail=free=<n> needed=<n>`;
+- `[db] backup failed stage=<stage> error=…`, then `[db] v10 migration: skipped reason=backup_failed detail=stage=<stage>; database left at v9`.
+
+**Post-commit check failed:** `[db] v10 post-check FAILED; agents disabled; restore from backup harness-v9-<UTC>.db`.
+
+**Platform lines that concern agents:**
+- `[nexus] agents unavailable: execution or the schema v10 shape is not in place` (the caller asked for agents and they are off);
+- `[nexus] agent tokens revoked at runner ready: <n>` (every runner `ready` revokes live tokens);
+- `[nexus] agent tokens not revoked at runner ready (<code>)` (the revocation threw; the expiry still bounds the token).
+
+### 52.5 The hold cascade, the failure marker and auto-hold
+
+| What | Where and how |
+|---|---|
+| Hold switch | `NEXUS_DB_HOLD_V10=1` keeps the database at v9 when v10 is enabled. `NEXUS_DB_HOLD_V9=1`, `NEXUS_DB_HOLD_V8=1` and `NEXUS_DB_HOLD_V7=1` imply it: the holds cascade v7 → v8 → v9 → v10. While v10 is not enabled, the switches are not read for v10 at all. |
+| Failure marker | `userData/harness.db.v10-failures.json`, next to the database: `{"count":n,"lastFailureAt":<ms>}`. It is separate from the v7, v8 and v9 markers. Each failed v10 transaction increments it, and a successful commit deletes it. Skips do not count. |
+| Auto-hold | At 3 consecutive failures (`V10_FAILURE_LIMIT`), v10 holds itself and takes no new backup. To retry, quit and delete `harness.db.v10-failures.json`. |
+| Backups | `userData/backups/harness-v9-<UTC>.db`, next to the older ones. Nothing prunes them. |
+
+### 52.6 When agents alone are off
+
+`PersistStore.agentsUnavailableReason` says why agents are off while the platform is on. It is null when agents are available, and also when the whole platform is off. **Execution not in place comes first:** agents need execution, so the reason is then the execution reason, whether or not v10 is enabled.
+
+| Reason | Set when |
+|---|---|
+| `not_enabled` | v10 was not enabled for this `open()`, and execution is in place. This is the default today. |
+| `held` | A hold switch kept the file at v9. |
+| `auto_held` | The v10 marker reached 3. |
+| `backup_failed` | The `harness-v9` backup failed. |
+| `failed` | The v10 transaction rolled back, the post-check failed, a pre-check or the disk check skipped v10, or the step threw. |
+| `shape` | The file is at v10, but the v10 shape check failed on reopen. |
+
+The agent channels #42 to #51 then answer `{ ok: false, code: 'platform_unavailable', reason: 'agents_unavailable', subReason }` ([section 58](#58-the-ipc-surface-42-to-51)). Every other channel still answers normally.
+
+### 52.7 Runbook: enabling v10
+
+Do this only with the user's go-ahead. The migration runs on a test copy first, then on the real file.
+
+1. **Quit the app.** Copy `harness.db` and any `-wal` and `-shm` to a folder outside userData. This is your independent fallback. The migration takes its own verified backup as well, but do not rely on it alone.
+2. **Check free space.** v10 itself needs 2 × the database in `backups`. Agent turns also need execution's resources: 30 GiB free at the data home for image preparation and `test:exec`, and the lease floor for jobs ([section 42](#42-the-resource-gate-and-the-testexec-gate)).
+3. **Try it on a test copy.** Restore a copy of the database into a scratch userData folder and launch with `--user-data-dir=<temp>`, with `NEXUS_ENABLE_V9=1 NEXUS_ENABLE_V10=1`. Check the log lines of [section 52.4](#524-log-lines-in-order), including the `backup ok … from=9` sha256.
+4. **Rehearse the restore** of the test copy to v9 ([section 52.8](#528-restore-to-v9)).
+5. **On the real file,** launch once with `NEXUS_ENABLE_V9=1 NEXUS_ENABLE_V10=1` (or normally, after a default flip), and check the same lines.
+6. **Check the file** with Electron-as-node: `user_version` is 10, `integrity_check` is `ok`, `nexus_migrations` row 10 is present, `foreign_key_check` is empty, and the older tables' row counts equal row 10's `row_counts_json`.
+
+Turning v10 on does not start an agent. A turn also needs the agent CLI installed and signed in, the user's consent to its network destination, the user's `repo.write_refs` approval for the project, and a ready runner.
+
+### 52.8 Restore to v9
+
+You do not need a restore after a failed v10 transaction: the file is still v9. Restore after a v10 post-check failure, or when the user asks to go back to v9. Follow [section 15.6](#156-restore-procedure) with the v9 backup:
+
+1. Quit the app. Copy `harness.db`, `-wal` and `-shm` outside userData.
+2. Take the sha256 from the v10 `backup ok … from=9` line, or from `nexus_migrations` row 10 (`backup_sha256`).
+3. Dry run:
+   ```
+   node tools/nexus-db-restore.cjs --db <userData>/harness.db --backup <userData>/backups/harness-v9-<UTC>.db --sha256 <hex>
+   ```
+4. Apply: the same command with `--apply`.
+5. Relaunch. The tool reads the backup's `user_version` from its header, and for a v9 backup it names the hold switch: `Next: launch with NEXUS_DB_HOLD_V10=1 to stay on schema v9, or launch normally: a build with schema v10 enabled …`. While v10 is not enabled, a normal launch stays at v9. If the v10 marker reached 3, delete `harness.db.v10-failures.json` before you retry.
+
+The data home `<userData>/nexus` is not part of the database backup. After a restore to v9 it keeps its blobs, logs, work folders and **session worktrees** (`wt/`). The v9 schema does not read them, and a later v10 migration starts with empty v10 tables, so an old worktree has no `session_worktrees` row. The user's `.git` keeps the hidden refs and the worktree entries Nexus wrote there ([section 59](#59-known-limitations), item 54).
+
+### 52.9 Downgrade: the `4aec76f6` build on a v10 database
+
+The B2a-close build (`4aec76f6`) knows schemas up to v9. On a v10 database:
+- It logs `[db] schema v10 is newer than this build (v9); opened for legacy use only, platform disabled, nothing migrated`. The outcome is `skipped: newer_schema`.
+- It opens for legacy use: list, save, and delete a project that has no platform records. `user_version` stays 10, it takes no backup, and it adds no v10 object.
+- **Its delete guard stays on.** The guard sees a project's jobs and sessions, and refuses the delete without writing.
+- The current build then reopens the file with `not_needed` for every step.
+
+`test/nexus-db-v10-migration.test.cjs` pins this (M10-14). Nothing stops an older build from opening a v10 database (D1, unchanged).
+
+---
+
+## 53. The agent runtime and its isolation
+
+### 53.1 Who runs where
+
+An agent turn involves four places. Only main decides.
+
+| Place | What runs there | What it may do |
+|---|---|---|
+| **Main** (Electron main process) | Sessions, the start and scheduling guards, the token, the plan, the MCP gateway, change sets, review, accept, all records. | Reads and writes the database. Never runs the agent and never opens the user's login. |
+| **The runner** (`utilityProcess`, no database) | `agentAttempt` (one turn), the loopback MCP server, the host egress proxy, the Docker driver, the worktree guard, the process-tree records. | Relays and enforces. It decides nothing about authorization. |
+| **The agent CLI process** (on the host, spawned by the runner's adapter) | The agent's own program. | Reads and edits files in its worktree through its own tools, **confined by policy** ([section 59](#59-known-limitations)). Talks to Nexus over loopback MCP with its turn's bearer. Reaches its model service only through the runner's host egress proxy. It has no shell tool. |
+| **The turn's container** (Docker) | `sleep <seconds>` through the B2a entry; every command the agent runs, through `sandbox_exec`. | Network `none`. The session worktree bound read-write at `/workspace` and nothing else. Read-only root, all capabilities dropped, `no-new-privileges`, the B2a limits ([section 36](#36-the-sandbox)). |
+
+The container's command is `sleep <wall clock + 120 s>` run by the existing entry of the sandbox image, so B2b needs no image change. Its memory limit is 1 GiB. It uses the project's sandbox profile (`sde-node`, or `sde-python` for a Python-only project). It has **no `node_modules`** and no dependency cache mount: the agent edits files, Nexus runs the tests ([section 59](#59-known-limitations), item 58).
+
+### 53.2 The `AgentRuntime` contract
+
+`src/shared/nexus/runtime.ts` is vendor-neutral: types only, no value. `RuntimeKind` is a branded string (an adapter id such as `cli-agent` or `scripted`), not a list of vendors, and `RunRequest` assumes no provider.
+
+| Member | Contract |
+|---|---|
+| `kind` | The adapter's opaque id. |
+| `describe()` | `version`, `supportsHttpMcp`, `supportsResume`, `models`, `label` (the engine's display name, shown on the setup row only) and `egressHosts` (the destinations the agent process needs). Main never takes hosts from the renderer ([section 54](#54-network-and-consent)). |
+| `health()` | `{ ok: true, version }`, or `{ ok: false, reason: not_installed \| not_authenticated \| version_unsupported \| error, detail }`. |
+| `start(req, signal)` | One turn. The iterable ends after exactly one of `run.completed`, `run.failed` (`runtime_error`, `auth`, `limit` or `protocol`) or `run.cancelled`. |
+| `cancel(runRef, graceMs)` | Ends the turn. |
+| `respondApproval?` | Optional. The CLI adapter does not use it: permission prompts are off, and approvals live in Nexus. |
+
+`RunRequest` carries the job, attempt and session ids, the domain, the skills (id, version, sha256), the context (hash and file), the message, the worktree (`hostPath`, `editable`), the container id, the MCP URL, the model ids (opaque), the limits (`wallClockMs`, `maxTurns`, `maxCostUsd`), `credential: { ref }` (a reference, never a secret: `runtime-owned` in B2b) and `configDir`. **The token is not in it**: it travels in memory only and reaches the runtime through its constructor.
+
+`RuntimeEvent` is `run.started`, `message.delta` (display only, never evidence, at most 4 KiB per chunk), `tool.started`, `tool.completed`, `approval.requested`, `usage` (cumulative and monotonic, never a delta), and the three terminal events. `AgentUsage` holds `inputTokens`, `outputTokens`, `cacheCreationTokens`, `cacheReadTokens`, `costUsdCents` (null when the runtime reported none), `toolCalls` and `estimated`.
+
+**Vendor neutrality is pinned.** `test/nexus-core-vendor-neutral.test.cjs` scans every shared contract, `schemaV9.ts` and `schemaV10.ts`, the agent, repo and review code of main, the renderer's agent panel and the four Nexus skills for engine and vendor names. The engine may be named only under `src/runner/runtimes/cliAgent/`, in the harness and the runtime tests and their fixtures, and in the probe tool. In the UI, the engine's display name appears only on the setup row (D-B9); every other view says "the agent".
+
+### 53.3 The registry and the two kinds
+
+`runtimeFor(kind, ctx)` (`src/runner/runtimes/registry.ts`) spawns nothing. It builds one of two runtimes:
+- **`cli-agent`**: the real adapter ([section 53.5](#535-the-cli-adapter)).
+- **`scripted`**: `ScriptedRuntime`, an in-process test double. It replays a fixed list of steps (`delta`, `call`, `usage`, `complete`, `fail`) and makes each `call` as a real HTTP `tools/call` to the runner's real loopback MCP server with the turn's own bearer. It starts no process. The scripts come from a `RunnerDeps` test seam, and no script exists outside tests. It exists so that everything around a turn (tokens, the gateway, the exec relay, change sets, accept, usage caps, recovery) can be exercised without an agent CLI, and `test/runtime-scripted-contract.test.cjs` (SR1 to SR3) holds it to the same event contract as the adapter.
+
+**What `ScriptedRuntime` proves, and what it does not.** It proves the platform wiring. It does not prove that a real model uses the tools well, writes a change that passes its tests, or stays inside its limits.
+
+### 53.4 How a turn runs
+
+**In main** (`AgentService`, `ExecutionService`):
+1. **Start** (#42). The actor is a stored user: the system, an agent and a token are refused. The checks, in order: the agents part is available; the runtime's cached health is fresh and ready; the consent and budget guards ([section 57](#57-caps-and-budgets)); the live consent's hash verifies against its own hosts; the consent's hosts equal the adapter's own ([section 54](#54-network-and-consent)); one turn per session. It opens or reuses the session, creates the `agent.run` job (priority 1, `params_json { message, skillId }`, the focus versions as `job_inputs`, `limits_json` from the consent's caps), and the scheduler leases it. A turn never runs inside the start call.
+2. **Scheduler guards.** A queued turn waits with a phase word in `jobs.phase`: `waiting:runtime`, `waiting:consent`, `waiting:budget`, `waiting:rate`, `waiting:approval` (the `repo.write_refs` approval), `waiting:worktree`, and `waiting:slots` while another turn runs. The job's headline stays `queued`: the closed headline set did not change. A second conversation started while one turn runs queues; it is not refused.
+3. **Preparation** (before the lease transaction): the session worktree ([section 56](#56-worktrees-the-git-engine-change-sets-accept-and-merge)), `context.md` and `skills.md` under `<data home>/jobs/<job id>/agent/`.
+4. **The lease transaction** does, in one transaction: the lease and attempt rows, `TokenService.mintTx` (the token exists only in the plan handed to the runner), the `AgentPlan` (the live consent's hosts and hash, the token's tools, the caps), and the redacted `sandbox_json` and `environment_json`. A throw anywhere rolls the whole lease back, token included.
+
+**In the runner** (`agentAttempt.run`), in this order:
+1. Create, preflight and start the turn's container. A preflight problem removes it and refuses the attempt.
+2. Bind the turn's bearer to that container (`bindAgentTurn`): the exec relay trusts only this binding for which container a grant runs in.
+3. Start the host egress proxy for the turn. A failure fails the turn (`consent_mismatch`, or `proxy_failed`); the turn never runs without it.
+4. Write `request.json` (the `RunRequest`: the message, the context path and the worktree path; no token) into the job's config dir. The adapter writes its own `mcp.json` and `settings.json` there.
+5. Run the runtime and relay its events: chunked, every free-text field redacted (a token-shaped string first). The worktree guard runs after every granted `sandbox_exec`; a refusal ends the turn `failed: worktree_guard`, and **overrides any terminal event**, `run.completed` included.
+6. Always, in one `finally`: unbind the bearer, end the CLI process tree, close the proxy, stop and remove the container, and delete every file in the config dir except `context.md`.
+7. Report `attempt.exited`.
+
+**Settlement in main.** A turn's end is judged from evidence ([section 38](#38-evidence-based-completion)), never from the exit alone:
+- `run.completed` with at least one **registered** work item is `completed`. Registered work is a `change_set` version made by a `changeset.collect` child of the turn, or a requirement draft saved through its token. A discovery child's test suite, a build or any other version does not count.
+- `run.completed` with none is `partial`, outcome `no_change`.
+- `run.failed` with code `auth` is `runtime_auth`, and the session becomes `failed`. `limit` is `limit`; `protocol` is `runtime_protocol`.
+- An exit with no terminal event fails the turn `runtime_error`.
+- A turn that reaches a cap ([section 57](#57-caps-and-budgets)) is cancelled and ends `failed: limit`.
+- A session stays `running` after a turn ends (the session state table has no way back to open). `end` completes it after cancelling a live turn.
+
+**Restart recovery** ([section 35](#35-restart-recovery)) has its own agent block next to the accept block. A live agent attempt is **never adopted**: after a main restart or a runner restart the turn's job and session become `interrupted`, its tokens are revoked (`restart`, or `runner_restart`), and its container, now the container of an ended attempt, is removed by the orphan rule of [section 35.5](#355-orphan-scoping). A queued turn whose conversation was interrupted by a restart is cancelled; nothing resumes it. The worktree and its files stay.
+
+**Shutdown.** App quit aborts every agent attempt and waits for it (bounded at 15 s); past the bound, the attempt's labelled containers are stopped and removed by label, and every recorded process tree is killed.
+
+**The context file.** `context.md` is rebuilt for every turn, never carried by the CLI (the adapter's `supportsResume` is false). Its sections: Domain (id and label), Vocabulary, Focus versions, Prior user messages (the newest 20 of this session), Requested changes (the newest 20 `request_changes` comments for the project's versions), a short note of the project's newest diagnostic report, and notes (for example that an interrupted earlier conversation's unfinished work was not carried over). Every value is checked for secrets before it is added: a single-value field that hits is dropped whole, and a list is checked item by item. If anything was dropped, one `context_redacted` activity row records the count only. `skills.md` holds the skills the domain offers in this sub-phase (`nexus-sde-change`, `nexus-sde-tests-first`, `nexus-sde-requirement-draft`, `nexus-sde-app-manifest`), and each skill's version and sha256 are in the attempt's record.
+
+### 53.5 The CLI adapter
+
+`src/runner/runtimes/cliAgent/` is the only place that names the engine. It is the one real `AgentRuntime`, under the kind `cli-agent`. It runs the user's **installed Claude CLI** (its native executable, found on `PATH` and then in the per-user install folder; never a shim) on the host under the runner.
+
+**What it pins.**
+- **Version.** The installed version must match `^2.1.\d+` and the CLI's `--help` must list all 19 pinned flags, or the turn is refused `version_unsupported`. The check is cached per executable. The CLI updates itself (it moved from 2.1.295 to 2.1.309 while B2b was built), so Nexus accepts the family, not one version.
+- **The argv**, exactly (`args.ts`; the message, the context and the token are never in it):
+  ```text
+  -p --output-format stream-json --verbose --input-format text
+  --restricted --strict-mcp-config
+  --mcp-config <dir>/mcp.json --settings <dir>/settings.json --setting-sources ""
+  --tools Read,Edit,Write,Glob,Grep
+  --allowedTools Read Edit Write Glob Grep mcp__nexus__<each granted tool>
+  --disallowedTools Task Agent PowerShell Bash WebFetch WebSearch NotebookEdit
+  --permission-mode dontAsk --permission-prompts none
+  --no-session-persistence --disable-slash-commands --no-chrome
+  --max-budget-usd <budget>   [--append-system-prompt-file <dir>/skills.md]
+  ```
+  There is **no `--safe-mode`**: the probe found that it drops the Nexus MCP server, and the user decided to keep every other lock instead ([section 61](#61-the-task-0-probe-results-and-the-stop-rules)). There is no `--model`: the engine's default is used and the model it reports is recorded opaquely. `<budget>` is the least of the turn cap, the day's remainder and the job's cost limit. `--allowedTools` names exactly the tools in the token's claims.
+- **Settings file.** `settings.json` holds `permissions.deny` for Read, Edit and Write on `**/.git`, `**/.git/**`, `**/.env*`, `**/*.pem`, `**/id_rsa*`, `**/*.key`, `**/.npmrc` and `**/.pypirc`, and `disableAllHooks: true`. It has no `env`. `mcp.json` names the loopback server with the header `Authorization: Bearer ${NEXUS_MCP_TOKEN}`: the CLI expands the variable, so the token is in no file.
+- **Environment**, built from nothing (`env.ts`): the Windows system variables, `PATH` (the system folders and the CLI's folder), `USERPROFILE`, `HOMEDRIVE`, `HOMEPATH`, `APPDATA` and `LOCALAPPDATA` (the user's own, so the CLI finds its login), `TEMP` and `TMP` inside the job's config dir, `LANG`, `HTTPS_PROXY` (must be `http://127.0.0.1:<port>`, the turn's proxy), `NO_PROXY=127.0.0.1`, `NEXUS_MCP_TOKEN`, and four `DISABLE_*` switches (auto-update, telemetry, error reporting, non-essential traffic). There is no `HTTP_PROXY`, no `CLAUDE_CONFIG_DIR`, and nothing is inherited: the runner's own `ANTHROPIC_*`, `*_API_KEY`, `*_TOKEN` and CA bundle never pass. A test-only overlay can add names but never replace one of these.
+- **Input.** The message and the context go on stdin as one preamble.
+- **Output.** The CLI's stream-json is translated to neutral events. Usage is kept per message id (the largest value) and summed, so it is monotonic. Each new tool-use id is one tool call. A failure message is built from the CLI's fixed subtype and terminal-reason words, never from free text. A line over 1 MiB fails `protocol`.
+- **Caps, again.** The adapter enforces tokens, tool calls, spend and wall clock itself, on top of `--max-budget-usd`; over a cap it kills the process tree and fails `limit`.
+- **Process tree.** The CLI's pid is recorded in a pidfile the moment it is spawned. Cancel is one awaited tree kill. A normal end gets 3 s to exit and is then killed. A process that exits on its own is forgotten at once and never killed later. The only program the process-tree code spawns is `taskkill.exe`, by its resolved path, never a shell.
+- **Health.** `describe()` reports the label and the one destination the CLI needs, `api.anthropic.com:443`. `health()` runs `--version` and `--help`, and runs `auth status --json` only when given a proxy. The raw text of `auth status` is parsed **inside the adapter** to `yes`, `no` or `unknown` and dropped: stderr is discarded, and nothing else is kept, logged, stored or sent ([section 54](#54-network-and-consent)).
+
+**What the argv does and does not give.** With these flags the user's CLAUDE.md files, hooks, plugins, skills, agents, commands, settings and other MCP servers do not load. The probe planted 21 groups of them in a fake home and in the worktree: with no locks all 21 loaded, and under the pinned argv none did. What the argv does **not** give is OS isolation: see [section 59](#59-known-limitations).
+
+**Test seams.** `agentBin`, `agentArgvPrefix` and `agentEnv` let the runner's process-tree tests run a stand-in executable through the same adapter. Production never sets them: `src/runner/index.ts` names none of them, and a source pin keeps it so.
+
+**`test:runtime`.** `npm run test:runtime` runs `ScriptedRuntime`'s contract (SR1 to SR3) and then the adapter's contract (CR0 to CR15, plus stream, binary and proxy checks) against the installed CLI inside the fake-home harness. The harness is a fake home, a fake key, a loopback mock model and a deny-all proxy: the run never touches the user's home, login or CLI store, and never the network. Exit 0 means everything ran and passed, 1 a failure, and 3 that the CLI is not installed, so the CLI contract was not checked and the output says so. The checks include: the exact argv, no secret or token anywhere, the environment equals the allow-list, tools outside the allow-list are refused, Read, Edit, Write, Glob and Grep are refused outside the worktree and on sensitive names (a scripted case of twelve calls found no leak), a cancel leaves no process, and the only host the CLI asks for is `api.anthropic.com:443`.
+
+### 53.6 What the loopback MCP server decides
+
+Nothing. `src/runner/mcpServer.ts` is a relay. It accepts `POST /mcp` only, on `127.0.0.1` and an ephemeral port, and refuses a `Host` other than its own address (anti-rebinding), any `Origin`, a content type other than `application/json`, an `Accept` without it, and a body over 1 MiB. It speaks JSON-RPC 2.0 (`initialize`, notifications, `ping`, `tools/list`, `tools/call`; it also answers the `server/discover` the CLI sends first) and answers one pinned protocol version. `tools/list` is the static catalog, unfiltered. A `tools/call` is forwarded to main as `mcp.call` with the bearer and waits for `mcp.reply` (130 s at most, a little over the 120 s register wait of [section 56](#56-worktrees-the-git-engine-change-sets-accept-and-merge)). Every error text and tool result is scrubbed of token-shaped strings on its way out. The relay logs `mcp: tools/call <name>` and nothing of a bearer or an argument.
+
+---
+
+## 54. Network and consent
+
+**One destination.** The agent process may reach one destination, the adapter's own `egressHosts` (one host on port 443, named in [section 53.5](#535-the-cli-adapter)), and only through the runner's loopback proxy. The destination comes **only from the adapter**, as `describe()` reports it through the probe: the renderer never names a host, and main never takes one from a request. A container has no network at all.
+
+**The proxy** (`src/runner/hostEgressProxy.ts`) is B2a's allow-list proxy ([section 37](#37-networks-and-approvals)) started on `127.0.0.1` for one turn. It accepts only `CONNECT host:port` for an exact entry on its list, checks that the TLS ClientHello's SNI equals the host, refuses IP literals and private addresses, refuses plain HTTP, and keeps no path, query or header. It parses each request into a decision (allowed or refused, host, port, a reason) and hands the first 200 to its caller as events; the rest are only counted. **In this build the agent turn's caller discards them:** the runtime's own host traffic is not recorded as attempt events or in any table. An empty list is **deny-all** and needs no consent.
+
+**Consent binding (HE9).** `runtime_consents.hosts_sha256` is the sha256 of the canonical hosts text: the lowercased, sorted, de-duplicated `host:port` strings as a JSON array (for example `["<host>:443"]`). `BudgetService` and the proxy each implement that rule, and a test (HX) pins the two equal. When the allow list is not empty, the proxy refuses to start unless it is handed the live consent's hash and that hash equals the hash of its own list: the start is refused `consent_mismatch` before anything listens. The same check runs in three places:
+- main's `start` re-checks the live consent's recorded hash against the canonical hash of the same row's hosts, and the consent's hosts against the adapter's;
+- the lease transaction fails the turn `consent_mismatch` before it mints a token;
+- the runner passes the plan's `egress.consentHostsSha256` **unchanged** to the proxy. The plan field is main's own read of the live row, never derived from the allow list, and it is required (64 lowercase hex) when the allow list is not empty.
+
+**The consent record and its caps (D-B4).**
+- **Grant** (#51): an owner only. Caps are clamped to the ceilings: a larger value is lowered, a value below 1 is refused. The turn cap is lowered to the day cap. The hosts and the runtime kind come from the probe's fresh answer, never from the caller. A grant while a consent is live is refused `consent_live`.
+- **Revoke** (#51): the owner, once (a second call changes nothing). The table's trigger would also let the system record a revocation; no code path does. After it, a start is refused (`consent_missing`), and a queued turn waits `waiting:consent`.
+- **Live consent:** one in total ([section 51.4](#514-indexes-and-their-access-reasons)).
+- The activity row of a grant or revoke holds the caps and `hostsCount`, never the hosts.
+
+**The health probe is on demand, with a TTL.** The runner runs the agent CLI (`--version`, `--help` and `auth status --json`) only when main sends a probe flagged `runtimes: true`, and only `AgentRuntimeProbe.refresh()` sets the flag, which exists only with agents on.
+- **When:** when the setup sheet opens and the cache is stale (#51 `get`), on "Check again" (#23 with `{ probe: true }`), on a consent grant or revoke, and before a start whose cached answer is stale (a wait bounded at 10 s). Never at app start, never on a timer, and never from the scheduler's own 60-second sandbox probe, which carries no flag and reaches no adapter.
+- **How:** for each adapter, the runner starts a loopback proxy and runs the CLI with it. **Before consent the proxy is deny-all.** The allow-list proxy is used only when main's consent hash equals the hash of the adapter's own host list; any other hash stays deny-all. With no proxy, the engine is not run. One engine run serves a check (single flight), `auth status` runs once per refresh, and a check that times out closes its proxy at once.
+- **The sandbox result never waits for it.** The runner posts the sandbox `probe.result` (`runtimes: []`) at once; a flagged probe gets a second `probe.result` with the same facts plus the runtimes. Main records only a non-empty list, so the scheduler's empty one never clears the cache.
+- **The TTL.** Main keeps the answer for 5 minutes. An older entry is unknown for everything that gates on it (the start, the egress hosts, the setup row), so a stale `ok` can never pass a start. The runner also keeps its answer for 10 s per consent state.
+- **What the user's CLI does in a check.** It runs under the user's own login and home, through the deny-all proxy. The `auth status` text becomes `yes`, `no` or `unknown`, and the setup row shows only that and the version. Whether `auth status` can answer `yes` under a deny-all proxy on a real login is **not yet verified**: it may answer `no` because it cannot reach the network, in which case the row reads not signed in before consent. That is measured at the real-login smoke test.
+
+**What the setup sheet says.** The agent's rows are the only place the engine's display name and the destination appear. The permission row says what the installed CLI keeps in the user's own folder (its sign-in, settings and log files), that Nexus never reads, copies or stores the sign-in, that the agent can reach only the destination granted there, and that the agent runs in a sandbox with no other network, and that which files it may touch is a rule of the agent program, not an operating-system wall.
+
+---
+
+## 55. Tokens and MCP
+
+### 55.1 The token
+
+- **Shape.** `<jti>.<mac>`: a 22-character base64url id (16 random bytes) and a 43-character base64url HMAC-SHA256 of the id. Opaque: **the claims are not in it**.
+- **Key.** 32 random bytes held in a `#private` closure of one `TokenService` instance, so one key per main boot. It is never a property, never exported, never logged. A new instance cannot verify an old token.
+- **Claims** live in `capability_tokens` by `jti` ([section 51.1](#511-tables)): the project, workspace and participation come from the token's job and session. Main rebuilds the claims from the row on every call and trusts only the `jti` and the subject; widened in-memory claims verify as `unknown`.
+- **One token per turn.** It is minted only inside the lease transaction, by the system principal, for an `agent.run` job of the session that is `leased` or `running`. The grant is checked: every capability is in the domain's ceiling (once each), recipe and kind lists are subsets, path scopes keep the ceiling's exclusion of `.git`, every tool is an MCP tool whose capability is granted, every input is a version of the project, `maxChildJobs` is at most 20, and the lifetime is at most the 30-minute wall clock plus 5 minutes. A turn's capabilities are the SDE ceiling's `code.read`, `code.edit`, `git.commit`, `sandbox.exec`, `artifact.read`, `artifact.register`, `job.request`, `review.request` and `approval.request`, each as the ceiling lists it, never wider.
+- **The token travels** from the plan over the `MessagePort` to the runner, and from the runner into the CLI's environment (`NEXUS_MCP_TOKEN`). It is in no argv, file, log, event, database row or view, and no table, view, event or log holds a token-shaped value or a MAC (a test scans every table and view).
+- **Verification order:** the shape (bounded, then the pattern), a constant-time MAC compare, then the stored row. Codes: `malformed`, `bad_signature`, `unknown`, `expired`, `revoked`. Revocation is read fresh on every call.
+- **Revocation.** `revoked_at` and a reason are recorded once, and the trigger forbids anything else.
+  - **At job end:** `ExecutionService.moveJobTx` is the one choke point. Whenever an `agent.run` job reaches a terminal state, or goes from `leased` back to `queued`, the turn's tokens are revoked (`job_ended`). **Revocation fails closed:** if it throws, the end transition rolls back, and the job stays as it was until a retry or a tick ends it.
+  - **At runner `ready`:** every `ready` from a new runner revokes all live agent tokens (`runner_restart`).
+  - **At startup:** live tokens are revoked (`restart`).
+  - `session_cancelled` and `budget` are in the vocabulary; nothing writes them today.
+  - Revoking evicts what the gateway keeps in memory for that turn.
+- **Agent authorization** (`authorizeWithToken`), in this order: the subject is `agent:<sessionId>` and is a stored, enabled agent principal; the row matches; the token is not revoked or expired; the action is one an agent may take (reads, register, draft, `job.create`); the job is `running` or `awaiting_approval`; the scope's project matches; `decide()` allows the action for the user the turn acts for, in the job's project and workspace; the capability is in both the ceiling and the token, with the recipe and kind inside both lists; a path is inside both `code.edit` scopes; a version is one of the token's inputs or an output of the job or its child jobs. Each refusal writes exactly one `auth.denied` activity row (actor kind `agent`, the requested action, the reason, and the tool when it is a known one).
+- **The agent principal** is `agent:<sessionId>` (kind `agent`, display name "the agent", no membership), created in the transaction that opens the session. An agent can never review, accept, merge, promote, discard, answer an approval, hand off, or hold a secret: `review.decide` and `changeset.accept` are user-only actions (`user_only` for the system as well), `repo.merge` and `agent.consent` are owner actions, `token.mint` is system-only, and no tool maps to any of them.
+
+### 55.2 The tools
+
+`src/shared/nexus/mcpTools.ts` holds the 11 tools as data: names use underscores (model tool names allow only `[a-zA-Z0-9_-]`), arguments are closed schemas (an unknown key is `bad_args`), and results are bounded. Absent on purpose: promote, discard, review decisions, accepting or merging, answering an approval, signing, handoffs, `lineage.get`, any secret or credential tool and any network tool.
+
+| Tool | Capability | Mutates | Result limit | What it does |
+|---|---|---|---|---|
+| `context_get` | `artifact.read` | no | 64 KiB | The path and sha256 of this turn's `context.md`. |
+| `artifact_list` | `artifact.read` | no | 64 KiB | Versions of the project by kind (1 to 100). |
+| `artifact_read` | `artifact.read` | no | 272 KiB | One version: inline JSON, a git summary line, or a blob's bytes (at most 256 KiB, text or base64 by media type). |
+| `validations_get` | `artifact.read` | no | 64 KiB | The validator rows of a version. |
+| `job_status` | `artifact.read` | no | 16 KiB | A job's state. Only this turn's own job or one of its child jobs. |
+| `job_logs` | `artifact.read` | no | 68 KiB | A page (at most 64 KiB) of a job's log. Same job scope. |
+| `sandbox_exec` | `sandbox.exec` | yes | 132 KiB | Runs `argv` in the turn's container ([section 55.4](#554-sandbox_exec-and-its-grant)). |
+| `job_request` | `job.request` | yes | 4 KiB | Asks for `sde.deps.node`, `sde.deps.python` or `sde.test.discover` on up to 20 input versions. |
+| `changeset_register` | `artifact.register` | yes | 16 KiB | Commits the worktree as a change set ([section 56](#56-worktrees-the-git-engine-change-sets-accept-and-merge)). |
+| `requirement_draft` | `artifact.register` | yes | 8 KiB | Saves a requirement draft (title, body, 1 to 100 criteria). |
+| `review_request` | `review.request` | yes | 4 KiB | Records that the agent asks for a review of a version. It decides nothing. |
+
+`context_get` returns the path and hash only. The `job_request` inputs are each checked as an `artifact.read` of the turn (one repository version, a version of the token's inputs or of this turn's own outputs). A request creates a `tool.run` job through `ExecutionService.startForAgent`, the same path as a user start, with the capabilities and limits written in the creating transaction. An install is still `awaiting_approval` through approval A1, and `lockfile_missing` still refuses it.
+
+### 55.3 The gateway, call by call
+
+`McpGateway.call` runs this order for every `mcp.call`; the first refusal ends it:
+1. **Verify** the token ([section 55.1](#551-the-token)). A failure is audited (`auth.denied` with the verification code) and refused.
+2. **Claims.** The claims are rebuilt from the stored row. A call already answered under the same `jti` and `callId` returns its first answer, never running the service or the audit again (a retry cannot double-count a budget).
+3. **Arguments** are parsed against the tool's schema. An unknown tool is refused with no audit row at all (a free-text tool name is never recorded). A known tool with bad arguments is refused with exactly one `mcp.call` row, the one denial that `authorizeWithToken` never sees.
+4. **Authorize** through the tool's own single capability (`authorizeWithToken`, which also re-checks that the tool is in the token's list). `job_status` and `job_logs` must name this turn's job or its child; `job_request` inputs are checked as above.
+5. **The per-turn tool-call cap** (200). Reaching it answers `limit` and is still recorded.
+6. **One service call**, as the local user, through the real service's own authorization a second time.
+7. **Audit:** one `mcp.call` activity row (actor kind `agent`, `succeeded` or `failed`, the arguments summarized to at most 200 redacted characters) and one `attempt.progress` job event `{ t: 'tool', tool, ok }`, in one transaction.
+
+### 55.4 `sandbox_exec` and its grant
+
+`sandbox_exec` is the one tool whose result is not made in main.
+1. Main finds the calling job's own live attempt (without one: `no_attempt`), mints an `execId`, records the pending exec (`execId`, the `argvSha256`, the argument count, the cwd) as an `attempt.progress` event, caches the grant by `callId` (a retry gets the same grant, never a second one), and replies with a **grant**: `{ execId, argv, cwd, timeoutMs }`. `cwd` is `/workspace` or below. `timeoutMs` is the least of the request, what is left of the token's lifetime, and 30 minutes.
+2. The runner's relay runs `driver.exec` **in the container bound to that bearer**, never one a reply names (a grant cannot name a container). A bearer with no bound turn is refused outright, and the command never runs.
+3. The output is capped at 64 KiB each for stdout and stderr and redacted. It goes **only to the agent**, as the tool result.
+4. The runner then posts `agent.exec.done` to main with **counts and hashes only**: stdout and stderr byte counts, the sha256 of the **raw** stdout, and whether it was truncated. Main records them as another progress event. An unknown `execId`, or one naming another attempt, is dropped with one log line and writes nothing.
+5. After the exec, the worktree guard walks the worktree ([section 56](#56-worktrees-the-git-engine-change-sets-accept-and-merge)). An exec requested after the guard refused, or after the turn was aborted, is refused `turn_ended`.
+
+**Audit trail.** The rows an agent turn leaves in the activity log: `agent.consent` (grant and revoke), `token.mint` and `token.revoke` (counts only), `auth.denied`, `mcp.call`, `context_redacted`, `repo.worktree`, `review.decide`, `changeset.accept`, `changeset.rollback` and `repo.merge`. The renderer reads each as one plain sentence. Nothing in a row holds a token, a host, a path or a comment's text.
+
+---
+
+## 56. Worktrees, the git engine, change sets, accept and merge
+
+### 56.1 Refs and worktrees (D-B6, D-B13)
+
+- **Hidden refs, only under `refs/nexus/*`.** One **session ref** per session, `refs/nexus/job/<lowercased session id>`, holds the agent's commits. One **integration ref** per branch, `refs/nexus/accepted/<branch>`, holds the accepted work. Neither is a branch the user sees. Nexus never writes `refs/heads/*` except in the fast-forward below.
+- **One worktree per session** at `<data home>/wt/<lowercased session id>` (a 26-character folder name), created `worktree add --detach` at the session ref and **locked** (`worktree lock --reason "Nexus session"`). Its git folder is `<repo>/.git/worktrees/<same name>`. The repository's `.git` must be a real folder (a repository whose `.git` is a file is not supported).
+- **Before anything is written: A3.** `WorktreeService.ensure` asks, once per project, for a `repo.write_refs` approval, whose text names exactly what will be written: refs under `refs/nexus/job/*` and `refs/nexus/accepted/<branch>`, the worktree entry, new objects in `.git/objects`, a locked worktree under the Nexus data folder, and never the user's branch, index or files. The user answers it as any approval ([section 37](#37-networks-and-approvals)). A denial or expiry fails that turn (`denied`, `expired`); a later turn asks again. Nothing is written to the repository before it. The first agent turn in a project is where it is asked.
+- **The `repo.worktree` job** is a system child job of the turn. It creates the integration ref at the branch head if absent (compare-and-swap on absence), the session ref at the integration head if absent, then the worktree. It is idempotent: an existing ref is kept, an existing worktree with the exact pointer is reused. Ingest writes the `session_worktrees` row **only when the job is ingested**.
+- **Continuation.** A new session may take over an interrupted session's live worktree (`reused_from_session_id`, same project, same path); each worktree can be taken over once. If the continuation does not happen, the turn's context says the earlier work was not carried over.
+- **The branch** is the repository snapshot's recorded branch; with no snapshot, or a detached HEAD, the turn fails `branch_unknown`.
+
+### 56.2 `HardenedGit` and the recipes
+
+`src/runner/gitWrite.ts` runs git for the six engine recipes `repo.worktree`, `changeset.collect`, `changeset.merge_check`, `changeset.accept`, `changeset.accept_rollback` and `repo.ff`. Every call keeps B2a's hardening ([section 36](#36-the-sandbox)): the one resolved absolute git binary, launched from the data home with `-C <repo>`, no hooks and no fsmonitor, every configured filter driver switched off (with `GIT_LFS_SKIP_SMUDGE=1`), and every signature program pointed at git itself. On top:
+- **`GIT_WRITE_CONFIG`:** no signing, no symlinks (a link in a commit checks out as a plain file), long paths, no automatic gc or maintenance, no submodule recursion, no `file://` transport.
+- **Merge drivers off.** `merge-tree` would run a repository's merge driver program, so every configured `merge.<name>.driver` is switched off. An attribute naming one answers a conflict, never a program.
+- **`--ignore-submodules=all` on status and diff, and `--no-ext-diff --no-textconv` on every diff.**
+- **EOL scoping.** `core.autocrlf=false` and `core.eol=lf` are passed **only** on calls marked `eol: true`: the session worktree's checkout and its stage. A Windows `autocrlf` default would otherwise check the worktree out with CRLF for a Linux container, and a collect would commit bytes the agent never wrote. They are **never** passed on a call that reads or writes the user's own checked-out repository (`repo.ff`'s status and merge, the status read): that would compare the user's tracked files against another line-ending rule and could report an untouched file modified (a false `tree_dirty`) or write LF files into their tree.
+- **The pointer check.** A command that works in a worktree names its git folder and work tree explicitly, after checking the worktree's `.git` is a plain single-link file of at most 4 KiB whose only content is `gitdir: <the expected git folder>`. Anything else is `worktree_tampered`, and nothing is committed.
+- **Facts, not text.** A recipe returns facts for main to re-validate. A failure is a code from a closed list (`git_missing`, `repo_empty`, `branch_missing`, `worktree_tampered`, `worktree_conflict`, `link_or_gitlink`, `ref_moved`, `unknown_commit`, `merge_conflict`, `tree_dirty`, `branch_mismatch`, `not_fast_forward`, `git_failed`, and the four guard refusals). No file name, branch content or git error text is ever a fact.
+- **The commit identity.** The agent's commits are by `Nexus agent <agent@nexus.invalid>` with a `Nexus-Job` trailer (D-B8). An accept's merge commit is by `Nexus <agent@nexus.invalid>` with a `Nexus-Accepted-By` trailer.
+
+**The worktree guard** (`worktreeGuard.ts`) is an lstat walk that never follows a link and never reads a file. It runs after every agent exec and before and during every collect. It refuses `symlink_in_worktree` (a symlink, junction or other reparse point, a hard link to a file, or anything that is neither a file nor a folder), `nested_repo` (a `.git` entry in any spelling, including `GIT~<n>` and a trailing dot or space, anywhere except the root's own pointer file, because a nested repository's config can name programs git would run), `worktree_too_large` (over 8 GiB, 500,000 entries or 128 levels) and `file_too_large` (a file over 50 MiB).
+
+### 56.3 Change sets: collect, scope and the secret scan
+
+An agent's work becomes a **change set** only when it calls `changeset_register`; Nexus, not the agent, makes the commit.
+
+1. **Register** (`ChangeSetService.register`): the arguments are `title`, `summary`, optional `requirementVersionIds` (at most 5) and `reviseArtifactId` (for a fix after a failed or requested change), and a fresh `clientKey` per attempt. The **scope is never an agent argument.** It is the path scope of the token's own `code.edit` capability; a token with no `code.edit` capability or no paths is refused `no_code_edit_scope`, and there is no fallback to the whole tree. Main enqueues a system child job `changeset.collect` (parent: the turn) and waits for the version, at most 120 s; past that it answers `{ pending: <job id> }` and the agent polls `job_status`. A retry with the same `clientKey` answers the same job.
+2. **Collect** (the runner): the pointer check; the worktree guard; one `git add -A` **per positive scope entry**, each carrying every exclude (so one entry that matches nothing no longer drops the others; deletions under an entry are staged); the index is refused if it holds a link or gitlink (`link_or_gitlink`); the guard runs again right before `write-tree`; the tree is committed as the agent with a compare-and-swap on the session ref, and the worktree's HEAD moves with it. Then the merge base with the integration ref, the diffstat (at most 5,000 paths reported) and the secret scan.
+3. **The settings folder is never collected.** The agent CLI may write its own settings under `<worktree>/.claude/` (it does when the user's own CLI config has an entry for that path). Every collect appends `:(glob,icase,exclude)` pathspecs for `.claude`, `.claude/**`, `**/.claude` and `**/.claude/**`, and the `git.paths_in_scope` validator refuses a `.claude` path segment at any depth, case-insensitively, as the backstop.
+4. **The secret scan.** `scanAddedLines` reads the zero-context patch of base to head (`diff -U0 --text`, no renames, pinned prefixes). It reads hunks **by their counts** (`@@ -a,b +c,d @@`): while a hunk has lines left, every line is content, so an added line that starts `++` or `@@` is scanned as the content it is and can never be read as a file header or switch the scan off. File headers are read only outside hunks, with git's C-style quoting undone. **`--text`** makes a file with a NUL byte, or one under a `-diff` or `binary` attribute, render as text, so it is scanned too. A hit is a **provider-key shape** or a **private-key header**; the scan keeps the **path and line only**, never the text. High-entropy strings outside a lockfile are advisory notes only.
+5. **The 16 MiB cap fails closed.** The patch is read up to 16 MiB. A patch cut at the cap sets `scanTruncated`, and ingest treats anything but an explicit `false` as truncated: `sec.secret_scan` **fails** `scan_truncated`. A secret past the cut can never pass. A real large binary now fills the cap too, so a change set that contains large binaries fails `scan_truncated` ([section 59](#59-known-limitations), item 56).
+
+**The validators** ([section 38.1](#381-validators)):
+
+| Validator | Stage | Blocking | Fails when |
+|---|---|---|---|
+| `git.diff_nonempty` | register | yes | The change has no file change between its base and its head (an empty diff makes a **failed** version, so the agent's revise flow has a failed version to revise). |
+| `git.paths_in_scope` | register | yes | A changed path is outside the scope, is not a plain relative path, has a sensitive name (`.git`, `.env*`, `*.pem`, `id_rsa*`, `*.key`, `.npmrc`, `.pypirc`, an NTFS stream) or a `.claude` segment. |
+| `sec.secret_scan` | register | yes | An added line holds a provider key or a private-key header, or the scan was truncated. Evidence names path and line only. |
+| `sec.entropy_notes` | register | **no** (advisory) | An added line outside a lockfile holds a long high-entropy string. It never gates the change. |
+| `cs.tests_pass` | candidate | yes | The test suite discovered at the change's head did not pass: nothing was discovered, no test ran, a test failed or errored, or the run could not be judged. |
+| `git.applies_cleanly` | candidate | yes | The change does not merge onto the current integration head without a conflict (a `merge-tree` check). |
+
+**How a change set is born and leaves draft.** Ingest of `changeset.collect` creates a **draft** `change_set` version (its storage is the head commit; the base is in `metadata.base`), with lineage edges (all from ingest): `derived_from` the project's active repository version, `implements` each requirement version it names, and, for a revision, `derived_from` the change set it revises. The register validators run inline. If they all pass, the candidate checks are queued: `cs.tests_pass` through a discovery job at the head commit and then the derived test job (a `validate`-kind job naming the version, session-less because a draft cannot be a granted input), and `git.applies_cleanly` through `changeset.merge_check`. The ordinary **finalize rule** applies ([section 38.2](#382-blocking-and-advisory-rows-finalize)): every blocking validator of the kind with a latest `passed` row makes it a `candidate`; any `failed` makes it `failed`; any `error` leaves it a draft that Revalidate can recover. A **failing test keeps the change set out of `candidate`**, and Accept then is a sentence, not an action. Check jobs can be re-run (each takes a new sequence key; a live one is the answer). The agent does not run Nexus's validation: the agent container has no dependency install, and `cs.tests_pass` runs in Nexus's own system jobs.
+
+### 56.4 Review
+
+`ReviewService.decide` (#47) is a stored user's decision: `approve`, `request_changes` or `reject`, on a `change_set` **candidate**. It writes one append-only `reviews` row and one `review.decide` activity row with the user as actor and **no comment text** (length and sha256 only). The comment is 1 to 4,000 characters, required unless the decision is `approve`, and refused if it looks like a secret. A reject or a request for changes does not change the version's status: a rejected candidate stays a candidate, and **the newest review is what accept reads**.
+
+`request_changes` also starts the agent's next turn as the reviewing user, in the **same transaction** as the review row: either both happen or neither (a refusal such as no consent records nothing). The turn's message is fixed; the comment reaches the agent through its context file, never through the job's params. `intentId` makes a replayed click the same review with no second turn; an intent reused for another version or decision is `intent_mismatch`.
+
+### 56.5 Accept (D-B6)
+
+Accepting never touches the user's checked-out branch, index or files. It moves **one** hidden ref, `refs/nexus/accepted/<branch>`, by compare-and-swap.
+
+`AcceptService.accept` (#48) takes the head the user saw (`expectedIntegrationHead`):
+1. **One immediate transaction:** the version is a `change_set` candidate and its newest review approves it (else `illegal_transition`); the integration ref is consistent (below); no rollback is outstanding for the project and branch; then the system child job `changeset.accept { versionId, branch, expectedOld, head, title, acceptedBy }` is inserted. **The job row is the durable "accepting" marker.** A second click on the same head joins the live job.
+2. **The runner** checks the ref still equals `expectedOld` (else `ref_moved`), runs `merge-tree --write-tree` (a conflict is `merge_conflict`), commits the merge as Nexus with both parents, reports `accept.prepared { old, new }`, and **only then** runs `update-ref <ref> <new> <old>`.
+3. **Ingest** (`acceptIngest.ts`), in one transaction with the job's completion, inside a savepoint: the version is still a candidate; the newest review still approves; the accept-time `git.applies_cleanly` result is recorded (advisory, because the version is no longer a draft); the version is **promoted by the user** (a compare-and-swap on the artifact's current pointer); the `change_set_accepts` row and the activity row are written. The acting user is carried in the job's params and re-validated at ingest against the stored principals (a disabled user or a forged non-user is refused).
+4. **Rollback.** If step 3 fails, the same transaction queues `changeset.accept_rollback { from: new, to: old }` and the job fails `accept_rolled_back`. Restart recovery and the service do the same for an accept job that ended (interrupted, failed, timed out, cancelled) with an `accept.prepared` event and no accept row: an accept is **never retried** and never merged later. The rollback is a compare-and-swap too (a ref moved again is refused and not clobbered). A rollback that cannot be queued is logged (a code only) and flagged `rollbackOwed: true` in the error, and **accept stays blocked** while any rollback is outstanding.
+5. **O25, the integration-consistency check.** The integration head must equal the newest accept's `ref_after`, or, while nothing was accepted, the base of the project's first worktree. A ref moved by hand, or by an accept that did not finish, reads inconsistent: accept and merge are refused `integration_unexpected`, and nothing is rolled back automatically.
+6. **A merge conflict at accept** does not touch the version: it writes an advisory failed `git.applies_cleanly` row and answers `merge_conflict`.
+
+**Refusals** are `PlatformError('conflict')` with `detail.reason`: `ref_moved` (with `current`, the head found), `merge_conflict`, `accept_rolled_back`, `integration_unexpected`, `accept_pending` (the 120 s wait elapsed; a retry joins the live job). The IPC layer maps each reason to one fixed sentence ([section 58](#58-the-ipc-surface-42-to-51)).
+
+### 56.6 "Merge accepted work" (D-B6)
+
+`AcceptService.mergeAccepted` (#50) is a **dialog-confirmed fast-forward** of the user's checked-out branch, to the commit the user confirmed.
+1. **Refusals before any dialog,** each a `conflict` with a reason: `integration_unexpected` (O25 fails, nothing was accepted, a rollback is outstanding, or the integration head is not the one the caller saw), `branch_mismatch` (another branch is checked out), `tree_dirty`, `not_fast_forward`, `nothing_to_merge`. A second call while one is waiting is `merge_pending`: the merge is single-flight per project, and no second dialog opens.
+2. **The dialog** is main's own native confirmation (`mergeDialog.ts`). It lists up to 10 accepted changes (title and 8-character commit; titles redacted, flattened and cut), names the branch and the move, and says only tracked files are checked. The buttons are **Cancel** and **Merge**; the default and the escape key are Cancel, and only the Merge button confirms. With no window to attach it to, nothing is shown and the merge is not confirmed. **The confirmation is fail-closed:** it must be a function that returns exactly `true`. Anything else, a thrown error, or no dialog wired at all is `cancelled`. The only caller that can pass a confirmation is `ExecutionHandle.confirmMerge`; nothing the renderer sends can stand in for it.
+3. **The `repo.ff` job** `{ branch, sha: <the confirmed sha>, mergedBy, confirmedVia: 'dialog' }` re-checks, in the runner, that the checked-out branch is still `branch`, that no merge, rebase, cherry-pick or revert is in progress, that the **tracked** files are clean, and that the sha is a fast-forward of HEAD. Then `git merge --ff-only <sha>`, and it asserts that HEAD equals the confirmed sha. **A ref that moved after the dialog is never merged:** the branch lands on the confirmed commit, or the merge refuses.
+4. **Ingest** writes the `repo_merges` row, whose `after` must equal `sha_confirmed`. If that insert were refused after the runner had moved the branch, the job fails and the merge is unrecorded; the user's branch is deliberately **not** rolled back, and the refusal is audited as a failed `repo.merge` row.
+
+**"Dirty" means tracked files only.** Untracked files are not checked, by the merge or by the status read, and the dialog and the UI say so.
+
+---
+
+## 57. Caps and budgets
+
+The caps are the ones the user approved (D-B4). `src/shared/nexus/agentPolicy.ts` holds them (`AGENT_DEFAULTS`, in cents and milliseconds) and the pure decisions; `runtime_consents` holds the six that are columns ([section 51.1](#511-tables)).
+
+| Cap | Value | Stored | Where it is enforced |
+|---|---|---|---|
+| Cost per turn | $2 (200 cents) | `turn_usd_cents`, 1 to 200 | The adapter passes `--max-budget-usd` = the least of the turn cap, the day's remainder and the job's cost limit, and also checks reported cost itself. Main checks every `usage` event (`turnLimitReached`). Reaching it cancels the turn: `failed: limit`. |
+| Cost per day | $10 (1,000 cents) | `day_usd_cents`, 1 to 1,000 | The start guard (`budget_exhausted`) and the scheduler guard (`waiting:budget`). The day is the local day since midnight. The day's remainder goes into the plan. |
+| Turns per hour | 6 | `turns_per_hour`, 1 to 6 | The start guard (`rate_limited`) and `waiting:rate`. The count is `agent.run` jobs created in the last 60 minutes, minus those that ended without ever running. |
+| Concurrent turns | 1 | `concurrent_turns`, exactly 1 | `busy`: a second conversation's turn queues (`waiting:slots`). |
+| Tokens per turn | 400,000 | `turn_tokens`, 1 to 400,000 | The capped tokens are input + output + cache creation. Cache reads are reported but not capped. The adapter and main's usage events. |
+| Tool calls per turn | 200 | `tool_calls`, 1 to 200 | The gateway counts MCP calls and answers `limit` (still recorded); the adapter and main's usage events count the runtime's own tool calls. |
+| Wall clock | 30 minutes | the job (`limits_json`), not the consent | Main's timeout, the adapter, and the token's lifetime (30 minutes plus 5). |
+| Child jobs per turn | 20 | the token's `maxChildJobs` in `caps_json`, not the consent | `job_request` refuses at the limit (MG4). |
+
+**A grant can only lower them.** `clampCaps` takes each requested value when it is a safe integer of 1 or more and never above the ceiling; a missing or malformed value takes the ceiling; a value below 1 is refused (`CapsRefused`, `invalid`), never stored. The turn cap is then lowered to the day cap. The v10 CHECKs repeat this, so a row that breaks it cannot be written. With no live consent the ceilings are the caps in force, and no turn starts anyway ([section 54](#54-network-and-consent)).
+
+**The decision order** (`budgetDecision`): the spend caps first (the day's cap reached, or the live turn at its own cap), then the hourly rate, then concurrency. At a cap is refused; one below it is allowed. The turn's budget is the least of the turn cap minus the turn so far and the day's remainder.
+
+**What cost means.** Cost is what the agent runtime **reported**, in US cents. It is the runtime's own figure, not a bill. A turn whose cost was never reported is charged at the turn cap and flagged `estimated`; a live attempt counts only what it has reported so far. The UI labels every cost "reported by the agent runtime" or "estimated by Nexus: the runtime did not report one", and shows no percentage.
+
+**Usage is a per-field maximum.** `usage_json` keeps the highest value ever seen of each counter, so a later event with a lower tool-call count or a null cost loses nothing, a reported cost never disappears, and the caps are checked on the merged value. The plan records the turn's caps in `sandbox_json.turn`, and main reads them back at every usage event.
+
+**How a cap ends a turn.** Main sends `attempt.cancel` with the reason `timeout` (the shared `CancelReason` has no limit value), and the job ends `failed: limit`. The adapter also kills its own process tree when it reaches a cap itself.
+
+---
+
+## 58. The IPC surface (#42 to #51)
+
+B2b adds ten invoke channels, #42 to #51, and no push. Their registration is separate from B2a's:
+- **Registration.** `NEXUS_AGENT_CHANNELS` holds the ten; `NEXUS_ALL_CHANNELS` stays B2a's 41, so every B2a caller and pin is unchanged, and `NEXUS_EVERY_CHANNEL` is all 51. `registerNexusIpc` registers the ten only when main passes the agent dependencies on top of the execution ones (`agentsUnavailableReason` and `confirmMerge`).
+- **The wrapper.** Every channel goes through the same single `handler()` wrapper as the earlier ones ([section 40](#40-the-ipc-surface)). While agents are off, each answers `{ ok: false, code: 'platform_unavailable', reason: 'agents_unavailable', subReason }`; the sub-reasons are [section 52.6](#526-when-agents-alone-are-off)'s, and an unknown one reads `not_enabled`.
+- **What a request may carry.** Ids (`projectId`, `workspaceId`, `sessionId`, `versionId`), a message of 1 to 8,000 characters, at most 20 unique focus version ids, a skill id, a review decision and a comment of at most 4,000 characters, a branch name, 40-hex commit ids (as compare-and-set expectations only), the six consent caps, and an `intentId`. **Never** a folder, a host, a model, a principal, a command, an environment or a location. The principal is main's own (`user:local`).
+
+| # | Channel | Authorization | Service call |
+|---|---|---|---|
+| 42 | `nexus:agent:start` | `agent.start` (member) in the stored participation | A stale runtime health is refreshed first (a wait of at most 10 s), then `AgentService.start`. Answers the session and the turn's job. |
+| 43 | `nexus:sessions:list` | the session service's read rules | A project's agent conversations, newest first, from the database only, as closed `SessionView` rows. |
+| 44 | `nexus:session:get` | as #43 | One conversation: turns, display-only messages, tool calls (name and result size only), registered versions, approvals. |
+| 45 | `nexus:session:end` | `session.cancel` | Ends the conversation; a live turn is cancelled first. |
+| 46 | `nexus:session:cancel` | `job.cancel` | Cancels the live turn; the conversation stays open. |
+| 47 | `nexus:review:decide` | `review.decide` (member, user-only) | `ReviewService.decide` ([section 56.4](#564-review)). Answers the review and, for a request for changes, the new turn's job. |
+| 48 | `nexus:changeSet:accept` | `changeset.accept` (member, user-only) | `AcceptService.accept` with the head the user saw ([section 56.5](#565-accept-d-b6)). |
+| 49 | `nexus:repo:status` | `project.read` | The repository as accept and merge see it. It never throws for an unreadable repository: it answers a status with a `reason` (`git_missing`, `branch_unknown`, `runner_unavailable`, …). |
+| 50 | `nexus:repo:mergeAccepted` | `repo.merge` (owner) | `AcceptService.mergeAccepted` with main's own dialog ([section 56.6](#566-merge-accepted-work-d-b6)). |
+| 51 | `nexus:agent:consent` | `get`: `platform.health`; `grant` and `revoke`: `agent.consent` (owner) | The agent's network permission ([section 54](#54-network-and-consent)). `grant` carries caps only. |
+
+**Views** are built field by field in main. No view holds a host, a model id, a token, a path (no worktree, config folder or repository folder), a pid, a container id or a principal id. The engine's display name is in `AgentSetupView.label` and nowhere else. Display text is redacted and capped. Usage and cost are what the runtime reported, or `estimated`. #23's `health` answer gains `agent: AgentSetupView` (the state `ready`, `not_installed`, `not_signed_in`, `version_unsupported`, `unavailable` or `unknown`; the label; the version; `signedIn`; whether the pinned flags are present; the live consent's caps and `hostsCount`; today's usage). **#51 is the one exception for destinations:** its answer (`AgentConsentView`, for `get`, `grant` and `revoke` alike) adds `consent.hosts`, the `host:port` strings of the live consent, or, with none, of what the runtime's probe reported (what a grant would cover). No other view carries them.
+
+**Errors.** Every refusal is one fixed plain sentence (`AGENT_REASON_MESSAGES`): the runtime reasons (`runtime_unknown`, `runtime_not_installed`, …), consent and budget (`consent_missing`, `consent_mismatch`, `budget_exhausted`, `rate_limited`), `turn_running`, `session_ended`, the review reasons, `ref_moved`, `merge_conflict`, `accept_rolled_back`, `integration_unexpected`, `tree_dirty` (it says tracked files only), `branch_mismatch`, `not_fast_forward`, `nothing_to_merge`, `cancelled`, `accept_pending`, `merge_pending`, `no_such_part`. The detail allow-list gains `current` (the head a refused accept found) and `rollbackOwed`. No raw git text, path or sha beyond `current` reaches the renderer.
+
+**The change-set diff.** #34 gains `part: 'diff'`, for a `change_set` version only (any other kind answers `invalid`, `no_such_part`). Main takes the base from `metadata.base` and the head from the stored commit, validates both as 40-hex commits, reads the diff through the runner's bounded `git.read` (at most 1 MiB per side, `--no-ext-diff --no-textconv`), redacts it twice and pages it like `content`. A diff that was cut or is too large answers `too_large` with a fixed sentence.
+
+**No system-only door.** Exactly one `.mergeAccepted(` call exists under `src/main`, and its confirmation comes only from the injected `confirmMerge` dependency (`ExecutionHandle.confirmMerge`, which answers false when no dialog is wired). No system-only method (mint, revoke, ingest) is reachable from IPC.
+
+**Preload.** Ten typed methods with literal channel names, and no generic invoke: `nexusAgentStart`, `nexusSessionsList`, `nexusSessionGet`, `nexusSessionEnd`, `nexusSessionCancel`, `nexusReviewDecide`, `nexusChangeSetAccept`, `nexusRepoStatus`, `nexusRepoMergeAccepted`, `nexusAgentConsent`.
+
+### 58.1 The renderer
+
+The agent UI keeps Spine and Folio: no dashboard and no cards ([section 40.1](#401-the-renderer)).
+
+| Where | What it shows |
+|---|---|
+| Agent panel and session log | The project's conversations with a status word, what the live turn is waiting for (its phase, for example "Waiting for your network permission"), the turn history with usage lines, and a message box. What the agent wrote is shown as read-only text with a note that it is not evidence. A turn that registered nothing reads "The agent made no change". |
+| Change-set review (Changes tool) | The change set with its checks (a failing `cs.tests_pass` never reads passed), the diff, Approve, Request changes and Reject (a comment where one is required), Accept, and "Merge accepted work". An unavailable action is a sentence that says why. |
+| Setup sheet | The agent's rows: the program (its label, version, and signed-in word), the network permission with the destination and the caps, and today's usage. Grant and Revoke. **This is the only place the engine's name and the destination appear.** |
+| Intent line | On an SDE project route, with the agent ready to take a message, the line sends to the project's agent (#42) and says the agent works in its own copy of the repository. Every other route and state keeps the earlier lead-agent behaviour. |
+
+The copy for each refusal reason lives in the renderer's `errorCopy`. A source scan keeps raw reason codes, hosts, model names and engine names out of every other view, and the honesty audit holds that no agent surface offers an action it cannot run.
+
+---
+
+## 59. Known limitations
+
+These are numbered 48 on, after [section 16](#16-known-limitations-and-operational-notes) and [section 46](#46-known-limitations), which end at 47. Each states what B2b does **not** do, or what is **not yet proven**.
+
+48. **The file boundary is policy only, not an OS sandbox.** The agent CLI runs as the user, on the host. What keeps it inside its worktree is the CLI's own policy: `--restricted`, the explicit tool list, `dontAsk`, and `permissions.deny` for `.git`, `.env*`, `*.pem`, `id_rsa*`, `*.key`, `.npmrc` and `.pypirc`. A scripted case through the installed CLI in the harness (twelve Grep and Glob calls, among others) found no leak, but a defect in the CLI's enforcement, or a setting that changes it, would not be stopped by Nexus. Only the commands the agent runs through `sandbox_exec` are isolated, in the container.
+49. **The host proxy routes traffic; it is not an OS-level enforcement.** The CLI is pointed at the proxy with `HTTPS_PROXY`, and the probe showed it honours it (17 `CONNECT`s, all to the one host). Nothing at the OS stops a process that ignores the variable from connecting directly: there is no firewall rule. The proxy cannot see inside the TLS tunnel (item 26: it checks the SNI, and domain fronting is the CDN's to refuse). **It also does not record:** the proxy produces a decision per request, but the agent turn discards them, so the host traffic of the CLI is in no table and no event.
+50. **Admin-managed CLI settings still apply.** Policy settings that an administrator set for the CLI apply under `--restricted` too. A fake home cannot test this, so it is not measured.
+51. **The CLI writes its own files into the user's real home.** Nexus runs the user's installed CLI with the user's own `USERPROFILE`, `APPDATA` and `LOCALAPPDATA`, so that it finds its login. The probe measured, on a **fake** home, what one pinned turn writes: `~/.claude.json` (changed), a backup under `~/.claude/backups/`, `~/.claude/.last-cleanup`, and the CLI's MCP log under `LOCALAPPDATA\claude-cli-nodejs\Cache\<folder>\mcp-logs-nexus\`. It also writes `<worktree>/.claude/settings.local.json` when the user's own `~/.claude.json` has an entry for that worktree's path (excluded from every change set, [section 56.3](#563-change-sets-collect-scope-and-the-secret-scan)). **What the real home gets is not yet measured:** the real-login smoke test lists it (names and times only). **Nexus itself never reads, copies or stores the login.**
+52. **The CLI health check runs the user's CLI, on demand.** It runs `--version`, `--help` and `auth status --json` through a deny-all proxy ([section 54](#54-network-and-consent)), only when the setup sheet opens, on "Check again", on a consent change and before a start with a stale answer, never at app start or on a timer. The `auth status` text becomes `yes`, `no` or `unknown` inside the adapter and is dropped. **Not yet verified:** how `auth status` answers on a real login under a deny-all proxy. If it needs the network it may say `no`, and the row then reads not signed in before consent.
+53. **The CLI updates itself, and Nexus accepts a version family.** It moved from 2.1.295 to 2.1.309 while B2b was built. Nexus accepts `^2.1` with all 19 pinned flags and refuses anything else (`version_unsupported`), and `test:runtime` re-checks the flags. A later 2.1.x that changes a flag's behaviour without removing it would not be caught until the probe or the contract tests are run again.
+54. **Worktree cleanup is a later feature.** Nothing removes `<data home>/wt/<session>`, the session ref `refs/nexus/job/<session>`, the integration refs, or the worktree entry under the user's `.git`. `session_worktrees.removed_at` exists and nothing writes it. They accumulate until cleanup is built, and a restore of the database leaves them in place ([section 52.8](#528-restore-to-v9)).
+55. **A residual pid-reuse risk.** The CLI's process tree is killed by `taskkill /PID <pid> /T /F /FI "IMAGENAME eq <name>"`, recorded in a pidfile. A pidfile from the current main boot is killed after a runner crash; one from another boot is only deleted, never killed. The image-name filter stops a recycled pid belonging to a different program, but it is weak when the recorded image is a generic one such as `node.exe` or `electron.exe` (a test stand-in, or an adapter that runs under one): a recycled pid of another program with that same name would be killed. For the real CLI's own native executable, the risk is the same pid recycled by another instance of it. The grandchildren of a CLI that exits by itself are not killed (that avoids acting on a recycled pid).
+56. **A change that contains large binaries fails the secret scan.** The scan reads at most 16 MiB of patch text; a cut patch fails `scan_truncated` (fail-closed), and `--text` makes real binary files fill the cap. The agent must keep large binaries out of a change set. A collect reports at most 5,000 changed paths. A file over 50 MiB or a tree over 8 GiB is refused by the guard.
+57. **The accept window (M8).** The runner reports `accept.prepared { old, new }` and then runs `update-ref` without waiting for main's durable record of the report. If main died in between, the integration ref may have moved with no marker. O25 then reads the integration head as inconsistent, and accept and merge are refused `integration_unexpected`. Nothing repairs it automatically, and the user's branch is never touched.
+58. **The agent's container has no `node_modules`.** The dependency cache volume is not mounted into it, and its plan allows only the worktree mount. The agent edits files; Nexus validates them with `cs.tests_pass` in its own system jobs. An install is a `job_request` that needs the user's approval (A1) and a lockfile hash ([section 39](#39-recipes-what-each-sde-step-runs)). That whole path is **not yet proven** end to end.
+59. **"Dirty" means tracked files only.** Untracked files are not checked by the merge, by the status read or by the dialog, and all three say so.
+60. **The relay's timeout is Nexus's, not the CLI's.** `changeset_register` waits up to 120 s and the relay up to 130 s. The CLI has its own tool-call timeout, outside this repository, and it was not verified against those numbers. If it is shorter, the agent sees a timeout and polls `job_status`.
+61. **Cost is the runtime's own report.** It is not a bill. A turn whose cost the runtime did not report is charged at the turn cap and labelled estimated. The 400,000-token cap counts input, output and cache creation only.
+62. **One live consent, one turn at a time, one platform.** The consent is global, not per runtime; concurrency is fixed at one. Process-tree cleanup is `taskkill.exe`: there is no other platform's equivalent in this build, and the agent path was tested on Windows only.
+63. **The proxy can leak an upstream socket briefly.** If a client disconnects while the proxy is resolving or connecting upstream, that socket lives until the proxy's 120 s idle timeout (B2a's proxy, unchanged).
+64. **The end-to-end proof is not in this part.** `ScriptedRuntime` proves the platform wiring. A real model turn, the real-login smoke test, the whole flow on fixtures and a real repository, a restart mid-turn with a real CLI, the real-Docker agent suite and the migration of the real database have not been run. Until they have, B2b is **built, not verified**: execution and agents stay off by default, and `DELIVERED_SUB_PHASE` stays `'B2a'`.
+65. **Test hygiene.** `test/nexus-platform-agent-accept.test.cjs` takes about 219 s under load, over the `test:db` runner's 180 s per-file limit, and passes when run alone. It is to be sped up, or the limit raised with a documented reason, before the final verification.
+66. **A change set's promotion was not yet refused in main's generic path.** A change set becomes current only through accept ([section 56.5](#565-accept-d-b6)). When this part was written, the renderer hid "Make current" for a change set, but main's generic promote and rollback did not yet refuse a `change_set` version on every user-reachable path; a follow-up to refuse them in main (a fixed sentence, `change_set_not_promotable`) was in progress and not committed. Until it lands, treat the renderer as the only guard there. Accept itself still enforces `not_approved` in main.
+67. **No review-list channel.** The change-set review reads the newest review from the version view when main supplies it; a follow-up that adds the newest review's decision to that view was in progress when this part was written. Until then an older review can read as unknown, Accept is not offered, and the user can approve again. Main enforces `not_approved` regardless.
+
+**Invariants.** O1 to O22 ([section 38.4](#384-the-o1-to-o22-invariants)) are the orphan queries that exist. The plan's O23 and O24 have no definition in the plan, and none was invented; O25 is the integration-consistency check, enforced in accept and merge ([section 56.5](#565-accept-d-b6)) rather than as an orphan query.
+
+---
+
+## 60. B2b: differences from the plan and rulings
+
+Each item records what the code does now, and the code wins. The "Ruling" lines of the controller's ledger are binding.
+
+| Id | Difference | Status |
+|---|---|---|
+| Credential | The plan's options were an API key in `safeStorage` or an un-isolated CLI login. The code uses the user's existing login in place, isolated by flags. There is no secret store in B2b, and `credential.ref` is `runtime-owned`. | In effect (D-B1). |
+| Config dir | A per-job `CLAUDE_CONFIG_DIR` would hide the login, so none is set. The CLI writes its own bookkeeping into its store; that is measured on a fake home and reported ([section 59](#59-known-limitations), item 51). | In effect. |
+| `--safe-mode` | The plan pinned it. It is **dropped**: it removes the Nexus MCP server. Every other lock stays, and a test (CR3+) proves the user's CLAUDE.md files, hooks, plugins and other MCP servers never load. | Ruled (user, D-B15, [section 61](#61-the-task-0-probe-results-and-the-stop-rules)). |
+| Skills | `--safe-mode` would disable the CLI's skills, so Nexus writes its skill text itself (`--append-system-prompt-file`, with the skills on stdin as the fallback) and records each skill's hash. | In effect. |
+| CLI version | The plan assumed 2.1.292. The installed CLI is a native executable that updates itself (2.1.295, then 2.1.309). The adapter accepts `^2.1` with all pinned flags. | In effect (D-B5). |
+| Subagent tool | The plan said `Agent`; this CLI's tool is `Task`. Both are disallowed. | In effect. |
+| Tool set | `artifact.registerVersion` and `git.commit` became `changeset_register` and `requirement_draft`. `approval.request` is not a tool: an A1 approval asks by itself. `lineage.get` and `handoff.create` are not in B2b. | In effect. |
+| Tests on change sets | `sde.tests_pass` judges a `test_suite` only, so change sets use `cs.tests_pass`, which judges through a suite discovered at the head commit. | In effect. |
+| Typecheck | `sde.typecheck_ok` and `llm.review_notes` are deferred. | Deferred. |
+| Runtime kind | `claude-cli` became the opaque `cli-agent`. The frozen v9 DDL comments keep their old text. | In effect. |
+| Runtime events | They became `attempt.progress` events with `data_json.t`, and MCP calls became `mcp.call` activity rows. v9 is unchanged. | In effect. |
+| `respondApproval` | Not used: permission prompts are off, and approvals live in Nexus. | In effect. |
+| Merges | `repo_merges` uses `confirmed_via = 'dialog'`, and a table CHECK `after = sha_confirmed` was added. A3 uses `repo.write_refs` and is asked at the first agent turn in a project. | In effect (D-B6). |
+| New tables | v10 adds `runtime_consents` and `session_worktrees`. `ix_accepts_job` was added to the plan's six indexes. | In effect. |
+| One live consent | One in total, not one per runtime (the day cap is global). | In effect; a later migration may relax it. |
+| Worktree home | The data home's `wt/`, not `C:\nx\w`. | In effect. |
+| Channels | #51 consent was added, and #23 gains the agent view. The agent channels stay out of `NEXUS_ALL_CHANNELS`. | In effect (D-B10). |
+| Token key | One per main boot. | In effect. |
+| Agent network | The agent's traffic goes through the loopback allow-list proxy. | In effect (D-B2). |
+| Sessions | The v7 vocabulary is unchanged. There is no CLI resume. | In effect. |
+| Completion | The `CompletionEvaluator` arrives in B2c. B2b uses `stepStateFrom` and `isExecutableEndToEnd`. | In effect. |
+| Container command | The agent container runs `sleep <s>` through the B2a entry, so no image change is needed. | In effect. |
+| Collect scope | Derived from the token's `code.edit` scope, never an agent argument. A token with no scope is refused `no_code_edit_scope`; the plan's fallback to `['**']` was **rejected**. | Ruled. |
+| Settings folder | `.claude/**` is excluded from every collect and refused by `git.paths_in_scope` (a Task 0 finding). | In effect. |
+| Secret scan | Provider keys and private-key headers block a change set; high-entropy strings are advisory; lockfiles are excluded from the notes (D-B14). The scan reads hunks by their counts, scans NUL and `-diff` files, and fails closed past 16 MiB. | In effect. |
+| Relay timeout | `MCP_CALL_TIMEOUT_MS` was raised from 60 s to 130 s, so the 120 s register wait can be reached. | In effect. |
+| Evidence backstop | `repo.worktree`, `changeset.accept_rollback` and `repo.ff` produce a database record, not a version. An ingest decision may carry `durableRecord: true`, honoured only for exactly those three recipes. For any other recipe the evidence backstop ([section 38.3](#383-what-never-completes-a-job)) still applies. | Accepted (Task 9 review). |
+| Turn completion | Only registered work completes a turn: a change set from a `changeset.collect` child, or a requirement draft. A discovery-only turn is `partial`, `no_change`. | In effect (Task 10 review). |
+| Egress hosts | The allow list comes from the adapter's `egressHosts`, and the consent must equal them. The plan's `egress.consentHostsSha256` was added (the plan had no field for it). | In effect (D-B2). |
+| Health probe | On demand, not on a timer: a flagged probe set only by main's refresh. The first design probed about once a minute whenever execution was on. | Ruled (Task 14 review). |
+| Reject | A reject or a request for changes does not change the version's status; the newest review decides. | In effect. |
+| Merge errors | Refusals are `PlatformError('conflict')` with `detail.reason`; the closed `PlatformErrorCode` set was not widened. | In effect. |
+| `test:exec` | The B2a text that it never passed is corrected: it passed 39 of 39 during stabilization ([section 42](#42-the-resource-gate-and-the-testexec-gate)). | Corrected. |
+| O23 and O24 | Not defined by the plan, not invented. | Open ([section 59](#59-known-limitations)). |
+
+---
+
+## 61. The Task 0 probe results and the STOP rules
+
+Before any B2b code was written, a probe measured on the installed CLI what the later tasks rely on. It is `tools/nexus-agent-probe.cjs`, with the harness under `test/helpers/`. **Parts A and B ran on a fake home only** (a fake home, a fake key, a loopback mock model, a recording proxy that **refuses every `CONNECT`**), so no model call happened and no request left the machine. **Part C** (reading the login state from the user's real home) is run only by the controller with the user's go-ahead, and it had not run when this part was written. Nothing in this section was measured against the user's real home, login or CLI store.
+
+**Results (CLI 2.1.295; the pinned argv without `--safe-mode`, D-B15).** No STOP branch fired under the final argv.
+
+| Check | Result |
+|---|---|
+| P0 version | `2.1.295 (Claude Code)`, matches `^2.1`. |
+| P1 flags | All 19 pinned flags listed. `--append-system-prompt-file` is named in the help text. |
+| P2 MCP | With the pinned argv the `nexus` MCP server is `connected`; the recorder saw `server/discover`, `initialize`, `notifications/initialized` and `tools/list`, and the mock model's tool list held the Nexus tool. |
+| P3 deny rule | The `--settings` deny rule refused `Read .env` ("denied by your permission settings") and the secret was not sent. A control run without the rule read it, so the rule is what refused it. |
+| P4 isolation | The skills-file text reached the system prompt; the stdin preamble reached the first user message (not the system prompt); no planted home or worktree text appeared. |
+| CR3+ planted customizations | 21 groups planted in the fake home and the worktree (memory files, rules, skills, agents, commands, user, project and local settings with hooks, user, project and local MCP servers, plugins with their own skills, hooks and MCP servers). **Control run with no locks: 21 of 21 live.** Under the pinned argv: none loaded or ran. |
+| P5 tools | `system/init` listed `Edit`, `Glob`, `Grep`, `Read`, `Write` and the two Nexus MCP tools. An edit and an MCP call succeeded. No disallowed tool was offered. This build offers `Task`, `Bash`, `WebFetch`, `WebSearch` and `NotebookEdit` under `--tools default`; `Agent` and `PowerShell` do not exist in it and stay in the list as a defence. |
+| P6 token | The `${NEXUS_MCP_TOKEN}` header expanded; the token was in no argv, no CLI output and no file under the harness root outside the job dir. |
+| P7 network | 17 to 19 `CONNECT`s in 30 s, **all to the one model-service host on 443**, no other host and no plain request. When the proxy refuses, the CLI retries up to 10 times. The MCP server on loopback was reached directly. |
+| P8 input | The argv was 637 bytes (limit 8 KiB), and a 200 KiB context on stdin arrived intact. |
+| P9 login state | **Not run** (controller only). |
+| P10 writes | One pinned turn wrote five files: `~/.claude.json` (changed), `~/.claude/backups/.claude.json.backup.<time>`, the MCP log under `LOCALAPPDATA`, a probe file in the temp folder, and `<worktree>/.claude/settings.local.json` (changed). The token was in none of them. |
+
+**The STOP rules.** Each branch reports to the user and **stops the phase**. None is ever resolved silently.
+
+| Id | Fires when | Branch |
+|---|---|---|
+| S1 | The version does not match `^2.1`, or a pinned flag is missing | Ask the user to install a 2.1.x CLI or to approve a re-pin. A missing `-file` form alone is pre-decided: skills go on stdin. |
+| S2 | `--safe-mode` drops the Nexus MCP server | Ask whether to drop `--safe-mode` (keeping the other locks and proving the exclusion of CLAUDE.md files by CR3), or to stop B2b. **Never dropped silently.** |
+| S3 | `--safe-mode` drops `--settings` (the deny rule) | The same question as S2. |
+| S4 | A home or worktree canary appears in the prompt | Isolation is broken: stop. A missing skills canary is pre-decided (stdin). |
+| S5 | An edit or MCP call is denied, or a shell is offered | Stop and report. A different tool name is pre-decided: pin the observed names. |
+| S6 | No `CONNECT` and the CLI reports a network error | It bypassed the proxy: stop. |
+| S7 | A `CONNECT` to any other host | Stop and ask the user about that host. |
+| S8 | The argv is not small, or the context does not arrive | Stop. |
+
+**What fired.** The first run fired **S2**: `--safe-mode` removes the job's MCP server. The user decided (D-B15) to **drop `--safe-mode`** and keep every other lock (`--restricted`, `--setting-sources ""`, `--strict-mcp-config`, `--permission-mode`, `--allowedTools` and `--disallowedTools`, with the subagent tool listed under both names), and to add a test that the user's CLAUDE.md files, hooks, plugins and other MCP servers never load (CR3+, above). The second run, with that argv, passed every check. The pre-decided branches were recorded without a stop: skills by `--append-system-prompt-file`, the token by the environment-expanded header, the context on stdin, the setting-sources form `""`.
+
+**The rules that stay in force for the verification steps** (the controller's, with the user's go-ahead; not run when this part was written):
+- **Any STOP branch from the probe, the real-login smoke test or the real-model run is reported to the user, and the phase stops.**
+- **The real-login smoke test** runs one turn on a three-file fixture on a scratch userData with v9 and v10 enabled, and records whether the login was read, every proxy decision, the usage, and the files touched in the CLI's store (names and times only). It **stops and asks** if the login is not read under the flags (the question of a setup token, not a silent fallback), if any host other than the one granted appears, or if any write outside the CLI's own store appears.
+- **Anything else the CLI needs on the network** is a question for the user, not a widened allow list.
+- **Only the harness** runs the installed CLI during implementation: a fake home, a fake key, a loopback mock model and a deny-all proxy. Never the user's home, login or CLI store, and never the network.
+
+---
