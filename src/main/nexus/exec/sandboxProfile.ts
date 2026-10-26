@@ -18,8 +18,13 @@ export function profileFromFacts(db: Database.Database, projectId: string, facts
   }
   const row = db.prepare('SELECT metadata_json FROM projects WHERE id = ?').get(projectId) as { metadata_json: string | null } | undefined;
   const meta = parse(row?.metadata_json ?? null);
-  const langs = isObj(meta) && Array.isArray(meta.detectedLanguages) ? meta.detectedLanguages.map((x) => String(x).toLowerCase()) : [];
-  if (langs.includes('python') && !langs.some((l) => l === 'javascript' || l === 'typescript')) return 'sde-python';
+  // `detectedLanguages` is what the project scanner stores: ProjectLanguageStat OBJECTS `{ language, fileCount, extension }`
+  // (shared/project.ts); a bare language string is accepted too. String(object) is "[object Object]", never a language.
+  const langs = isObj(meta) && Array.isArray(meta.detectedLanguages)
+    ? meta.detectedLanguages.map((x: unknown) => (typeof x === 'string' ? x : isObj(x) && typeof x.language === 'string' ? x.language : '').toLowerCase()).filter((x: string) => x.length > 0)
+    : [];
+  // The scanner's names include "TypeScript (React)" and "JavaScript (React)": any JavaScript or TypeScript variant keeps the node profile.
+  if (langs.includes('python') && !langs.some((l: string) => l.startsWith('javascript') || l.startsWith('typescript'))) return 'sde-python';
   return 'sde-node';
 }
 

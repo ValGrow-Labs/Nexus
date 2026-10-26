@@ -564,7 +564,7 @@ test('RA13: the integration ref moved by hand: status reads integrationConsisten
   const sha = integrationHead(world);
   let st = await world.w.nx.accepts.status(world.w.me, PROJECT);
   assert.equal(st.integrationConsistent, true); assert.equal(st.integrationHead, sha); assert.equal(st.lastAcceptedHead, sha);
-  assert.equal(st.userTreeClean, true); assert.equal(st.branch, 'main'); assert.ok(st.acceptedNotMerged >= 2); assert.equal(st.fastForward, true);
+  assert.equal(st.userTreeClean, true); assert.equal(st.branch, 'main'); assert.equal(st.acceptedNotMerged, 1, 'one accepted change'); assert.ok(st.commitCount >= 2, 'its commits'); assert.equal(st.fastForward, true);
   git(world.repo, ['update-ref', 'refs/nexus/accepted/main', world.initial]);
   st = await world.w.nx.accepts.status(world.w.me, PROJECT);
   assert.equal(st.integrationConsistent, false);
@@ -861,4 +861,38 @@ test('RA24 (M5): a failure writing the accept-time check row never replaces the 
     await assert.rejects(p, (e) => e.code === 'conflict' && e.detail.reason === 'merge_conflict');
   } finally { w.nx.validation.recordOutcomeTx = orig; }
   assert.ok(logs.some((l) => /accept-time check row was not written/.test(l)));
+});
+
+test('RA25 (Task 16 fix round 1): acceptedNotMerged counts accepted CHANGES, commitCount the commits: one accept 1, two 2, a merge 0, the next accept 1', async () => {
+  const world = await acceptedWorld();
+  const { w } = world;
+  const status = () => w.nx.accepts.status(w.me, PROJECT);
+  let st = await status();
+  assert.equal(st.acceptedNotMerged, 1, 'one accepted change set is one change');
+  assert.ok(st.commitCount >= 2, 'it is at least two commits on the integration ref: the change and the accept commit');
+  assert.equal(st.commitCount, Number(out(world.repo, ['rev-list', '--count', 'main..refs/nexus/accepted/main'])), 'commitCount is git\'s own count');
+  // A second accepted change: two changes.
+  const two = await makeChange(world, { file: 'second.txt', content: 'second\n', title: 'Add a second feature' });
+  approve(world, two.versionId);
+  await (await acceptWith(world, two.versionId, integrationHead(world))).p;
+  st = await status();
+  assert.equal(st.acceptedNotMerged, 2); assert.ok(st.commitCount >= 4);
+  assert.equal(st.integrationConsistent, true);
+  // The merge takes both: nothing is left, and git agrees.
+  const { p } = await mergeWith(world, integrationHead(world));
+  await p;
+  st = await status();
+  assert.equal(st.acceptedNotMerged, 0); assert.equal(st.commitCount, 0);
+  assert.equal(st.integrationConsistent, true);
+  // The iteration case: one more accepted change after the merge is one change (the merged ones are not counted again).
+  const three = await makeChange(world, { file: 'third.txt', content: 'third\n', title: 'Add a third feature' });
+  approve(world, three.versionId);
+  await (await acceptWith(world, three.versionId, integrationHead(world))).p;
+  st = await status();
+  assert.equal(st.acceptedNotMerged, 1);
+  assert.ok(st.commitCount >= 2);
+  // A merge made outside Nexus (the user merges the accepted ref themselves) leaves nothing to merge, whatever the records say.
+  git(world.repo, ['merge', '--ff-only', '-q', 'refs/nexus/accepted/main']);
+  st = await status();
+  assert.deepEqual([st.acceptedNotMerged, st.commitCount], [0, 0]);
 });

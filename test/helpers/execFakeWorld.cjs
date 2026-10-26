@@ -250,7 +250,10 @@ function addCommon(w, p) {
   w.setLanguages = (langs) => {
     const row = db.prepare('SELECT metadata_json FROM projects WHERE id = ?').get(w.projectId);
     const meta = JSON.parse(row.metadata_json || '{}');
-    db.prepare('UPDATE projects SET metadata_json = ? WHERE id = ?').run(JSON.stringify({ ...meta, detectedLanguages: langs }), w.projectId);
+    // The shape the project scanner stores (shared/project.ts ProjectLanguageStat), never a bare string: the profile rule reads `.language`.
+    const KNOWN = { python: ['Python', 'py'], javascript: ['JavaScript', 'js'], typescript: ['TypeScript', 'ts'] };
+    const stats = langs.map((l) => (typeof l === 'string' ? { language: (KNOWN[l.toLowerCase()] ?? [l, l])[0], fileCount: 3, extension: (KNOWN[l.toLowerCase()] ?? [l, l])[1] } : l));
+    db.prepare('UPDATE projects SET metadata_json = ? WHERE id = ?').run(JSON.stringify({ ...meta, detectedLanguages: stats }), w.projectId);
   };
   let k = 0;
   w.start = (actionId, o = {}) => nx.exec.start(me, { projectId: w.projectId, workspaceId: w.workspaceId, actionId, inputs: o.inputs ?? [],

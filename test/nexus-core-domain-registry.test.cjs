@@ -30,9 +30,10 @@ const { WORKSPACES } = loadTs('src/renderer/src/nexus/workspaces/registry.ts');
 const E2E_ENFORCED = true;
 const E2E_PENDING = new Set(B2B_E2E_STUB);
 const E2E_FILES = ['test/nexus-platform-exec-recipes.test.cjs', 'test/nexus-exec-recipes.test.cjs', 'test/nexus-platform-b2a-flows.test.cjs',
-  'test/nexus-platform-b2b-flows-node.test.cjs', 'test/nexus-platform-b2b-flows-python.test.cjs', 'test/nexus-exec-agent.test.cjs'];
+  'test/nexus-platform-b2b-flows-node.test.cjs', 'test/nexus-platform-b2b-flows-python.test.cjs', 'test/nexus-exec-agent.test.cjs',
+  'test/nexus-exec-agent-iteration.test.cjs'];
 /** The real-Docker files (test:exec gate): a Docker-dependent step's e2e id must be a title in one of them too (fix round 1; B2b Task 16 added the agent suite). */
-const REAL_DOCKER_E2E_FILES = ['test/nexus-exec-recipes.test.cjs', 'test/nexus-exec-agent.test.cjs'];
+const REAL_DOCKER_E2E_FILES = ['test/nexus-exec-recipes.test.cjs', 'test/nexus-exec-agent.test.cjs', 'test/nexus-exec-agent-iteration.test.cjs'];
 
 /** A deep, mutable copy of the registry for negative fixtures. */
 const clone = () => JSON.parse(JSON.stringify(DOMAINS));
@@ -110,8 +111,10 @@ test('DR2 checkRegistry(DOMAINS, B2B_IMPL) is clean; every REAL step names a wel
     // Every Docker-dependent e2e id is a title in a real-Docker file: the recipes file (B2a's steps) or the agent suite (the two
     // agent steps, B2b Task 16).
     assert.deepEqual(missingFrom(realDocker), [], 'every Docker-dependent e2e id is a title in a real-Docker file');
-    assert.deepEqual(missingFrom(realDockerTexts[1]).sort(), ['e2e.sde.application', 'e2e.sde.build', 'e2e.sde.dev-deployment', 'e2e.sde.diagnostics', 'e2e.sde.tests'],
-      'the agent suite proves the two agent steps and none of B2a\'s');
+    assert.deepEqual(missingFrom(realDockerTexts[1]).sort(), ['e2e.sde.application', 'e2e.sde.build', 'e2e.sde.dev-deployment', 'e2e.sde.diagnostics', 'e2e.sde.iteration', 'e2e.sde.tests'],
+      'the agent suite proves ai-implementation and none of the others');
+    assert.deepEqual(missingFrom(realDockerTexts[2]).sort(), ['e2e.sde.ai-implementation', 'e2e.sde.application', 'e2e.sde.build', 'e2e.sde.dev-deployment', 'e2e.sde.diagnostics', 'e2e.sde.tests'],
+      'the iteration file proves iteration (the real cs.tests_pass runs)');
     // Not vacuous: the real files without a title fail it, whatever the fake-driver files' titles say.
     assert.deepEqual(missingFrom(realDocker.replace('X5 e2e.sde.build ', 'X5 ')), ['e2e.sde.build']);
     assert.deepEqual(missingFrom(realDocker.replace('XA1 e2e.sde.ai-implementation ', 'XA1 ').replace('XA6 e2e.sde.iteration ', 'XA6 ')), ['e2e.sde.ai-implementation', 'e2e.sde.iteration']);

@@ -626,6 +626,15 @@ test('B2b Task 16: the sandbox profile of a project\'s code (a Python project\'s
   assert.equal(profileFromFacts(db({ project: project(['Python']) }), 'p', []), 'sde-python');
   assert.equal(profileFromFacts(db({ project: project(['python', 'TypeScript']) }), 'p', []), 'sde-node');
   assert.equal(profileFromFacts(db({ project: project([]) }), 'p', []), 'sde-node');
+  // The REAL stored shape (shared/project.ts ProjectLanguageStat, what the scanner writes), not a bare string: String(object) is
+  // "[object Object]" and a real Python project was always sde-node (the review of Task 16).
+  const stat = (language, extension) => ({ language, fileCount: 12, extension });
+  assert.equal(profileFromFacts(db({ project: project([stat('Python', 'py'), stat('Markdown', 'md'), stat('YAML', 'yml')]) }), 'p', []), 'sde-python');
+  assert.equal(profileFromFacts(db({ project: project([stat('Python', 'py'), stat('JavaScript', 'js')]) }), 'p', []), 'sde-node');
+  assert.equal(profileFromFacts(db({ project: project([stat('Python', 'py'), stat('TypeScript (React)', 'tsx')]) }), 'p', []), 'sde-node');
+  assert.equal(profileFromFacts(db({ project: project([stat('JavaScript (React)', 'jsx'), stat('Python', 'py')]) }), 'p', []), 'sde-node');
+  assert.equal(profileFromFacts(db({ project: project([stat('Rust', 'rs')]) }), 'p', []), 'sde-node');
+  assert.equal(profileFromFacts(db({ project: project([null, 7, {}, { language: 3 }]) }), 'p', []), 'sde-node', 'nothing else is read as a language');
   assert.equal(profileFromFacts(db({ project: undefined }), 'p', [{ metadata: { profile: 'not-a-profile' } }]), 'sde-node');
   // The project's repository (its newest live version's record) is read the same way.
   assert.equal(projectSandboxProfile(db({ project: project([]), repo: { metadata_json: JSON.stringify({ profile: 'sde-python' }) } }), 'p'), 'sde-python');

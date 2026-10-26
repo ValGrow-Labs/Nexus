@@ -69,6 +69,8 @@ test('E2E-B2b-1 node: requirement -> turn -> change set -> cs.tests_pass -> revi
   assert.equal(w.stepOf('requirement'), 'done');
 
   // ----- turn B: the implementation, in the same conversation
+  // The host proxy's decisions of this turn (the test seam: real traffic is only seen by the gated real-Docker suite, XA2/XA7).
+  w.injectEgress({ decision: 'allowed', host: 'api.anthropic.com', port: 443, reason: 'allowed' }, { decision: 'refused', host: 'evil.example.com', port: 443, reason: 'host_not_allowed' });
   implementing(w, NODE.ledger, { title: 'Add the ledger export', summary: 'toCsv with escaping, and its tests.', requirementVersionIds: [req.id], clientKey: 'cs-a' }, { tokens: ctx.tokens });
   const b = await w.turn('Implement the ledger export', { sessionId: a.sessionId });
   assert.equal(b.sessionId, a.sessionId);
@@ -101,24 +103,29 @@ test('E2E-B2b-1 node: requirement -> turn -> change set -> cs.tests_pass -> revi
   assert.equal(attemptB.state, 'succeeded');
 
   // ----- review: the user approves (#47); accept moves the integration ref only (#48)
+  assert.notEqual(await w.railStep('review'), 'done', 'unreviewed: the product rail does not show Review done');
   const rv = await x.ok('nexus:review:decide', csA, { decision: 'approve' }, intent());
+  assert.notEqual(await w.railStep('review'), 'done', 'approved but not accepted: the rail does not show Review done');
   assert.equal(rv.review.decision, 'approve'); assert.equal(rv.job, null);
   const st0 = await w.okd('nexus:repo:status', w.PROJECT);
   assert.equal(st0.acceptedNotMerged, 0); assert.equal(st0.dirty, false);
   const base0 = st0.acceptedHead;
   assert.ok(base0, 'the integration ref exists once the worktree was made');
   const acc = await w.okd('nexus:changeSet:accept', csA, base0);
+  assert.equal(await w.railStep('review'), 'done', 'reviewed and accepted: the product rail (railFor over the artifact summaries) shows Review done');
   assert.equal(acc.version.status, 'active'); assert.equal(acc.accept.refBefore, base0);
   const mergeA = acc.accept.mergeCommit;
   assert.equal(w.refOf(acc.accept.integrationRef), mergeA);
   assert.deepEqual(w.git('rev-list', '--parents', '-1', mergeA).split(' ').slice(1), [base0, headA], 'the accept commit joins the integration head and the change set head');
   assert.deepEqual(w.userState(), userBefore, 'accept never touches the user\'s branch, index or files');
   const st1 = await w.okd('nexus:repo:status', w.PROJECT);
-  assert.equal(st1.acceptedNotMerged, Number(w.git('rev-list', '--count', `refs/heads/${st1.branch}..${acc.accept.integrationRef}`)), 'status counts the accepted commits the branch lacks');
-  assert.ok(st1.acceptedNotMerged >= 1, 'status shows accepted work not yet merged (acceptedNotMerged > 0)');
+  assert.equal(st1.acceptedNotMerged, 1, 'status counts accepted CHANGES: one change set is one change, however many commits it adds');
   assert.equal(st1.canFastForward, true); assert.equal(st1.acceptedHead, mergeA);
   const svc1 = await w.drive(w.nx.accepts.status(w.me, w.PROJECT));
-  assert.equal(svc1.integrationConsistent, true, 'O25: the integration ref is the newest accept\'s ref_after');
+  assert.equal(svc1.integrationConsistent, true, 'O25: the integration ref is the newest accept ref_after');
+  assert.equal(svc1.acceptedNotMerged, 1);
+  assert.equal(svc1.commitCount, Number(w.git('rev-list', '--count', `refs/heads/${st1.branch}..${acc.accept.integrationRef}`)), 'commitCount is the git count of the commits the branch lacks');
+  assert.ok(svc1.commitCount >= 2, 'the change commit and the accept commit');
 
   // ----- "Merge accepted work": the dialog confirms (faked at its show seam only); a fast-forward to the confirmed sha
   const merge = await w.okd('nexus:repo:mergeAccepted', w.PROJECT, { branch: st1.branch, expectedAcceptedHead: st1.acceptedHead });
@@ -135,6 +142,7 @@ test('E2E-B2b-1 node: requirement -> turn -> change set -> cs.tests_pass -> revi
   const mrow = w.db.prepare('SELECT * FROM repo_merges WHERE project_id = ?').get(w.PROJECT);
   assert.deepEqual([mrow.sha_confirmed, mrow.after, mrow.confirmed_via, mrow.merged_by, mrow.before], [mergeA, mergeA, 'dialog', 'user:local', st1.head]);
   const st2 = await w.okd('nexus:repo:status', w.PROJECT);
+  assert.equal((await w.drive(w.nx.accepts.status(w.me, w.PROJECT))).integrationConsistent, true, 'O25 after the first merge');
   assert.equal(st2.acceptedNotMerged, 0); assert.equal(st2.head, mergeA);
 
   // ----- the B2a half, on the merged repository: snapshot, code, tests, build, application, dev deployment, diagnosis
@@ -158,6 +166,9 @@ test('E2E-B2b-1 node: requirement -> turn -> change set -> cs.tests_pass -> revi
   implementing(w, NODE.pageV1, { title: 'Paginate the ledger', summary: 'A page helper.', clientKey: 'cs-b1' }, { say: 'Adding pagination.', tokens: ctx.tokens });
   const c = await w.turn('Add pagination to the ledger export; the diagnostic report is attached', { sessionId: a.sessionId, focus: [dep.report] });
   assert.equal(c.job.state, 'completed', c.job.error_json);
+  // M1: the diagnostic report really reached the turn: it is a focus input of the job and the token names it among its inputs.
+  assert.deepEqual(w.db.prepare("SELECT version_id, role FROM job_inputs WHERE job_id = ?").all(c.jobId).map((r) => [r.version_id, r.role]), [[dep.report, 'focus']], 'the diagnostic is the turn input');
+  assert.ok(JSON.parse(w.db.prepare('SELECT inputs_json FROM capability_tokens WHERE job_id = ?').get(c.jobId).inputs_json).includes(dep.report), 'the token names it as an input');
   const [csB1] = w.changeSetsOf(c.jobId);
   assert.equal(await w.until_candidate(csB1), 'candidate');
   const headB1 = storageOf(w, csB1).commit;
@@ -165,6 +176,8 @@ test('E2E-B2b-1 node: requirement -> turn -> change set -> cs.tests_pass -> revi
   assert.equal(metaOf(w, csB1).base, headA);
   const artifactB = w.versionRow(csB1).artifact_id;
   const comment = 'Please handle a short last page and an empty ledger.';
+  // The revision turn's proxy reports more decisions than the cap: 200 events, then one marker.
+  w.injectEgress(...Array.from({ length: 205 }, (_, i) => ({ decision: 'refused', host: 'blocked' + i + '.example.com', port: 443, reason: 'host_not_allowed' })));
   const decided = await x.ok('nexus:review:decide', csB1, { decision: 'request_changes', comment }, intent());
   assert.equal(decided.review.decision, 'request_changes');
   assert.ok(decided.job, 'a request for changes starts the next turn');
@@ -194,7 +207,8 @@ test('E2E-B2b-1 node: requirement -> turn -> change set -> cs.tests_pass -> revi
   const accB = await w.okd('nexus:changeSet:accept', csB2, st3.acceptedHead);
   assert.equal(accB.accept.refBefore, mergeA);
   const st4 = await w.okd('nexus:repo:status', w.PROJECT);
-  assert.ok(st4.acceptedNotMerged >= 1); assert.equal(st4.canFastForward, true);
+  assert.equal(st4.acceptedNotMerged, 1, 'the iteration: one more accepted change; the merged one is not counted again'); assert.equal(st4.canFastForward, true);
+  assert.equal((await w.drive(w.nx.accepts.status(w.me, w.PROJECT))).integrationConsistent, true, 'O25 after the second accept');
   await w.okd('nexus:repo:mergeAccepted', w.PROJECT, { branch: st4.branch, expectedAcceptedHead: st4.acceptedHead });
   assert.equal(w.userHead(), accB.accept.mergeCommit, 'the user\'s branch fast-forwarded again, to v2\'s accept commit');
   assert.ok(fs.readFileSync(path.join(w.repoDir, 'test', 'page.test.js'), 'utf8').includes('empty ledger'));
@@ -203,7 +217,11 @@ test('E2E-B2b-1 node: requirement -> turn -> change set -> cs.tests_pass -> revi
   assert.equal(w.db.prepare('SELECT COUNT(*) n FROM change_set_accepts').get().n, 2);
 
   // ----- evidence-based completion, the orphan queries, the store
-  const stepStates = Object.fromEntries(SDE_STEPS.map((id) => [id, w.stepOf(id)]));
+  // Every step from the records: `review` through the product own rail reader, the rest by stepStateFrom over the database. The
+  // `iteration` step's proof is the explicit v1 / v2 assertions above (same session and worktree, derived_from, base = merge-base);
+  // the rail's iteration step reads the same change-set records as ai-implementation and adds nothing to them.
+  const stepStates = {};
+  for (const id of SDE_STEPS) stepStates[id] = id === 'review' ? await w.railStep('review', { deploymentHealthy: true }) : w.stepOf(id);
   assert.deepEqual(stepStates, Object.fromEntries(SDE_STEPS.map((id) => [id, 'done'])), 'every SDE step is done, from the records');
   // Each change-set step is done because of validation rows, not because a job exited 0:
   for (const cs of [csA, csB2]) assert.deepEqual(CS_VALIDATORS.filter((v) => w.checks(cs)[v] !== 'passed'), []);
@@ -224,15 +242,20 @@ test('E2E-B2b-1 node: requirement -> turn -> change set -> cs.tests_pass -> revi
   ctx.flow = { a, b, c, d: decided.job.id, csA, csB1, csB2, req, headA, mergeA, mergeB: accB.accept.mergeCommit };
 });
 
-test('E2E-B2b-3 node: the observability query of constraint 13, one query per agent job: who, session, token, attempt and sandbox, usage, tool calls, versions, checks, review, accept and merge', async () => {
+test('E2E-B2b-3 node: the observability query of constraint 13, one query per agent job: who and where, inputs, session, token and its tools, attempt and sandbox, usage, tool calls, egress, versions, checks, review, accept and merge', async () => {
   const w = ctx.w;
-  assert.ok(w && ctx.flow, 'E2E-B2b-1 ran');
+  assert.ok(w && ctx.flow, 'E2E-B2b-3 reads the world that E2E-B2b-1 built: run this file whole, never with E2E-B2b-1 filtered out');
   const f = ctx.flow;
   // ONE query answers all of it for a turn's job.
-  const QUERY = `SELECT j.id AS job, j.requested_by, j.on_behalf_of, j.session_id, j.state, j.outcome,
+  const QUERY = `SELECT j.id AS job, j.requested_by, j.on_behalf_of, j.project_id, j.workspace_id, j.session_id, j.state, j.outcome,
+      (SELECT json_group_array(json_object('version', i.version_id, 'role', i.role)) FROM job_inputs i WHERE i.job_id = j.id) AS inputs,
       (SELECT t.principal_id FROM capability_tokens t WHERE t.job_id = j.id) AS agent_principal,
-      (SELECT json_object('jti', t.jti, 'caps', t.caps_sha256, 'tools', json_array_length(t.tools_json), 'issued', t.issued_at, 'expires', t.expires_at, 'revoked', t.revoke_reason)
+      (SELECT json_object('jti', t.jti, 'caps', t.caps_sha256, 'tools', json(t.tools_json), 'issued', t.issued_at, 'expires', t.expires_at, 'revoked', t.revoke_reason)
          FROM capability_tokens t WHERE t.job_id = j.id) AS capability,
+      (SELECT json_group_array(json_extract(e.data_json, '$.egress')) FROM job_events e WHERE e.job_id = j.id AND e.type = 'attempt.progress'
+         AND json_extract(e.data_json, '$.egress') IS NOT NULL) AS egress,
+      (SELECT json_group_array(json_extract(e.data_json, '$.egressTruncated.count')) FROM job_events e WHERE e.job_id = j.id AND e.type = 'attempt.progress'
+         AND json_extract(e.data_json, '$.egressTruncated') IS NOT NULL) AS egress_truncated,
       (SELECT json_object('attempt', a.id, 'n', a.n, 'state', a.state, 'container', a.container_id, 'runtime', a.runtime_kind, 'sandbox', json(a.sandbox_json), 'environment', json(a.environment_json), 'usage', json(a.usage_json))
          FROM job_attempts a WHERE a.job_id = j.id ORDER BY a.n DESC LIMIT 1) AS attempt,
       (SELECT json_group_array(json_object('tool', json_extract(e.data_json, '$.tool'), 'ok', json_extract(e.data_json, '$.ok'))) FROM job_events e
@@ -254,7 +277,17 @@ test('E2E-B2b-3 node: the observability query of constraint 13, one query per ag
   assert.equal(row.session_id, f.b.sessionId);
   assert.match(row.agent_principal, /^agent:/, 'the session\'s agent principal');
   const token = JSON.parse(row.capability);
-  assert.match(token.jti, /^[A-Za-z0-9_-]{22}$/); assert.match(token.caps, /^[0-9a-f]{64}$/); assert.ok(token.tools >= 5); assert.equal(token.revoked, 'job_ended');
+  assert.match(token.jti, /^[A-Za-z0-9_-]{22}$/); assert.match(token.caps, /^[0-9a-f]{64}$/); assert.equal(token.revoked, 'job_ended');
+  // who asked, for which project and domain, with which inputs; and the tools its token allowed, by name.
+  assert.deepEqual([row.project_id, row.workspace_id], [w.PROJECT, w.WORKSPACE]);
+  assert.deepEqual(JSON.parse(row.inputs), [], 'the implementation turn had no focus input');
+  const { MCP_TOOL_NAMES } = loadTs('src/shared/nexus/mcpTools.ts');
+  assert.ok(token.tools.length >= 5 && token.tools.every((t) => MCP_TOOL_NAMES.includes(t)), 'the token names tools of the MCP table');
+  for (const t of ['changeset_register', 'sandbox_exec', 'requirement_draft']) assert.ok(token.tools.includes(t), t);
+  assert.ok(!token.tools.includes('handoff_create'));
+  // The proxy's decisions of the turn: host and reason only (injected through the test seam: nothing flows under ScriptedRuntime).
+  assert.deepEqual(JSON.parse(row.egress), [{ decision: 'allowed', host: 'api.anthropic.com', port: 443, reason: 'allowed' }, { decision: 'refused', host: 'evil.example.com', port: 443, reason: 'host_not_allowed' }]);
+  assert.deepEqual(JSON.parse(row.egress_truncated), []);
   const attempt = JSON.parse(row.attempt);
   assert.equal(attempt.state, 'succeeded'); assert.match(attempt.container, /^[0-9a-f]{64}$/); assert.equal(attempt.runtime, 'scripted');
   assert.equal(attempt.sandbox.network.mode, 'none'); assert.equal(attempt.sandbox.mounts[0].containerPath, '/workspace');
@@ -274,6 +307,12 @@ test('E2E-B2b-3 node: the observability query of constraint 13, one query per ag
   // The iteration's revision turn answers the same query with its request-changes input.
   const rev = w.db.prepare(QUERY).get(f.d);
   assert.equal(rev.session_id, f.b.sessionId);
+  assert.equal(JSON.parse(rev.egress).length, 200, 'at most 200 decisions are recorded');
+  assert.deepEqual(JSON.parse(rev.egress_truncated), [5], 'then one marker counts the rest');
+  assert.deepEqual(JSON.parse(rev.inputs).map((i) => i.role), ['review'], 'the revision turn input is the reviewed change set');
+  // The turn that was given the diagnostic names it as its input.
+  const withDiag = w.db.prepare(QUERY).get(f.c.jobId);
+  assert.deepEqual(JSON.parse(withDiag.inputs).map((i) => i.role), ['focus']);
   assert.equal(JSON.parse(rev.registered)[0].version, f.csB2);
   // No secret anywhere the query reached, and no turn's token text anywhere at all.
   // (a 64-hex digest is public and looks secret-shaped to the redactor; the jti is a public id: everything else must pass it as is)
@@ -435,4 +474,15 @@ test('E2E-B2b-2 node: a restart mid-turn leaves the job and session interrupted,
   assert.equal(w2.driver.all().filter((x) => x.labels && x.labels['nexus.kind'] === 'agent').length, 0, 'no container of the turn is left');
   w.release();
   sound(w2, 'restart mid-turn');
+});
+
+test('E2E-B2b-2 node: the restart test\'s miniature reconcile-at-ready wiring still mirrors main\'s own (src/main/nexusExec/execWiring.ts)', () => {
+  // The flows copy main\'s wiring at every runner ready in miniature (the real one forks a runner process). If the real sequence
+  // changes, this fails and the copy in test/helpers/agentFlowWorld.cjs must be brought in line.
+  const KEYS = ['reconcile.list', 'exec.reconcileCandidates()', 'reconcileList()', 'reconcile.result', 'recoverPhaseB(', 'reconcile.remove', 'report.remove', 'recordOrphanRemoval('];
+  const real = fs.readFileSync(path.join(__dirname, '..', 'src', 'main', 'nexusExec', 'execWiring.ts'), 'utf8');
+  const copy = fs.readFileSync(path.join(__dirname, 'helpers', 'agentFlowWorld.cjs'), 'utf8');
+  for (const [name, text] of [['execWiring.ts', real], ['agentFlowWorld.cjs', copy]]) {
+    assert.deepEqual(KEYS.filter((k) => !text.includes(k)), [], `${name} holds the whole reconcile sequence`);
+  }
 });

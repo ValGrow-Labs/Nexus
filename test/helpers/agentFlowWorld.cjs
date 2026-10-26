@@ -12,7 +12,10 @@
 // - Docker: the fake sandbox driver. A tool container plays RECORDED-format outputs derived from the staged source tree it
 //   was given (the git archive of the commit under test): node:test and pytest reports built from the test titles in the
 //   staged files, where a title ending ` [fails]` (node) or a function ending `_fails` (python) is played as failing.
-//   Nothing the agent wrote is ever run on the host.
+//   Nothing the agent wrote is ever run on the host. So `cs.tests_pass` passing or failing in these flows is a FAKE-DRIVER convention
+//   (playTool / playExec build the JUnit by regex over test titles in the staged tree; `[fails]` is not a product behaviour): what they
+//   prove is that the platform runs the check on the change set's own head commit and judges by the report. A real node:test or pytest
+//   run is XA6 of the gated suite only, and that has not been run.
 // Time is a fake clock (main's `now` and the runner's timers); `until` advances it a second at a time and runs the
 // scheduler's tick, while real I/O (git, files) is awaited between steps (the runner's own real I/O is counted).
 const fs = require('node:fs');
@@ -40,6 +43,7 @@ const { RunnerCore } = loadTs('src/runner/core.ts');
 const { repositoryCheck, resolveCommit } = loadTs('src/main/git.ts');
 const { confirmMergeWith } = loadTs('src/main/nexusExec/mergeDialog.ts');
 const { STEP_SEPARATOR } = loadTs('src/main/nexus/exec/planBuilder.ts');
+const { startHostEgressProxy } = loadTs('src/runner/hostEgressProxy.ts');
 const { verifyActivityChain } = loadTs('src/main/nexus/activity/writer.ts');
 const { getDomain } = loadTs('src/shared/nexus/domains/index.ts');
 const { stepStateFrom } = loadTs('src/shared/nexus/stepState.ts');
@@ -283,12 +287,20 @@ async function flowWorld(o = {}) {
   const io = { n: 0 };
   function attachCore() {
     const b = bridge();
+    // The test seam for the host proxy (RunnerDeps.agentRuntime.startProxy): the REAL proxy is started, and the decisions a test queued with
+    // `w.injectEgress` are reported through the proxy's own `onDecision` right after, so the egress progress events have content. Nothing
+    // flows through the proxy under ScriptedRuntime: real traffic is only ever seen by the gated real-Docker suite.
+    const startProxy = async (opts) => {
+      const proxy = await startHostEgressProxy(opts);
+      for (const d of w.egressQueue.splice(0)) opts.onDecision({ t: 'egress', decision: d.decision, host: d.host, port: d.port, reason: d.reason, at: Date.now() });
+      return proxy;
+    };
     const fakeOnly = real ? {} : { timers: clock, freeBytes: async () => 100 * GIB, sleep: async () => {}, probeHttp: async (_port, q) => ({ status: w.health(q), ms: 3 }),
       pickPort: (() => { let n = 49200; return () => n++; })() };
     const core = new RunnerCore(b.transport, { driver, now: () => clock.now, fs: trackRealIo(fsp, io), log: (l) => w.runnerLogs.push(l),
       docker: cli, imagesDir: path.join(ROOT, 'infra', 'images'), ...fakeOnly,
       runtimeProbe: { adapters: () => [scriptedAdapter] },
-      agentRuntime: { scriptFor: (plan) => w.nextScript(plan) } });
+      agentRuntime: { scriptFor: (plan) => w.nextScript(plan), ...(real ? {} : { startProxy }) } });
     let gitRunner = core.git ?? null;
     Object.defineProperty(core, 'git', { configurable: true, enumerable: true, get: () => gitRunner, set: (v) => { gitRunner = v ? trackRealIo(v, io) : v; } });
     if (gitRunner) gitRunner = trackRealIo(gitRunner, io);
@@ -375,6 +387,9 @@ async function flowWorld(o = {}) {
   w.sleepFake = async (ms) => { for (let t = 0; t < ms; t += 1000) { await flush(); if (real) await sleepReal(1000); else clock.advance(1000); nx.exec.tick(clock.now); if (nx.validation) nx.validation.runPending(clock.now); } await flush(); };
 
   // ---- the agent's scripts: one provider per turn, in the order the turns start
+  /** Queues proxy decisions for the NEXT turn's host proxy (see `startProxy` above): `{ decision, host, port, reason }` each. */
+  w.egressQueue = [];
+  w.injectEgress = (...decisions) => { w.egressQueue.push(...decisions); };
   /** The next `hold` exec (sandbox_exec ['hold']) waits until `release()` is called: a turn caught mid-command. */
   w.hold = () => { w.holdGate = new Promise((r) => { w.release = r; }); };
   w.script = (fn) => { w.scripts.push(typeof fn === 'function' ? fn : () => fn); return w; };
@@ -440,18 +455,33 @@ async function flowWorld(o = {}) {
     return w.versionRow(versionId).status;
   };
   /**
-   * The state of an SDE step from the records (stepStateFrom), as the rail reads it. `addCommon`'s `stepState` knows the participation and
-   * deployment records; the `review` record is read here: a change set whose NEWEST review approves it AND that was accepted into the
-   * integration ref (an accept row). Never an exit code: a job that exited 0 changes no step.
+   * The state of an SDE step from the records (stepStateFrom), computed here from the database (addCommon's `stepState`). The `review`
+   * step is a RECORD step the product's rail reads itself: use `railStep('review')`, which asks the product's own reader instead of a
+   * rule invented here. Never an exit code: a job that exited 0 changes no step.
    */
   w.stepOf = (stepId) => {
     const step = getDomain('sde').lifecycle.find((x) => x.id === stepId);
-    if ('record' in step.doneWhen && step.doneWhen.record === 'review') {
-      const present = db.prepare(`SELECT 1 FROM change_set_accepts c JOIN reviews r ON r.version_id = c.version_id WHERE c.project_id = ? AND r.decision = 'approve'
-        AND NOT EXISTS (SELECT 1 FROM reviews y WHERE y.version_id = r.version_id AND (y.created_at > r.created_at OR (y.created_at = r.created_at AND y.rowid > r.rowid)))`).get(w.PROJECT) !== undefined;
-      return stepStateFrom(step, { versions: [], liveJobs: 0, inputsAvailable: true, recordPresent: present });
-    }
+    if ('record' in step.doneWhen && step.doneWhen.record === 'review') throw new Error("the review step is read through w.railStep('review'), the product own rail");
     return w.stepState('sde', stepId);
+  };
+  /**
+   * The state of an SDE step as the PRODUCT's rail reads it: the renderer's own reader (workspaces/lifecycleModel.railFor over
+   * project/spineModel.railRecordsFor) over the artifact summaries (#8) and each shown version's check results (#32) that the handlers
+   * answer, exactly the inputs ProjectBench gives it. `o.deploymentHealthy`: the project's healthy-deployment record.
+   */
+  w.railStep = async (stepId, o = {}) => {
+    const L = loadTs('src/renderer/src/nexus/workspaces/lifecycleModel.ts');
+    const S = loadTs('src/renderer/src/nexus/project/spineModel.ts');
+    const artifacts = await w.x.ok('nexus:artifacts:byProject', w.PROJECT);
+    const checks = new Map();
+    for (const { versionId } of S.checkedVersionIds(artifacts)) {
+      const rows = await w.x.ok('nexus:version:validations', versionId);
+      checks.set(versionId, Object.fromEntries(rows.map((r) => [r.validatorId, r.status])));
+    }
+    const records = S.railRecordsFor({ workspaceId: w.WORKSPACE, artifacts, checks, liveActions: [], deploymentHealthy: o.deploymentHealthy === true, participating: true });
+    const view = L.bundledDomainViews().find((v) => v.id === 'sde');
+    const step = L.railFor(view, records).steps.find((x) => x.id === stepId);
+    return step.state;
   };
   /** A handler call that waits for a runner job (accept, merge, status): driven until it answers; the envelope's data, or a failed assertion. */
   w.okd = async (ch, ...a) => {
@@ -595,8 +625,9 @@ async function makeChange(w, o) {
   return { turn, cs };
 }
 /** Review (approve) and accept a candidate change set through the handlers; returns { status, accept } with the status read before accepting. */
-async function approveAndAccept(w, cs) {
+async function approveAndAccept(w, cs, o = {}) {
   await w.x.ok('nexus:review:decide', cs, { decision: 'approve' }, intent());
+  if (o.afterApprove) await o.afterApprove();
   const status = await w.okd('nexus:repo:status', w.PROJECT);
   const accept = await w.okd('nexus:changeSet:accept', cs, status.acceptedHead);
   return { status, accept: accept.accept, version: accept.version };

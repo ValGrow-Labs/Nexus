@@ -73,11 +73,15 @@ test('E2E-B2b-1 python: requirement -> turn -> change set -> cs.tests_pass -> re
   assert.equal(w.stepOf('ai-implementation'), 'done');
 
   // ----- review, accept, merge
-  const { status: st0, accept } = await approveAndAccept(w, csA);
+  assert.notEqual(await w.railStep('review'), 'done', 'unreviewed');
+  const { status: st0, accept } = await approveAndAccept(w, csA, { afterApprove: async () => {
+    assert.notEqual(await w.railStep('review'), 'done', 'approved but not accepted: the product rail does not show Review done');
+  } });
+  assert.equal(await w.railStep('review'), 'done', 'reviewed and accepted: the product rail shows Review done');
   assert.equal(accept.refBefore, st0.acceptedHead);
   assert.deepEqual(w.userState(), userBefore, 'accept never touches the user\'s branch, index or files');
   const st1 = await w.okd('nexus:repo:status', w.PROJECT);
-  assert.ok(st1.acceptedNotMerged >= 1); assert.equal(st1.canFastForward, true);
+  assert.equal(st1.acceptedNotMerged, 1); assert.equal(st1.canFastForward, true);
   const svc = await w.drive(w.nx.accepts.status(w.me, w.PROJECT));
   assert.equal(svc.integrationConsistent, true, 'O25');
   const m = await w.okd('nexus:repo:mergeAccepted', w.PROJECT, { branch: st1.branch, expectedAcceptedHead: st1.acceptedHead });
@@ -131,7 +135,7 @@ test('E2E-B2b-1 python: requirement -> turn -> change set -> cs.tests_pass -> re
   assert.equal(w.versionRow(csB1).status, 'candidate', 'the superseded v1 is never accepted');
 
   // ----- evidence-based completion, the store
-  for (const id of DONE_STEPS) assert.equal(w.stepOf(id), 'done', id);
+  for (const id of DONE_STEPS) assert.equal(id === 'review' ? await w.railStep('review') : w.stepOf(id), 'done', id);
   for (const id of NEEDS_MANIFEST) assert.notEqual(w.stepOf(id), 'done', `${id} needs a nexus.app.json: a Python library does not claim it`);
   for (const cs of [csA, csB2]) assert.deepEqual(CS_VALIDATORS.filter((v) => w.checks(cs)[v] !== 'passed'), []);
   assert.equal(isExecutableEndToEnd(getDomain('sde'), 'B2b'), true);

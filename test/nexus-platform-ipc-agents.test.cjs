@@ -700,7 +700,9 @@ test('P1 #49 status: a repository that cannot be read answers a status that says
   withFakeGit(w, fakeGitRead({ ok: true, read: 'status', branch: 'main', head: BASE, dirty: false, integrationHead: HEAD, acceptedNotMerged: 2, fastForward: true }));
   const s = await w.x.ok('nexus:repo:status', PROJECT);
   assert.deepEqual(Object.keys(s).sort(), ['acceptedHead', 'acceptedNotMerged', 'branch', 'canFastForward', 'checkedAt', 'dirty', 'head', 'integrationRef', 'projectId', 'reason']);
-  assert.deepEqual([s.branch, s.head, s.dirty, s.integrationRef, s.acceptedHead, s.acceptedNotMerged], ['main', BASE, false, 'refs/nexus/accepted/main', HEAD, 2]);
+  // `acceptedNotMerged` counts accepted CHANGES (accept records the branch lacks), not the commits git reports (2 here): nothing was
+  // accepted in this world, so it is 0 (Task 16 fix round 1; before, it was git's commit count).
+  assert.deepEqual([s.branch, s.head, s.dirty, s.integrationRef, s.acceptedHead, s.acceptedNotMerged], ['main', BASE, false, 'refs/nexus/accepted/main', HEAD, 0]);
   assert.equal(s.canFastForward, false, 'nothing was accepted, so the integration ref is not consistent and Merge is not offered');
   assert.equal(s.reason, 'integration_unexpected');
   await w.x.refused('nexus:repo:status', ['p-nothing'], 'not_found');
@@ -712,7 +714,7 @@ test('P1 #49 status: a repository that cannot be read answers a status that says
 
 test('P2 the merge block reason follows the order the merge itself refuses in, and a clean fast-forward is allowed', () => {
   const { mergeBlockReason, repoStatusView } = loadTs('src/main/nexusIpc/dto.ts');
-  const ok = { branch: 'main', integrationRef: 'refs/nexus/accepted/main', integrationHead: HEAD, checkedOutBranch: 'main', head: BASE, acceptedNotMerged: 1, fastForward: true,
+  const ok = { branch: 'main', integrationRef: 'refs/nexus/accepted/main', integrationHead: HEAD, checkedOutBranch: 'main', head: BASE, acceptedNotMerged: 1, commitCount: 2, fastForward: true,
     userTreeClean: true, integrationConsistent: true, lastAcceptedHead: HEAD };
   assert.equal(mergeBlockReason(ok), null);
   assert.equal(mergeBlockReason({ ...ok, integrationConsistent: false }), 'integration_unexpected');

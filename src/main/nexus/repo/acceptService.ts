@@ -70,7 +70,15 @@ export interface AcceptStatus {
   branch: string; integrationRef: string; integrationHead: string | null;
   /** The user's checked-out branch and its HEAD (null when detached or unreadable). */
   checkedOutBranch: string; head: string | null;
-  acceptedNotMerged: number; fastForward: boolean; userTreeClean: boolean;
+  /**
+   * How many ACCEPTED CHANGES (change_set_accepts rows) the branch lacks: the accepts after the newest merge of this branch (all of
+   * them when it was never merged), and 0 whenever git says the branch already holds the integration head (a merge made outside
+   * Nexus). One accepted change set is one change however many commits it adds to the integration ref.
+   */
+  acceptedNotMerged: number;
+  /** The COMMITS on the integration ref that are not on the branch (git rev-list): an accept adds the change's own commits and the accept commit. */
+  commitCount: number;
+  fastForward: boolean; userTreeClean: boolean;
   /** O25: the integration head is the newest accept's `ref_after`, or the initial head while nothing was accepted. */
   integrationConsistent: boolean;
   /** The newest accept's `ref_after`: the commit "Merge accepted work" would merge (null: nothing accepted yet). */
@@ -351,8 +359,9 @@ export class AcceptService {
     const r = await this.deps.gitRead.request({ read: 'status', repoPath, branch, integrationRef });
     if (!r.ok || r.read !== 'status') throw new PlatformError('unavailable', r.ok ? 'the repository did not answer' : r.message, { reason: r.ok ? 'error' : r.code });
     const last = this.lastAccept(projectId, integrationRef);
-    return { branch, integrationRef, integrationHead: r.integrationHead, checkedOutBranch: r.branch, head: r.head, acceptedNotMerged: r.acceptedNotMerged,
-      fastForward: r.fastForward, userTreeClean: !r.dirty, integrationConsistent: this.consistent(projectId, integrationRef, r.integrationHead),
+    const pending = r.acceptedNotMerged === 0 ? 0 : this.acceptsSinceMerge(projectId, branch, integrationRef, 1).count;
+    return { branch, integrationRef, integrationHead: r.integrationHead, checkedOutBranch: r.branch, head: r.head, acceptedNotMerged: pending,
+      commitCount: r.acceptedNotMerged, fastForward: r.fastForward, userTreeClean: !r.dirty, integrationConsistent: this.consistent(projectId, integrationRef, r.integrationHead),
       lastAcceptedHead: last?.ref_after ?? null };
   }
 
@@ -395,18 +404,26 @@ export class AcceptService {
 
   // ---------- merge accepted work ----------
 
-  private mergeInfo(projectId: string, s: AcceptStatus, to: string): MergeConfirmInfo {
-    // The accepts since the newest merge (all of them when the project was never merged).
+  /** The accepts since the newest merge of this branch (all of them when it was never merged): their number, and up to `limit` rows, oldest first. */
+  private acceptsSinceMerge(projectId: string, branch: string, integrationRef: string, limit: number):
+    { count: number; rows: { version_id: string; merge_commit: string; accepted_at: number; metadata_json: string }[] } {
     const lastMerge = this.db.prepare('SELECT sha_confirmed FROM repo_merges WHERE project_id = ? AND branch = ? ORDER BY rowid DESC LIMIT 1')
-      .get(projectId, s.branch) as { sha_confirmed: string } | undefined;
+      .get(projectId, branch) as { sha_confirmed: string } | undefined;
     const since = lastMerge
       ? (this.db.prepare('SELECT rowid AS r FROM change_set_accepts WHERE project_id = ? AND integration_ref = ? AND ref_after = ?')
-        .get(projectId, s.integrationRef, lastMerge.sha_confirmed) as { r: number } | undefined)?.r ?? 0
+        .get(projectId, integrationRef, lastMerge.sha_confirmed) as { r: number } | undefined)?.r ?? 0
       : 0;
+    const count = (this.db.prepare('SELECT COUNT(*) AS n FROM change_set_accepts WHERE project_id = ? AND integration_ref = ? AND rowid > ?')
+      .get(projectId, integrationRef, since) as { n: number }).n;
     const rows = this.db.prepare(`SELECT c.version_id, c.merge_commit, c.accepted_at, v.metadata_json FROM change_set_accepts c
-      JOIN artifact_versions v ON v.id = c.version_id WHERE c.project_id = ? AND c.integration_ref = ? AND c.rowid > ? ORDER BY c.rowid LIMIT 50`)
-      .all(projectId, s.integrationRef, since) as { version_id: string; merge_commit: string; accepted_at: number; metadata_json: string }[];
-    return { projectId, branch: s.branch, from: s.head, to, commitCount: s.acceptedNotMerged, accepted: rows.map((r) => {
+      JOIN artifact_versions v ON v.id = c.version_id WHERE c.project_id = ? AND c.integration_ref = ? AND c.rowid > ? ORDER BY c.rowid LIMIT ?`)
+      .all(projectId, integrationRef, since, limit) as { version_id: string; merge_commit: string; accepted_at: number; metadata_json: string }[];
+    return { count, rows };
+  }
+
+  private mergeInfo(projectId: string, s: AcceptStatus, to: string): MergeConfirmInfo {
+    const rows = this.acceptsSinceMerge(projectId, s.branch, s.integrationRef, 50).rows;
+    return { projectId, branch: s.branch, from: s.head, to, commitCount: s.commitCount, accepted: rows.map((r) => {
       const m = parse(r.metadata_json);
       return { versionId: r.version_id, title: isObj(m) && typeof m.title === 'string' ? m.title.slice(0, 200) : 'Agent change', mergeCommit: r.merge_commit, acceptedAt: r.accepted_at };
     }) };
