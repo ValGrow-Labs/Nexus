@@ -11,8 +11,10 @@
  *   hostsSha256): `hosts_json` is the JSON array of `host:port` strings, lowercased, de-duplicated and sorted, and
  *   `hosts_sha256` the sha256 hex of that UTF-8 text. Any other rule makes every turn fail `consent_mismatch`.
  * - Usage. `usageToday()` sums `job_attempts.usage_json` of `agent.run` attempts created since local midnight. Cost is
- *   what the runtime reported (US cents); an attempt that ended without a reported cost is charged at the turn cap and
- *   flagged `estimated` (a live attempt counts what it reported so far). Nothing the renderer says is ever read.
+ *   what the runtime reported (US cents); an attempt that REACHED THE RUNTIME (it started) and ended without a reported cost is
+ *   charged at the turn cap and flagged `estimated` (a live attempt counts what it reported so far); an attempt that never
+ *   started (failed or refused before its container ran) costs nothing and does not count toward the hourly rate. Nothing
+ *   the renderer says is ever read.
  * - Guards. `startGuard(projectId)` answers `consent_missing`, then (budgetDecision) `budget_exhausted`, `rate_limited`
  *   or `busy`; `dayRemainingCents()` is the day cap minus today's usage, never below 0.
  */
@@ -145,14 +147,19 @@ export class BudgetService {
   usageToday(): UsageToday {
     const now = this.deps.now();
     const turnCap = this.caps().turnUsdCents;
-    const rows = this.db.prepare(`SELECT a.state, a.usage_json FROM job_attempts a JOIN jobs j ON j.id = a.job_id
-      WHERE j.kind = 'agent.run' AND a.created_at >= ? AND a.created_at <= ?`).all(localMidnight(now), now) as { state: string; usage_json: string | null }[];
+    const rows = this.db.prepare(`SELECT a.state, a.usage_json, a.started_at, a.runtime_ref FROM job_attempts a JOIN jobs j ON j.id = a.job_id
+      WHERE j.kind = 'agent.run' AND a.created_at >= ? AND a.created_at <= ?`).all(localMidnight(now), now) as
+      { state: string; usage_json: string | null; started_at: number | null; runtime_ref: string | null }[];
     let usdCents = 0; let estimated = false;
     for (const r of rows) {
       const u = parseUsage(r.usage_json);
       const live = r.state === 'starting' || r.state === 'running';
+      // An attempt that never reached the runtime (it failed or was refused before its container ran: a denied approval, a
+      // plan that could not be built, a preflight, an unsent start) spent nothing: it is charged only when it has a reported
+      // cost. One that did start and reported none is charged the turn cap (an estimate, flagged).
+      const reachedRuntime = r.started_at !== null || r.runtime_ref !== null;
       if (u.cost !== null) { usdCents += u.cost; if (u.estimated) estimated = true; }
-      else if (!live) { usdCents += turnCap; estimated = true; }
+      else if (!live && reachedRuntime) { usdCents += turnCap; estimated = true; }
     }
     return { usdCents, turns: rows.length, estimated };
   }
@@ -172,9 +179,11 @@ export class BudgetService {
     if (!consent) return { ok: false, reason: 'consent_missing', dayRemainingUsdCents: dayRemainingCents(usage.usdCents, AGENT_DEFAULTS) };
     const now = this.deps.now();
     const ex = o?.excludeJobId ?? '';
-    // A turn started in the last hour: an agent.run job created then, except one that ended without ever running.
-    const turnsLastHour = (this.db.prepare(`SELECT COUNT(*) AS n FROM jobs WHERE kind = 'agent.run' AND created_at > ? AND id <> ?
-      AND NOT (attempts = 0 AND state NOT IN (${LIVE_JOB_STATES.map(() => '?').join(', ')}))`)
+    // A turn started in the last hour: an agent.run job created then that is still live or whose attempt reached the runtime;
+    // one that ended without ever running (cancelled in the queue, failed before its container ran) does not count.
+    const turnsLastHour = (this.db.prepare(`SELECT COUNT(*) AS n FROM jobs j WHERE j.kind = 'agent.run' AND j.created_at > ? AND j.id <> ?
+      AND (j.state IN (${LIVE_JOB_STATES.map(() => '?').join(', ')})
+        OR EXISTS (SELECT 1 FROM job_attempts a WHERE a.job_id = j.id AND (a.started_at IS NOT NULL OR a.runtime_ref IS NOT NULL)))`)
       .get(now - HOUR_MS, ex, ...LIVE_JOB_STATES) as { n: number }).n;
     const liveTurns = (this.db.prepare(`SELECT COUNT(*) AS n FROM jobs WHERE kind = 'agent.run' AND id <> ?
       AND state IN (${LIVE_JOB_STATES.map(() => '?').join(', ')})`).get(ex, ...LIVE_JOB_STATES) as { n: number }).n;

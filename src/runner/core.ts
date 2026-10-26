@@ -436,12 +436,16 @@ export class RunnerCore {
     if (this.stopped || (a && (a.abort.signal.aborted || a.agentGuardRefusal))) {
       return { ok: false, code: 'turn_ended', message: 'this turn has ended; no command is run' };
     }
+    // The command runs in the folder the agent named, inside its own container: `/workspace` or below it, no `..`, no link name
+    // tricks (main's tool schema checks the same pattern; this is the runner's own check). Absent: `/workspace`.
+    const cwd = typeof grant.cwd === 'string' ? grant.cwd : '/workspace';
+    if (!/^\/workspace(?:\/(?!\.{1,2}(?:\/|$))[^/\\\u0000]+)*$/.test(cwd)) return { ok: false, code: 'bad_args', message: 'the working folder is not under /workspace' };
     const controller = new AbortController();
     const timer = this.timers.setTimeout(() => controller.abort(), grant.timeoutMs + 5_000);
     let r: Awaited<ReturnType<RunnerDriver['exec']>> | null = null;
     let execError: unknown = null;
     try {
-      r = await this.driver.exec(reg.containerId, grant.argv, { timeoutMs: grant.timeoutMs, signal: controller.signal, maxOutputBytes: SANDBOX_EXEC_OUTPUT_MAX_BYTES });
+      r = await this.driver.exec(reg.containerId, grant.argv, { timeoutMs: grant.timeoutMs, signal: controller.signal, maxOutputBytes: SANDBOX_EXEC_OUTPUT_MAX_BYTES, cwd });
     } catch (e) {
       execError = e;
     } finally {

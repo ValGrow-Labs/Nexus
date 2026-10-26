@@ -96,7 +96,7 @@ function world(o = {}) {
     // A stand-in "main": every `mcp.call` is answered immediately, so a ScriptedRuntime's `tools/call` always completes.
     if (m.op === 'mcp.call') {
       const result = m.tool === 'sandbox_exec'
-        ? { ok: true, value: { grant: { execId: newId(clock.now), argv: m.args.argv, cwd: m.args.cwd, timeoutMs: m.args.timeoutMs } } }
+        ? { ok: true, value: { grant: { execId: newId(clock.now), argv: m.args.argv, cwd: o.grantCwd ?? m.args.cwd, timeoutMs: m.args.timeoutMs } } }
         : { ok: true, value: { tool: m.tool, args: m.args } };
       w.send({ op: 'mcp.reply', callId: m.callId, result });
     }
@@ -644,6 +644,25 @@ test('AT-env a cli-agent turn runs with the allow-list environment, the own prox
     assert.ok(env.NEXUS_MCP_TOKEN && env.NEXUS_MCP_TOKEN !== plan.runtime.token, 'the engine said it, and the relay redacted it');
   } finally {
     for (const [k, v] of [['ANTHROPIC_API_KEY', keep.k], ['GITHUB_TOKEN', keep.t], ['NODE_EXTRA_CA_CERTS', keep.c], ['HTTP_PROXY', keep.h]]) { if (v === undefined) delete process.env[k]; else process.env[k] = v; }
+  }
+});
+
+// ---------- final review: a granted command runs in the folder named, under /workspace only ----------
+
+test('CWD a granted sandbox_exec runs with its working folder (docker exec -w) under /workspace; a folder outside it, or with .., runs nothing', async () => {
+  const w = await world();
+  const plan = agentPlan(w, { steps: execTurn(['echo', 'hi'], { cwd: '/workspace/sub/dir' }) });
+  await startAgent(w, plan);
+  await w.waitOp('attempt.exited', plan.attemptId, 'exited');
+  const execs = w.driver.callsOf('exec');
+  assert.equal(execs.length, 1);
+  assert.equal(execs[0].args[2].cwd, '/workspace/sub/dir', 'the folder reaches the driver');
+  for (const bad of ['/etc', '/workspace/../etc', '/workspaceX', 'workspace', '/workspace/a/../b', '/workspace\evil']) {
+    const w2 = await world({ grantCwd: bad });
+    const p2 = agentPlan(w2, { steps: execTurn(['echo', 'hi'], { cwd: '/workspace' }) });
+    await startAgent(w2, p2);
+    await w2.waitOp('attempt.exited', p2.attemptId, 'exited');
+    assert.equal(w2.driver.callsOf('exec').length, 0, `${bad} ran nothing`);
   }
 });
 

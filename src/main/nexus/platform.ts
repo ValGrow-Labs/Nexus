@@ -367,6 +367,8 @@ export function createNexusPlatform(db: Database.Database, opts?: NexusPlatformO
       try { return await runtimeCache.whenRecorded(since, timeoutMs); } catch { return false; }
     }
   } : null;
+  // A queued turn held by `waiting:runtime` asks for a fresh probe through this (rate limited in AgentService; never otherwise).
+  agents?.bindRuntimeRefresh(() => agentProbe?.refresh() ?? false);
   if (tokens || gitRead || runtimeCache) {
     // Every runner `ready` is a new runner process (it answers the one `hello` of its port): its MCP server is new, and
     // no token of an earlier runner may reach it. The revocation runs before the execution core sees the message.

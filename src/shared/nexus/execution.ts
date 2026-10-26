@@ -156,7 +156,8 @@ export interface SandboxDriver {
   create(spec: ContainerSpec): Promise<{ containerId: string }>;
   preflight(containerId: string, spec: ContainerSpec): Promise<PreflightReport>;
   start(containerId: string): Promise<void>;
-  exec(containerId: string, argv: string[], o: { timeoutMs: number; signal: AbortSignal; maxOutputBytes: number }):
+  /** `cwd` (B2b): the working folder inside the container (`docker exec -w`); an agent's commands run under `/workspace`. */
+  exec(containerId: string, argv: string[], o: { timeoutMs: number; signal: AbortSignal; maxOutputBytes: number; cwd?: string }):
     Promise<{ exit: ExitInfo; stdout: string; stderr: string; truncated: boolean }>;
   wait(containerId: string, signal: AbortSignal): Promise<ExitInfo>;
   inspect(containerId: string): Promise<{ state: 'created' | 'running' | 'exited' | 'missing'; exit?: ExitInfo; restartCount: number }>;

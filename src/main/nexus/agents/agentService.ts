@@ -108,7 +108,16 @@ export interface AgentServiceDeps {
   dataHome: ExecDataHome | null;
   /** Called after a turn was queued: the scheduler's next tick leases it. */
   onQueued?: () => void;
+  /**
+   * Asks for a fresh runtime probe (`AgentRuntimeProbe.refresh`, Task 14); false when none was sent. Used ONLY by the scheduler's
+   * guard, when a queued turn is held by `waiting:runtime`, at most once per RUNTIME_REFRESH_MIN_MS. Never otherwise: no timer,
+   * not at app start, nothing with agents off. Bound after construction (`bindRuntimeRefresh`).
+   */
+  refreshRuntime?: () => boolean;
 }
+
+/** A turn held by `waiting:runtime` asks for a fresh probe at most this often. */
+export const RUNTIME_REFRESH_MIN_MS = 30_000;
 
 export interface StartInput {
   projectId: string; workspaceId: string; sessionId: string | null; skillId?: string;
@@ -214,12 +223,15 @@ export class AgentService implements AgentTurnPort {
     const prior = this.db.prepare('SELECT id FROM jobs WHERE idempotency_key = ?').get(key) as { id: string } | undefined;
     if (prior) return { job: { id: prior.id } };
     this.requireAvailable();
+    // Only STRUCTURAL refusals below (not found, a turn already running, the participation): the runtime's health (a cached
+    // answer that is stale after five quiet minutes), a missing consent, an exhausted budget or the hourly rate are NOT reasons
+    // to lose a review. The turn is queued and the scheduler's guards hold it (`waiting:runtime|consent|budget|rate`).
     const old = this.sessionRow(sessionId);
     if (!old) throw new PlatformError('not_found', 'session not found');
     const pw = this.db.prepare('SELECT id, project_id, workspace_id, status FROM project_workspaces WHERE id = ?').get(old.participation_id) as
       { id: string; project_id: string; workspace_id: string; status: string } | undefined;
     if (!pw || pw.status !== 'active') throw new PlatformError('participation_inactive', 'the participation is no longer active');
-    const consent = this.requireReady(pw.project_id);
+    const consent = this.deps.budget.live();
     let session: SessionRow | null = old;
     let reuseFrom: string | null = null;
     if (['interrupted', 'completed', 'failed', 'cancelled', 'timed_out'].includes(old.status)) {
@@ -228,7 +240,7 @@ export class AgentService implements AgentTurnPort {
       if (old.status === 'interrupted') reuseFrom = old.id;
     } else if (this.liveTurnOf(old.id)) refuse('conflict', 'the agent is still working on the last message', 'turn_running');
     const { job } = this.createTurn(user, { pw, session, reuseFrom, intent: `review:${review.id}`, key, message: REVIEW_TURN_MESSAGE, skillId: null, focus: [],
-      runtimeKind: consent.runtimeKind, inputs: [{ versionId: review.version_id, role: 'review' }], params: { reviewId: review.id } });
+      runtimeKind: consent ? consent.runtimeKind : null, inputs: [{ versionId: review.version_id, role: 'review' }], params: { reviewId: review.id } });
     return { job: { id: job.id } };
   }
 
@@ -255,6 +267,22 @@ export class AgentService implements AgentTurnPort {
     const cur = this.sessionRow(s.id)!;
     if (cur.status === 'running') return this.deps.sessions.transition(this.deps.system, s.id, 'completed');
     return this.deps.sessions.cancel(user, s.id);
+  }
+
+  /**
+   * D-B2 "revocable": the network permission is revoked AND every live turn (leased, running, waiting for approval) is
+   * cancelled through the execution core's own cancel (its attempt, its token, its CLI, its proxy and its container go with
+   * it), with the fixed reason `consent_revoked`. Queued turns are held by the consent guard. Returns whether a consent was live.
+   */
+  revokeConsent(user: Principal): boolean {
+    const was = this.deps.budget.revoke(user);
+    const live = this.db.prepare(`SELECT id FROM jobs WHERE kind = 'agent.run' AND state IN ('leased','running','awaiting_approval') ORDER BY created_at, rowid`).all() as { id: string }[];
+    for (const j of live) {
+      try { this.deps.exec.cancel(user, j.id, { reason: 'consent_revoked' }); } catch (e) {
+        this.log(`[nexus] agents: a turn was not cancelled at the revocation (${e instanceof PlatformError ? e.code : (e as Error)?.name ?? 'error'})`);
+      }
+    }
+    return was;
   }
 
   /** The project's agent conversations, newest first. */
@@ -417,7 +445,7 @@ export class AgentService implements AgentTurnPort {
   /** Opens or reuses the session and creates the turn's job, in one transaction (a savepoint of the caller's, inside a review). */
   private createTurn(user: Principal, o: {
     pw: { id: string; project_id: string; workspace_id: string }; session: SessionRow | null; reuseFrom: string | null; intent: string; key?: string;
-    message: string; skillId: string | null; focus: string[]; runtimeKind: string; inputs: { versionId: string; role: string }[]; params?: Record<string, unknown>;
+    message: string; skillId: string | null; focus: string[]; runtimeKind: string | null; inputs: { versionId: string; role: string }[]; params?: Record<string, unknown>;
   }): { session: AgentSession; job: Job } {
     const now = this.deps.now();
     const caps = this.deps.budget.caps();
@@ -426,7 +454,7 @@ export class AgentService implements AgentTurnPort {
       let sessionId = o.session?.id ?? null;
       if (sessionId === null) {
         const opened = this.deps.sessions.open(user, { projectId: o.pw.project_id, workspaceId: o.pw.workspace_id, idempotencyKey: `agent.session:${user.id}:${o.intent}`,
-          runtime: { kind: o.runtimeKind } });
+          ...(o.runtimeKind ? { runtime: { kind: o.runtimeKind } } : {}) });
         sessionId = opened.session.id;
         ensureAgentPrincipalTx(this.db, sessionId, now);
       }
@@ -476,8 +504,28 @@ export class AgentService implements AgentTurnPort {
     }
     const holding = (this.db.prepare(`SELECT COUNT(*) AS n FROM jobs WHERE kind = 'agent.run' AND id <> ? AND state IN (${HOLDING_STATES.map(() => '?').join(', ')})`)
       .get(j.id, ...HOLDING_STATES) as { n: number }).n;
-    return agentTurnGuard({ runnerReady: i.runnerReady, runtimeOk, guard, liveTurns: holding + i.preparing, concurrentTurns: this.deps.budget.caps().concurrentTurns },
+    const wait = agentTurnGuard({ runnerReady: i.runnerReady, runtimeOk, guard, liveTurns: holding + i.preparing, concurrentTurns: this.deps.budget.caps().concurrentTurns },
       i.profile, i.probe, i.live, i.caps);
+    if (wait === 'waiting:runtime') this.requestRuntimeRefresh();
+    return wait;
+  }
+
+  private lastRefreshAt: number | null = null;
+  private refreshRuntime: (() => boolean) | null = null;
+  /** B3: Task 14's probe trigger, bound once the platform has built it. */
+  bindRuntimeRefresh(fn: (() => boolean) | null): void { this.refreshRuntime = fn; }
+
+  /**
+   * A queued turn is held by `waiting:runtime` (the cached health is stale, or says no): ask once for a fresh probe, at most once
+   * per RUNTIME_REFRESH_MIN_MS. Only from the scheduler's guard, so only when agents are on and a turn is queued and held.
+   */
+  private requestRuntimeRefresh(): void {
+    const fn = this.refreshRuntime ?? this.deps.refreshRuntime;
+    if (!fn) return;
+    const now = this.deps.now();
+    if (this.lastRefreshAt !== null && now >= this.lastRefreshAt && now - this.lastRefreshAt < RUNTIME_REFRESH_MIN_MS) return;
+    this.lastRefreshAt = now;
+    try { fn(); } catch { /* the next guard pass asks again after the pause */ }
   }
 
   /** The part of the lease that waits on files and on the worktree: the worktree, the context file and the skills. */
@@ -664,7 +712,9 @@ export class AgentService implements AgentTurnPort {
   turnLeftTx(after: JobRow, now: number): void {
     void now;
     try { this.deps.tokens.revokeForJob(this.deps.system, after.id, 'job_ended'); } catch (e) {
-      // A revocation that failed must never keep a turn alive: the expiry and the next runner `ready` still bound the token.
+      // Fail closed: a job never ends with its token live. The end transition rolls back with this failure (the attempt and the
+      // job stay running, the token stays live WITH its job), and the turn ends later by the lease running out or by its wall
+      // clock, through the same path. The token's own expiry and the next runner `ready` bound it in any case.
       this.log(`[nexus] agents: a turn's token was not revoked at its end (${e instanceof PlatformError ? e.code : (e as Error)?.name ?? 'error'})`);
       throw e;
     }
@@ -704,11 +754,27 @@ export class AgentService implements AgentTurnPort {
    * suite, a build) and a child job of another recipe never count: a turn that only looked around changed nothing.
    */
   registeredCount(jobId: string): number {
-    const produced = (this.db.prepare(`SELECT COUNT(*) AS n FROM artifact_versions v JOIN artifacts a ON a.id = v.artifact_id JOIN jobs c ON c.id = v.produced_by_job_id
-      WHERE c.parent_job_id = ? AND c.recipe_id = 'changeset.collect' AND a.kind = 'change_set'`).get(jobId) as { n: number }).n;
+    let produced = 0;
+    const sets = this.db.prepare(`SELECT v.id AS id, v.status AS status FROM artifact_versions v JOIN artifacts a ON a.id = v.artifact_id JOIN jobs c ON c.id = v.produced_by_job_id
+      WHERE c.parent_job_id = ? AND c.recipe_id = 'changeset.collect' AND a.kind = 'change_set'`).all(jobId) as { id: string; status: string }[];
+    for (const v of sets) if (this.isRegisteredWork(v.id, v.status)) produced++;
     const drafts = (this.db.prepare(`SELECT COUNT(*) AS n FROM activity WHERE job_id = ? AND action = 'mcp.call' AND status = 'succeeded'
       AND json_extract(details_json, '$.tool') = 'requirement_draft'`).get(jobId) as { n: number }).n;
     return produced + drafts;
+  }
+
+  /**
+   * A change set counts as work only when its REGISTER-STAGE blocking checks (the ones ingest runs at once) did not fail: the diff
+   * is not empty (`git.diff_nonempty` passed: an agent that changed nothing, or only what a scope or the settings folder
+   * excludes, registers a FAILED change set), its paths are in scope and its secret scan did not fail. A failed version never counts.
+   */
+  private isRegisteredWork(versionId: string, status: string): boolean {
+    if (status === 'failed') return false;
+    const rows = this.db.prepare(`SELECT x.validator_id AS id, x.status AS status FROM validations x WHERE x.version_id = ? AND x.blocking = 1 AND x.stage = 'register'
+      AND NOT EXISTS (SELECT 1 FROM validations y WHERE y.version_id = x.version_id AND y.validator_id = x.validator_id AND y.blocking = 1 AND y.stage = 'register'
+        AND (y.finished_at > x.finished_at OR (y.finished_at = x.finished_at AND y.rowid > x.rowid)))`).all(versionId) as { id: string; status: string }[];
+    if (rows.some((r) => r.status === 'failed' || r.status === 'error')) return false;
+    return rows.some((r) => r.id === 'git.diff_nonempty' && r.status === 'passed');
   }
 
   private sessionRow(id: unknown): SessionRow | null {

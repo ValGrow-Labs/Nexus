@@ -283,9 +283,10 @@ export class DockerDriver implements RunnerDriver {
 
   async start(containerId: string): Promise<void> { await this.ok('start', ['start', containerId], { timeoutMs: 120_000 }); }
 
-  async exec(containerId: string, argv: string[], o: { timeoutMs: number; signal: AbortSignal; maxOutputBytes: number }):
+  async exec(containerId: string, argv: string[], o: { timeoutMs: number; signal: AbortSignal; maxOutputBytes: number; cwd?: string }):
     Promise<{ exit: ExitInfo; stdout: string; stderr: string; truncated: boolean }> {
-    const r = await this.call('exec', ['exec', containerId, ...argv], { timeoutMs: o.timeoutMs, maxStdout: o.maxOutputBytes, signal: o.signal });
+    // `-w` before the container: the command's working folder (an absolute path inside the container, checked by the caller).
+    const r = await this.call('exec', ['exec', ...(typeof o.cwd === 'string' && o.cwd.startsWith('/') ? ['-w', o.cwd] : []), containerId, ...argv], { timeoutMs: o.timeoutMs, maxStdout: o.maxOutputBytes, signal: o.signal });
     return { exit: { code: r.code, oomKilled: false, finishedAt: this.o.now() }, stdout: r.stdout, stderr: r.stderr.slice(0, o.maxOutputBytes), truncated: r.truncated };
   }
 

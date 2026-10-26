@@ -180,6 +180,12 @@ async function turnWorld(o = {}) {
         idempotencyKey: `child-${ulid()}`, recipeId: o.recipe ?? 'changeset.collect', params: {} })).immediate();
       const a = w.nx.artifacts.create(w.me, { projectId: PROJECT, workspaceId: WORKSPACE, kind: o.kind ?? 'change_set', name });
       const v = w.nx.artifacts.registerVersion(w.me, { artifactId: a.id, storage: { kind: 'git', commit: 'd'.repeat(40) }, metadata: {}, producedByJobId: created.job.id });
+      // The register-stage blocking checks ingest records at once (a change set only counts as work when they did not fail).
+      const results = o.validators ?? ((o.kind ?? 'change_set') === 'change_set' ? [['git.diff_nonempty', 'passed'], ['git.paths_in_scope', 'passed'], ['sec.secret_scan', 'passed']] : []);
+      for (const [validatorId, status] of results) {
+        w.db.prepare(`INSERT INTO validations (id, version_id, validator_id, validator_version, stage, status, blocking, advisory, summary, evidence_json, created_by, started_at, finished_at)
+          VALUES (?, ?, ?, '1', 'register', ?, 1, 0, 'check', '[]', ?, ?, ?)`).run(ulid(), v.version.id, validatorId, status, w.sys.id, w.clock.t, w.clock.t);
+      }
       return { versionId: v.version.id, childJobId: created.job.id };
     }
   });
@@ -1192,4 +1198,206 @@ test('the host proxy decisions of an agent turn are persisted as attempt.progres
   assert.equal(marks.length, 1);
   assert.deepEqual(marks[0].data.egressTruncated, { count: 7 });
   assert.ok(!JSON.stringify(rows).includes(plan.runtime?.token ?? 'no-token-in-plan'), 'no token in any recorded event');
+});
+
+// ---------- final-review round ----------
+
+test('B2 only a change set whose register-stage checks held counts as work: an empty register and a secret-scan failure end no_change, a good one completes', async () => {
+  const w = await turnWorld();
+  const empty = await w.running();
+  // changeset_register after changing nothing (or only what the scope excludes): ingest makes a FAILED change set, diff_nonempty failed.
+  w.registerVersion(empty.job.id, empty.session.id, 'nothing', { validators: [['git.diff_nonempty', 'failed']] });
+  assert.equal(w.nx.agents.registeredCount(empty.job.id), 0);
+  w.ev(empty.attempt.id, { t: 'run.completed', at: w.clock.t, stopReason: 'end_turn' });
+  w.exit(empty.attempt.id, 0);
+  assert.equal(w.job(empty.job.id).state, 'partial'); assert.equal(w.job(empty.job.id).outcome, 'no_change');
+  const leaky = await w.running({ sessionId: empty.session.id });
+  w.registerVersion(leaky.job.id, leaky.session.id, 'secret', { validators: [['git.diff_nonempty', 'passed'], ['git.paths_in_scope', 'passed'], ['sec.secret_scan', 'failed']] });
+  w.ev(leaky.attempt.id, { t: 'run.completed', at: w.clock.t, stopReason: 'end_turn' });
+  w.exit(leaky.attempt.id, 0);
+  assert.notEqual(w.job(leaky.job.id).state, 'completed'); assert.equal(w.job(leaky.job.id).outcome, 'no_change');
+  const noScope = await w.running({ sessionId: empty.session.id });
+  w.registerVersion(noScope.job.id, noScope.session.id, 'out of scope', { validators: [['git.diff_nonempty', 'passed'], ['git.paths_in_scope', 'failed'], ['sec.secret_scan', 'passed']] });
+  w.ev(noScope.attempt.id, { t: 'run.completed', at: w.clock.t, stopReason: 'end_turn' });
+  w.exit(noScope.attempt.id, 0);
+  assert.equal(w.job(noScope.job.id).outcome, 'no_change');
+  // A register that left no results at all (ingest not finished) is not evidence either.
+  const pending = await w.running({ sessionId: empty.session.id });
+  w.registerVersion(pending.job.id, pending.session.id, 'pending', { validators: [] });
+  w.ev(pending.attempt.id, { t: 'run.completed', at: w.clock.t, stopReason: 'end_turn' });
+  w.exit(pending.attempt.id, 0);
+  assert.equal(w.job(pending.job.id).outcome, 'no_change');
+  const good = await w.running({ sessionId: empty.session.id });
+  w.registerVersion(good.job.id, good.session.id, 'a real change');
+  w.ev(good.attempt.id, { t: 'run.completed', at: w.clock.t, stopReason: 'end_turn' });
+  w.exit(good.attempt.id, 0);
+  assert.equal(w.job(good.job.id).state, 'completed');
+});
+
+test('B3 request_changes never depends on the runtime, the consent, the budget or the rate: the review is recorded and the turn waits, then runs', async () => {
+  const w = await turnWorld();
+  const r = await w.running();
+  const v = w.registerVersion(r.job.id, r.session.id);
+  w.nx.artifacts.finalize(w.sys, v.versionId, 'candidate');
+  w.ev(r.attempt.id, { t: 'run.completed', at: w.clock.t, stopReason: 'end_turn' });
+  w.exit(r.attempt.id, 0);
+  // Five quiet minutes: the cached runtime health is stale. Consent revoked as well.
+  w.health.current = null;
+  w.nx.budget.revoke(w.me);
+  const res = w.nx.reviews.decide(w.me, v.versionId, { decision: 'request_changes', comment: 'please rename the helper', intentId: ulid() });
+  assert.ok(res.job && res.job.id, 'the review was recorded and a turn was queued');
+  assert.equal(w.db.prepare('SELECT COUNT(*) AS n FROM reviews').get().n, 1);
+  assert.equal(w.job(res.job.id).state, 'queued');
+  w.tick(); await sleep(15); w.tick();
+  assert.equal(w.job(res.job.id).phase, 'waiting:runtime');
+  w.health.current = HEALTH_OK;
+  w.tick(); await sleep(15); w.tick();
+  assert.equal(w.job(res.job.id).phase, 'waiting:consent');
+  w.nx.budget.grant(w.me, { runtimeKind: 'scripted', hosts: HOSTS });
+  const { attempt } = await w.lease(res.job.id);
+  assert.equal(attempt.state, 'starting');
+  // An exhausted day and an exhausted hour do not lose the review either (the turn waits).
+  const w2 = await turnWorld({ caps: { turnsPerHour: 1, dayUsdCents: 200, turnUsdCents: 200 } });
+  const a = await w2.running();
+  const va = w2.registerVersion(a.job.id, a.session.id);
+  w2.nx.artifacts.finalize(w2.sys, va.versionId, 'candidate');
+  w2.usage(a.attempt.id, { costUsdCents: 200 });
+  assert.equal(w2.job(a.job.id).outcome, 'limit');
+  assert.throws(() => w2.start({ sessionId: a.session.id }), (e) => e.detail.reason === 'budget_exhausted');
+  const res2 = w2.nx.reviews.decide(w2.me, va.versionId, { decision: 'request_changes', comment: 'again', intentId: ulid() });
+  assert.ok(res2.job.id);
+  w2.tick(); await sleep(15); w2.tick();
+  assert.equal(w2.job(res2.job.id).phase, 'waiting:budget');
+});
+
+test('B3 a turn held by waiting:runtime asks for a fresh probe once, at most every 30 s; nothing is probed with nothing queued or with agents off', async () => {
+  const w = await turnWorld();
+  const flagged = () => w.runner.sentOf('probe').filter((m) => m.runtimes === true).length;
+  // Nothing queued: ticks over ten minutes ask for nothing.
+  w.health.current = null;
+  w.run(10 * 60_000);
+  assert.equal(flagged(), 0);
+  // Queued while the health is fine, then it goes stale: the held turn asks, once, and again only after the pause.
+  w.health.current = HEALTH_OK;
+  const q = w.start();
+  w.health.current = null;
+  w.tick(); await sleep(15);
+  w.run(25_000);
+  assert.equal(w.job(q.job.id).phase, 'waiting:runtime');
+  assert.equal(flagged(), 1, 'asked once');
+  w.run(10_000);
+  assert.equal(flagged(), 2, 'asked again after 30 s');
+  w.health.current = HEALTH_OK;
+  await w.lease(q.job.id);
+  w.run(120_000);
+  assert.equal(flagged(), 2, 'a healthy runtime is never probed on a timer');
+  // Agents off: there is no agent service and no probe to ask.
+  const off = agentWorld({ agents: false });
+  assert.equal(off.nx.agents, null); assert.equal(off.nx.agentProbe, null);
+  off.nx.exec.tick(off.clock.t);
+});
+
+test('B4 an attempt that never reached the runtime costs nothing and does not count toward the rate; one that started without a cost is charged the turn cap', async () => {
+  const w = await turnWorld({ caps: { turnsPerHour: 3 } });
+  // Seven turns each refused by the runner before anything ran: no spend, no rate.
+  for (let i = 0; i < 7; i++) {
+    const r = w.start();
+    const { attempt } = await w.lease(r.job.id);
+    w.runner.report({ op: 'attempt.refused', attemptId: attempt.id, reason: 'bad_plan', detail: 'x' });
+    assert.equal(w.job(r.job.id).state, 'failed');
+  }
+  assert.equal(w.nx.budget.usageToday().usdCents, 0, 'refused attempts cost nothing');
+  assert.equal(w.nx.budget.startGuard(PROJECT).ok, true, 'and do not count toward the hourly rate');
+  // A preflight that failed, an attempt cancelled while provisioning, an abandoned (requeued) one, an unsent start.
+  const pf = w.start(); const a1 = await w.lease(pf.job.id);
+  w.runner.report({ op: 'attempt.provisioned', attemptId: a1.attempt.id, containerId: 'c'.repeat(64), imageDigest: IMAGE, preflight: { ...passingPreflight(), ok: false, problems: ['a mount is wrong'] } });
+  assert.equal(w.attemptOf(a1.attempt.id).state, 'failed');
+  const cp = w.start(); const a2 = await w.lease(cp.job.id);
+  w.nx.agents.cancel(w.me, cp.session.id);
+  assert.equal(w.attemptOf(a2.attempt.id).state, 'cancelled');
+  const dk = w.start(); const a3 = await w.lease(dk.job.id);
+  w.runner.report({ op: 'attempt.refused', attemptId: a3.attempt.id, reason: 'docker_stopped', detail: 'x' });
+  assert.equal(w.attemptOf(a3.attempt.id).state, 'abandoned');
+  assert.equal(w.nx.budget.usageToday().usdCents, 0);
+  const g = w.nx.budget.startGuard(PROJECT);
+  assert.ok(g.ok || g.reason === 'busy', 'only the requeued turn itself (busy) is in the way: no budget, no rate');
+  // An attempt that started, ran and reported no cost is charged the cap, as an estimate.
+  const run = await w.running();
+  w.ev(run.attempt.id, { t: 'run.failed', at: w.clock.t, code: 'runtime_error', message: 'x' });
+  w.exit(run.attempt.id, 1);
+  const u = w.nx.budget.usageToday();
+  assert.equal(u.usdCents, 200); assert.equal(u.estimated, true);
+});
+
+test('A2 one limit bounds everything a turn creates: its child jobs of every kind (the system collects too) and its requirement drafts', async () => {
+  const call = (w, r, tool, args, id) => w.nx.mcpGateway.call({ op: 'mcp.call', callId: id, bearer: r.plan.runtime.token, tool, args });
+  const w = await turnWorld();
+  const r = await w.running();
+  // Twenty system collect children (an agent registering change sets with fresh client keys): the next creating call of any kind is refused.
+  for (let i = 0; i < 20; i++) w.registerVersion(r.job.id, r.session.id, `c${i}`, { validators: [] });
+  for (const [tool, args] of [['job_request', { recipeId: 'sde.test.discover', inputs: [w.repoVersion] }],
+    ['changeset_register', { title: 't', summary: 's', clientKey: 'k21' }],
+    ['requirement_draft', { title: 'one more', criteria: [{ id: 'C1', text: 'x' }], clientKey: 'k22' }]]) {
+    const x = await call(w, r, tool, args, `a-${tool}`);
+    assert.equal(x.ok, false, tool); assert.equal(x.code, 'limit', tool);
+  }
+  assert.equal(w.db.prepare('SELECT COUNT(*) AS n FROM jobs WHERE parent_job_id = ?').get(r.job.id).n, 20, 'no job was created past the limit');
+  // Requirement drafts count toward it too.
+  const w2 = await turnWorld();
+  const r2 = await w2.running();
+  for (let i = 0; i < 20; i++) {
+    const x = await call(w2, r2, 'requirement_draft', { title: `draft number ${i}`, criteria: [{ id: 'C1', text: `criterion ${i}` }], clientKey: `d${i}` }, `d-${i}`);
+    assert.equal(x.ok, true, JSON.stringify(x));
+  }
+  const over = await call(w2, r2, 'requirement_draft', { title: 'draft number 21', criteria: [{ id: 'C1', text: 'criterion 21' }], clientKey: 'd21' }, 'd-21');
+  assert.equal(over.code, 'limit');
+  // Reading is not creating: it is never refused by this limit.
+  assert.equal((await call(w2, r2, 'context_get', {}, 'ctx')).ok, true);
+});
+
+test('A3 revoking the permission ends every live turn (cancel path, reason consent_revoked); the gateway cap is the turn\'s own, never the live consent', async () => {
+  const w = await turnWorld({ caps: { toolCalls: 3 } });
+  const r = await w.running();
+  const queued = w.start({ message: 'waits behind it' });
+  assert.equal(w.nx.agents.revokeConsent(w.me), true);
+  const j = w.job(r.job.id);
+  assert.equal(j.state, 'cancelled'); assert.equal(JSON.parse(j.error_json).code, 'consent_revoked');
+  assert.equal(w.attemptOf(r.attempt.id).state, 'cancelled'); assert.equal(tokenCode(w, r.plan), 'revoked');
+  assert.ok(w.runner.sentOf('attempt.cancel').some((m) => m.attemptId === r.attempt.id), 'the runner is told to stop it (CLI, proxy, container)');
+  assert.equal(w.nx.budget.live(), null);
+  assert.equal(w.job(queued.job.id).state, 'queued', 'a queued turn is held by the consent guard, not cancelled');
+  w.tick(); await sleep(15); w.tick();
+  assert.equal(w.job(queued.job.id).phase, 'waiting:consent');
+  // The turn's tool-call cap comes from its attempt: revoking the consent directly (the ceilings are the fallback) does not raise it.
+  const w2 = await turnWorld({ caps: { toolCalls: 3 } });
+  const r2 = await w2.running();
+  w2.nx.budget.revoke(w2.me);
+  const calls = [];
+  for (let i = 0; i < 4; i++) calls.push(await w2.nx.mcpGateway.call({ op: 'mcp.call', callId: `t${i}`, bearer: r2.plan.runtime.token, tool: 'context_get', args: {} }));
+  assert.deepEqual(calls.map((c) => c.ok), [true, true, true, false]);
+  assert.equal(calls[3].code, 'limit');
+});
+
+test('a turn ended by a cap cancels what it asked for (job_request children) and leaves the system children alone', async () => {
+  const w = await turnWorld();
+  const r = await w.running();
+  const asked = await w.nx.mcpGateway.call({ op: 'mcp.call', callId: 'jr', bearer: r.plan.runtime.token, tool: 'job_request', args: { recipeId: 'sde.test.discover', inputs: [w.repoVersion] } });
+  assert.equal(asked.ok, true, JSON.stringify(asked));
+  const collect = w.registerVersion(r.job.id, r.session.id);
+  w.usage(r.attempt.id, { inputTokens: 500_000 });
+  assert.equal(w.job(r.job.id).outcome, 'limit');
+  assert.equal(w.job(asked.value.jobId).state, 'cancelled', 'the turn\'s own request stopped with it');
+  assert.equal(w.job(collect.childJobId).state, 'queued', 'the system collect keeps its place');
+});
+
+test('a bare capability token in a tool argument is not kept in the call record', async () => {
+  const w = await turnWorld();
+  const r = await w.running();
+  const token = r.plan.runtime.token;
+  const x = await w.nx.mcpGateway.call({ op: 'mcp.call', callId: 'tk', bearer: token, tool: 'requirement_draft', args: { title: `note ${token}`, criteria: [{ id: 'C1', text: 'x' }], clientKey: 'tk1' } });
+  void x;
+  const rows = w.db.prepare("SELECT details_json FROM activity WHERE job_id = ? AND action = 'mcp.call'").all(r.job.id);
+  assert.ok(rows.length >= 1);
+  for (const row of rows) assert.ok(!row.details_json.includes(token) && !row.details_json.includes(token.split('.')[1]), row.details_json);
+  for (const e of w.db.prepare('SELECT data_json, summary FROM job_events WHERE job_id = ?').all(r.job.id)) assert.ok(!(e.data_json + e.summary).includes(token));
 });

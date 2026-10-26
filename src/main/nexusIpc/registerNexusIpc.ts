@@ -744,7 +744,10 @@ export function registerNexusIpc(registrar: IpcRegistrar, deps: NexusIpcDeps): v
     const decision = V.enumOf(o.decision, 'decision', ['approve', 'request_changes', 'reject'] as const);
     const comment = V.reviewComment(o.comment);
     return { versionId: V.platformId(args[0], 'versionId'), decision, comment, intentId: V.intentId(args[2]) };
-  }, (nx, me, q) => {
+  }, async (nx, me, q) => {
+    // A request for changes queues the next turn: a stale runtime answer is refreshed (bounded) so the turn is not held for it.
+    // The decision itself never depends on it (the turn is queued whatever the answer, and the guards hold it).
+    if (q.decision === 'request_changes' && nx.agentProbe && nx.agentProbe.cache.isStale()) await nx.agentProbe.refreshAndWait(RUNTIME_REFRESH_WAIT_MS);
     const r = nx.reviews!.decide(me, q.versionId, q.comment === undefined ? { decision: q.decision, intentId: q.intentId }
       : { decision: q.decision, comment: q.comment, intentId: q.intentId });
     return ok(reviewResultView(r.review, r.job ? jobView(nx.exec.get(me, r.job.id)) : null));
@@ -800,7 +803,8 @@ export function registerNexusIpc(registrar: IpcRegistrar, deps: NexusIpcDeps): v
       return ok(agentConsentView(nx));
     }
     if (q.op === 'revoke') {
-      nx.budget!.revoke(me);
+      // Revoking ends every live turn too (D-B2: revocable): its CLI, proxy, token and container go with it.
+      if (nx.agents) nx.agents.revokeConsent(me); else nx.budget!.revoke(me);
       probe?.refresh();
       return ok(agentConsentView(nx));
     }

@@ -851,7 +851,7 @@ test('IA10 the activity rows the agent flows write have keys and sentences: none
 test('IA12 no system-only method is reachable: the agent channels call a closed list of user-facing methods and nothing else', () => {
   const files = ['src/main/nexusIpc/registerNexusIpc.ts', 'src/main/nexusIpc/agentSetup.ts', 'src/main/nexusIpc/dto.ts'].map((f) => [f, read(f)]);
   const allowed = {
-    agents: new Set(['start', 'get', 'list', 'end', 'cancel']), reviews: new Set(['decide']), accepts: new Set(['accept', 'status', 'mergeAccepted']),
+    agents: new Set(['start', 'get', 'list', 'end', 'cancel', 'revokeConsent']), reviews: new Set(['decide']), accepts: new Set(['accept', 'status', 'mergeAccepted']),
     budget: new Set(['grant', 'revoke', 'live', 'usageToday']), agentProbe: new Set(['cache', 'refresh', 'refreshAndWait'])
   };
   const SERVICES = ['agents', 'reviews', 'accepts', 'budget', 'agentProbe', 'tokens', 'mcpGateway', 'worktrees', 'changeSets', 'contextResolver', 'skills', 'gitRead'];

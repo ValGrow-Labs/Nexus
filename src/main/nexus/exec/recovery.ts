@@ -35,7 +35,8 @@
  *   B2b Task 10 (agent turns, its own block beside the accept reconcile): an `agent.run` job with a live attempt is decided there,
  *   never by the generic rules above: the attempt is `abandoned`, the job `interrupted` and its session `interrupted`, its token
  *   revoked (`restart`); the worktree is kept as it is. The turn's container is no longer a live attempt's, so phase B's orphan
- *   removal takes it. A turn still `queued` is untouched and runs after the restart.
+ *   removal takes it. A turn still `queued` is left alone by recovery; it runs after the restart unless its conversation had
+ *   been running (the restart interrupts the session): then the scheduler cancels it `session_ended` (no resurrection).
  *   Then pending approvals past `expires_at` that no waiting job holds (image preparation) expire, and image builds left
  *   `running` are `interrupted` (RC17: a leftover row would block `requestImage` until its deadline).
  *   Hold mode: on a v9 database whose execution is off (v9 not enabled, held, or its shape failed), only jobs WITHOUT a

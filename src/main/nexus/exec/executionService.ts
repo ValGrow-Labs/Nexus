@@ -2074,8 +2074,10 @@ export class ExecutionService {
    */
   private agentExited(a: AttemptRow, j: ExecJobRow, m: Extract<RunnerToMain, { op: 'attempt.exited' }>, now: number): void {
     const exit = { code: m.exit.code, signal: m.exit.signal, oomKilled: m.exit.oomKilled };
-    // Kept until the settlement has committed: a transaction that rolls back (a revocation that failed) is retried by the
-    // runner's next report of the exit, and that retry must still know how the turn ended.
+    // Kept until the settlement has committed. The runner posts `attempt.exited` ONCE, so a settlement that rolls back (a
+    // token revocation that failed) is not retried by the runner: nothing half-ends, the attempt stays `running` and the turn
+    // ends later by the lease running out (runner_lost, failed infra_error) or by its wall clock, both through this same
+    // transaction path. (A re-sent exit would still find how the turn ended: tests re-send it.)
     const terminal = this.agentTerminal.get(a.id) ?? null;
     const agents = this.agents;
     let s: AgentSettlement;
@@ -2090,6 +2092,7 @@ export class ExecutionService {
       s = { attempt: 'failed', job: 'failed', outcome: 'agents_unavailable', error: { code: 'agents_unavailable', message: 'agent turns are not available in this build' } };
     }
     immediateTx(this.db, () => {
+    const children: { attemptId: string; reason: CancelReason }[] = [];
       const cur = attemptRow(this.db, a.id)!;
       if (cur.state !== 'running') return;
       const change = { exit, outcome: s.outcome, logBytes: m.logBytes, ...(s.error ? { error: s.error } : {}) };
@@ -2098,7 +2101,15 @@ export class ExecutionService {
       if (nowJob.state === 'running') {
         const after = this.moveJobTx(j.id, s.job, now, { outcome: s.outcome, ...(s.error ? { error: s.error } : {}) }, 'running');
         if (s.sessionFailed && s.error) agents?.sessionFailedTx(after, s.error);
+      // What the turn asked for with `job_request` (its test and install jobs) stops with it: nothing keeps running for a turn
+      // that was cut off at a cap. The system's own children (a change-set collect, its checks, an accept) are the user's evidence
+      // and finish by themselves.
+      const sys = this.system();
+      const open = this.db.prepare(`SELECT id FROM jobs WHERE parent_job_id = ? AND requested_by <> ? AND state IN (${LIVE_JOB_STATES.map(() => '?').join(', ')})
+        ORDER BY created_at DESC, rowid DESC`).all(j.id, sys.id, ...LIVE_JOB_STATES) as { id: string }[];
+      for (const c of open) this.cancelOneTx(sys, c.id, 'parent', now, children);
       }
+    for (const c of children) this.send({ op: 'attempt.cancel', attemptId: c.attemptId, graceMs: CANCEL_GRACE_MS, reason: c.reason });
       this.setPhaseTx(j.id, null, now);
     });
     this.agentTerminal.delete(a.id);
@@ -2727,7 +2738,7 @@ export class ExecutionService {
     return { target: d.target, containerIds: withContainer ? [withContainer.container_id!] : [], logRanges };
   }
 
-  cancel(p: Principal, jobId: string): ExecJob {
+  cancel(p: Principal, jobId: string, o?: { reason?: 'consent_revoked' }): ExecJob {
     this.requireAvailable();
     const j = this.load(p, jobId, 'job.cancel');
     if (TERMINAL_JOB_STATES.has(j.state)) throw new PlatformError('illegal_transition', `a ${j.state} job cannot be cancelled`, { from: j.state });
@@ -2739,13 +2750,15 @@ export class ExecutionService {
           UNION ALL SELECT j.id, t.depth + 1 FROM jobs j JOIN t ON j.parent_job_id = t.id WHERE t.depth < 16)
         SELECT id, MAX(depth) AS depth FROM t GROUP BY id ORDER BY depth DESC, id`).all(j.id) as { id: string }[];
       for (const c of tree) this.cancelOneTx(p, c.id, 'parent', now, toCancel);
-      this.cancelOneTx(p, j.id, 'user', now, toCancel);
+      this.cancelOneTx(p, j.id, 'user', now, toCancel, o?.reason === 'consent_revoked'
+        ? { code: 'consent_revoked', message: 'the network permission was revoked, so the turn was stopped' } : undefined);
     });
     for (const c of toCancel) this.send({ op: 'attempt.cancel', attemptId: c.attemptId, graceMs: CANCEL_GRACE_MS, reason: c.reason });
     return this.toExecJob(this.row(j.id)!);
   }
 
-  private cancelOneTx(p: Principal, id: string, reason: CancelReason, now: number, out: { attemptId: string; reason: CancelReason }[]): void {
+  private cancelOneTx(p: Principal, id: string, reason: CancelReason, now: number, out: { attemptId: string; reason: CancelReason }[],
+    error?: { code: string; message: string }): void {
     const j = this.row(id)!;
     if (TERMINAL_JOB_STATES.has(j.state)) return;
     if (j.cancel_requested_at === null) this.db.prepare('UPDATE jobs SET cancel_requested_at = ?, updated_at = ? WHERE id = ?').run(now, now, id);
@@ -2760,7 +2773,7 @@ export class ExecutionService {
     this.deps.deployments?.stopForCancelTx(p, id, now);
     this.db.prepare("UPDATE artifact_versions SET draft_flag = 'cancelled_partial' WHERE produced_by_job_id = ? AND status = 'draft' AND draft_flag IS NULL")
       .run(id);
-    this.moveJobTx(id, 'cancelled', now, { outcome: 'cancelled' });
+    this.moveJobTx(id, 'cancelled', now, error ? { outcome: 'cancelled', error } : { outcome: 'cancelled' });
     this.setPhaseTx(id, null, now);
   }
 

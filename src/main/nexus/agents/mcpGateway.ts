@@ -55,6 +55,8 @@ import { immediateTx } from '../db/tx';
 import { PlatformError } from '../errors';
 
 const MAX_ARGS_SUMMARY_CHARS = 200;
+/** A capability token as it travels (`<22 base64url>.<43 base64url>`), unanchored: the runner's own log scrub uses the same shape. */
+const BARE_TOKEN_RE = /[A-Za-z0-9_-]{22}\.[A-Za-z0-9_-]{43}/g;
 /** A sandbox_exec id the gateway mints (opId-shaped: `[A-Za-z0-9_-]{1,64}`). */
 const execIdFor = (callId: string, now: number): string =>
   `ex_${createHash('sha256').update(`${callId}:${now}:${randomBytes(8).toString('hex')}`).digest('hex').slice(0, 24)}`;
@@ -188,8 +190,20 @@ export class McpGateway {
       }
     }
 
+    // D-B4's 20 child jobs bound everything a turn CREATES, not job_request alone: every job whose parent is the turn (the
+    // agent's own requests AND the system's change-set collects) plus the requirement drafts it saved. One pre-step for each
+    // mutating tool, so no tool is a way around the limit. (The change-set check jobs of a version are parent-less and so not
+    // counted here: they are bounded by the number of change sets, which this limit bounds.)
+    if ((tool === 'job_request' || tool === 'changeset_register' || tool === 'requirement_draft') && this.createdByTurn(claims.jobId) >= claims.maxChildJobs) {
+      const result = fail('limit', 'the turn has reached its limit of jobs and drafts it may create');
+      this.recordCall(claims, tool, args, result, now);
+      return result;
+    }
+
     const used = (this.callCounts.get(claims.jobId) ?? 0) + 1;
-    const cap = this.deps.budget.caps().toolCalls;
+    // The turn's own cap, as its attempt recorded it at the lease: a later change of the consent (a revocation falls back to the
+    // ceilings) never raises it.
+    const cap = this.turnToolCallCap(claims.jobId);
     if (used > cap) {
       const result = fail('limit', "the turn's tool-call cap is reached");
       this.recordCall(claims, tool, args, result, now);
@@ -205,6 +219,25 @@ export class McpGateway {
     }
     this.recordCall(claims, tool, args, result, now);
     return result;
+  }
+
+  /** What a turn created so far: its child jobs of every kind (system ones included) plus its saved requirement drafts. */
+  private createdByTurn(jobId: string): number {
+    const children = (this.db.prepare('SELECT COUNT(*) AS n FROM jobs WHERE parent_job_id = ?').get(jobId) as { n: number }).n;
+    const drafts = (this.db.prepare(`SELECT COUNT(*) AS n FROM activity WHERE job_id = ? AND action = 'mcp.call' AND status = 'succeeded'
+      AND json_extract(details_json, '$.tool') = 'requirement_draft'`).get(jobId) as { n: number }).n;
+    return children + drafts;
+  }
+
+  /** The turn's tool-call cap from its live attempt's `sandbox_json.turn` (set at the lease); the consent's only as a fallback. */
+  private turnToolCallCap(jobId: string): number {
+    try {
+      const a = liveAttemptOf(this.db, jobId);
+      const sb = a?.sandbox_json ? JSON.parse(a.sandbox_json) as { turn?: { toolCalls?: unknown } } : null;
+      const n = sb?.turn?.toolCalls;
+      if (typeof n === 'number' && Number.isSafeInteger(n) && n >= 0) return n;
+    } catch { /* the fallback below */ }
+    return this.deps.budget.caps().toolCalls;
   }
 
   /** Whether `jobId` is the turn's own job or a child of it, in the token's project (an unknown id is simply not in the turn). */
@@ -416,7 +449,8 @@ export class McpGateway {
     if (containsSecret(args)) return '[redacted: secret-shaped argument]';
     let text: string;
     try { text = JSON.stringify(args) ?? ''; } catch { text = '[unserializable]'; }
-    const redacted = redactText(text);
+    // A bare capability token (not preceded by the word Bearer) is cut out too: the redactor knows `Bearer <value>` only.
+    const redacted = redactText(text).replace(BARE_TOKEN_RE, '[redacted]');
     return redacted.length > MAX_ARGS_SUMMARY_CHARS ? `${redacted.slice(0, MAX_ARGS_SUMMARY_CHARS - 1)}…` : redacted;
   }
 
