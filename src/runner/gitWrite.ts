@@ -333,6 +333,13 @@ export interface CollectFacts {
    * must FAIL on it (a secret past the cut would otherwise pass), never pass.
    */
   scanTruncated: boolean;
+  /**
+   * Whether the user can review the WHOLE change in Nexus's own diff preview (A1). Counts and a closed code only, never
+   * line text: `hidden_lines` = added lines the preview's own redaction alters (the user would see `[redacted]`, yet
+   * sec.secret_scan does not block them), `too_large` = the preview's patch would exceed its cap, `truncated` = the
+   * secret scan itself was cut. Main stores it in the version's metadata; absent counts as NOT complete.
+   */
+  preview: { complete: boolean; reason?: 'hidden_lines' | 'too_large' | 'truncated'; hiddenLines: number; patchBytes: number };
 }
 /** The most hits of each kind a collect reports (the count itself, and every `location` evidence item, stay bounded). */
 export const COLLECT_MAX_HITS = 500;
@@ -353,6 +360,7 @@ export const COLLECT_ALWAYS_EXCLUDE: readonly string[] = Object.freeze([
  */
 export function scanAddedLines(patch: string): { secretHits: CollectFacts['secretHits']; entropyHits: CollectFacts['entropyHits']; hiddenLines: number } {
   const secretHits: CollectFacts['secretHits'] = [];
+  const added: string[] = [];                                  // every added line, as the preview shows it (with its +)
   const entropyHits: CollectFacts['entropyHits'] = [];
   let currentPath: string | null = null;
   let newLine = 0;
@@ -367,6 +375,7 @@ export function scanAddedLines(patch: string): { secretHits: CollectFacts['secre
       if (line.startsWith('+') && newLeft > 0) {
         newLeft--;
         const text = line.slice(1);
+        added.push(line);
         const at = newLine++;
         const path = currentPath;
         if (!path) continue;
@@ -381,13 +390,6 @@ export function scanAddedLines(patch: string): { secretHits: CollectFacts['secre
       }
       oldLeft = 0; newLeft = 0;                                               // malformed: leave the hunk, read it as a header
     }
-  /**
-   * Whether the user can review the WHOLE change in Nexus's own diff preview (A1). Counts and a closed code only, never
-   * line text: `hidden_lines` = added lines the preview's own redaction alters (the user would see `[redacted]`, yet
-   * sec.secret_scan does not block them), `too_large` = the preview's patch would exceed its cap, `truncated` = the
-   * secret scan itself was cut. Main stores it in the version's metadata; absent counts as NOT complete.
-   */
-  preview: { complete: boolean; reason?: 'hidden_lines' | 'too_large' | 'truncated'; hiddenLines: number; patchBytes: number };
     if (line.startsWith('+++ ')) {
       currentPath = patchPath(line.slice(4), 'b/');
       continue;
@@ -413,7 +415,6 @@ function patchPath(rest: string, prefix: string): string | null {
     const bytes: number[] = [];
     const chars = [...p.slice(1, -1)];                       // by code point: a non-BMP character is one unit, never split
     for (let i = 0; i < chars.length; i++) {
-  const added: string[] = [];                                  // every added line, as the preview shows it (with its +)
       const c = chars[i];
       if (c !== '\\') { bytes.push(...Buffer.from(c, 'utf8')); continue; }
       const n = chars[++i];
@@ -428,7 +429,6 @@ function patchPath(rest: string, prefix: string): string | null {
   if (p === '/dev/null') return null;
   return p.startsWith(prefix) ? p.slice(prefix.length) : p;
 }
-        added.push(line);
 
 const isExcludeSpec = (s: string): boolean => s.startsWith(':(glob,exclude)') || s.startsWith(':(glob,icase,exclude)');
 

@@ -401,9 +401,6 @@ export class IngestService implements IngestPort {
     const pathsTruncated = isObj(f) && f.pathsTruncated === true;
     // Fail closed: only an explicit `scanTruncated: false` says the runner's patch scan saw every added line.
     const scanTruncated = !(isObj(f) && f.scanTruncated === false);
-    const secretHits = isObj(f) && Array.isArray(f.secretHits) ? (f.secretHits as unknown[]) : [];
-    const entropyHits = isObj(f) && Array.isArray(f.entropyHits) ? (f.entropyHits as unknown[]) : [];
-    if (!sessionId || !branch || !head || !COMMIT_RE.test(head) || !base || !COMMIT_RE.test(base) || !tree || !ref || !diffstat || !paths) {
     // Preview completeness (A1), fail closed: absent or malformed facts are NOT complete. Only counts and a closed code.
     const pv = isObj(f) && isObj(f.preview) ? f.preview : null;
     const pvReasonOk = pv !== null && (pv.reason === undefined || pv.reason === 'hidden_lines' || pv.reason === 'too_large' || pv.reason === 'truncated');
@@ -414,6 +411,9 @@ export class IngestService implements IngestPort {
       : !pvValid ? 'unknown' : scanTruncated ? 'truncated' : typeof pv!.reason === 'string' ? pv!.reason : 'unknown';
     const previewHiddenLines = pvValid ? (pv!.hiddenLines as number) : 0;
     const previewPatchBytes = pvValid ? (pv!.patchBytes as number) : 0;
+    const secretHits = isObj(f) && Array.isArray(f.secretHits) ? (f.secretHits as unknown[]) : [];
+    const entropyHits = isObj(f) && Array.isArray(f.entropyHits) ? (f.entropyHits as unknown[]) : [];
+    if (!sessionId || !branch || !head || !COMMIT_RE.test(head) || !base || !COMMIT_RE.test(base) || !tree || !ref || !diffstat || !paths) {
       return refuse('invalid_output', 'parser_contract', 'the collect facts were not usable');
     }
     // The ref the runner reported must be the one the plan was built from: the session's RECORDED worktree ref (a session
