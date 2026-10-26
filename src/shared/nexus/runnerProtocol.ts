@@ -22,11 +22,16 @@ export type MainToRunner =
   /** `home`: this install's `nexus.home` (homeLabel.ts of `dataHome`; '' without a data home), for every resource label. */
   | { op: 'hello'; bootId: string; dataHome: string; home: string; profiles: SandboxProfile[] }
   /**
-   * `consentHostsSha256` (B2b): the hash of the live consent's hosts, when one exists. The runner then runs the agent
-   * runtime's health under its allow-list proxy (only when the hash is the adapter's own host list); without it, under
-   * the deny-all proxy: nothing the engine does can leave the machine before the user's permission exists.
+   * The sandbox probe (Docker, images, disk). The agent runtime is checked ONLY when `runtimes: true` is present, and main
+   * sets it only on an explicit refresh of the runtime check (the setup sheet opened, a consent change, a start with a stale
+   * answer) and only while agents are on: the scheduler's own periodic probe never carries it, so the user's engine is never
+   * run on a timer. The runner answers the sandbox probe first (`runtimes: []`) and, when asked, sends a second `probe.result`
+   * with the same sandbox facts plus the runtimes.
+   * `consentHostsSha256` (with `runtimes`): the hash of the live consent's hosts, when one exists. The runner then runs the
+   * runtime's health under its allow-list proxy (only when the hash is the adapter's own host list); without it, under the
+   * deny-all proxy: nothing the engine does can leave the machine before the user's permission exists.
    */
-  | { op: 'probe'; consentHostsSha256?: string }
+  | { op: 'probe'; runtimes?: true; consentHostsSha256?: string }
   | { op: 'attempt.start'; attemptId: string; plan: AttemptPlan }
   | { op: 'attempt.cancel'; attemptId: string; graceMs: number; reason: CancelReason }
   | { op: 'attempt.adopt'; attemptId: string; containerId: string; logPath: string }      // recovery

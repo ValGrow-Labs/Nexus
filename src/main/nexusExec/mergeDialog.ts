@@ -44,6 +44,19 @@ export function mergeDialogOptions(info: MergeConfirmInfo): MergeDialogOptions {
     detail, buttons: [...MERGE_BUTTONS], defaultId: 0, cancelId: 0, noLink: true };
 }
 
+/** A window a dialog can be parented to (an Electron BrowserWindow has this). */
+export interface DialogParent { isDestroyed(): boolean }
+
+/**
+ * `confirmMergeWith` on a live parent window. With no window (none focused, no main window, or a destroyed one) nothing is shown
+ * and the answer is false: the merge fails closed, never through a parent-less dialog the user may not see.
+ */
+export async function confirmMergeOn<W extends DialogParent>(parent: W | null | undefined, show: (parent: W, o: MergeDialogOptions) => Promise<{ response: number }>,
+  info: MergeConfirmInfo): Promise<boolean> {
+  try { if (!parent || parent.isDestroyed()) return false; } catch { return false; }
+  return confirmMergeWith((o) => show(parent, o), info);
+}
+
 /** Shows the dialog through `show`; true only when the user pressed "Merge". A closed dialog, Escape or a throw is a cancel. */
 export async function confirmMergeWith(show: (o: MergeDialogOptions) => Promise<{ response: number }>, info: MergeConfirmInfo): Promise<boolean> {
   try {

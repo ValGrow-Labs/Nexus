@@ -53,7 +53,7 @@ import {
   handoffSummaryView, healthView, jobDetailView, jobView, lineageNodeView, logPageView, mergeView, participationView, previewView, repoStatusUnavailable,
   repoStatusView, reviewResultView, sessionDetailView, sessionViewOf, summaryView, validationView, versionDetail, versionView
 } from './dto';
-import { agentSetupView } from './agentSetup';
+import { agentConsentView, agentSetupView } from './agentSetup';
 
 /** All 21 nexus:* channels of B1, in the order of the IPC surface table. */
 export const NEXUS_CHANNELS: readonly string[] = Object.freeze([
@@ -495,7 +495,11 @@ export function registerNexusIpc(registrar: IpcRegistrar, deps: NexusIpcDeps): v
     return { probe: true };
   }, (nx, me, q) => {
     nx.auth.require(me, 'platform.health', PLATFORM, { entityType: 'platform' });
-    if (q.probe) nx.exec.requestProbe();
+    if (q.probe) {
+      nx.exec.requestProbe();
+      // "Check again" also asks for the runtime check (an explicit request; never on a timer, and only with agents on).
+      nx.agentProbe?.refresh();
+    }
     const off = executionOff(nx);
     return ok(healthView(nx.exec.health(), { handoffs: nx.handoffsAvailable, execution: off === null, registry: nx.registry, subReason: off }, agentSetupView(nx)));
   });
@@ -706,7 +710,7 @@ export function registerNexusIpc(registrar: IpcRegistrar, deps: NexusIpcDeps): v
     const o = V.object(args[0], ['projectId', 'statuses'] as const, ['statuses'] as const);
     return { projectId: V.projectId(o.projectId), statuses: o.statuses === undefined ? undefined : V.sessionStatuses(o.statuses) };
   }, (nx, me, q) => {
-    const rows = nx.agents!.list(me, q.projectId);
+    const rows = nx.agents!.list(me, q.projectId).map(sessionViewOf);
     return ok(q.statuses === undefined ? rows : rows.filter((s) => q.statuses!.includes(s.status)), false);
   });
 
@@ -786,12 +790,12 @@ export function registerNexusIpc(registrar: IpcRegistrar, deps: NexusIpcDeps): v
     if (q.op === 'get') {
       nx.auth.require(me, 'platform.health', PLATFORM, { entityType: 'platform' });
       if (probe && probe.cache.isStale()) probe.refresh();
-      return ok(agentSetupView(nx));
+      return ok(agentConsentView(nx));
     }
     if (q.op === 'revoke') {
       nx.budget!.revoke(me);
       probe?.refresh();
-      return ok(agentSetupView(nx));
+      return ok(agentConsentView(nx));
     }
     // The hosts and the kind are the adapter's own, as the runner's probe reported them (refreshed first when stale).
     if (probe && probe.cache.isStale()) await probe.refreshAndWait(RUNTIME_REFRESH_WAIT_MS);
@@ -802,7 +806,7 @@ export function registerNexusIpc(registrar: IpcRegistrar, deps: NexusIpcDeps): v
     }
     nx.budget!.grant(me, { runtimeKind: seen.kind, hosts, caps: q.caps });
     probe?.refresh();
-    return ok(agentSetupView(nx));
+    return ok(agentConsentView(nx));
   });
 }
 

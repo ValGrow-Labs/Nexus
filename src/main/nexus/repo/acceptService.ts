@@ -124,6 +124,8 @@ interface JobLite { state: string; error_json: string | null }
 
 export class AcceptService {
   private readonly access: ProjectAccess;
+  /** Projects with a merge in flight (its dialog may be open): a second call answers `merge_pending`, so dialogs never stack. */
+  private readonly merging = new Set<string>();
   constructor(private readonly db: Database.Database, private readonly deps: AcceptDeps) {
     this.access = new ProjectAccess(db, { auth: deps.auth });
   }
@@ -417,6 +419,13 @@ export class AcceptService {
       || !COMMIT_RE.test(args.expectedAcceptedHead) || typeof confirm !== 'function') {
       throw new PlatformError('invalid', 'a merge names its branch and the accepted commit it was shown', { reason: 'bad_args' });
     }
+    // One merge per project at a time (single-flight): a second quick call neither opens a second dialog nor queues a second job.
+    if (this.merging.has(projectId)) throw conflict('merge_pending', 'A merge for this project is already waiting for you or running. Ask again in a moment.');
+    this.merging.add(projectId);
+    try { return await this.runMerge(user, projectId, args, confirm); } finally { this.merging.delete(projectId); }
+  }
+
+  private async runMerge(user: Principal, projectId: string, args: { branch: string; expectedAcceptedHead: string }, confirm: ConfirmMerge): Promise<{ merge: MergeView }> {
     const sha = args.expectedAcceptedHead;
     if (args.branch !== repoBranchOf(this.db, projectId)) throw conflict('branch_mismatch', GIT_FAILURE_TEXT.branch_mismatch);
     this.reconcileEnded();

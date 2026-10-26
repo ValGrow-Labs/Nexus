@@ -245,3 +245,32 @@ test('the diff preview takes its commits and folder only from the stored change 
   const wiring = read('src/main/nexusExec/execWiring.ts');
   assert.match(wiring, /await accepts\.diff\(p, versionId\)/);
 });
+
+// B2b Task 14 fix round 1: the user's engine is run only on request, and a destination appears in one answer only.
+test('the engine check is asked for in one place (the platform\'s refresh), never by the scheduler or a timer; hosts are put into one view only', () => {
+  const read = (p) => fs.readFileSync(path.join(__dirname, '..', p), 'utf8');
+  const main = fs.readdirSync(path.join(__dirname, '..', 'src/main'), { recursive: true }).map(String).filter((x) => x.endsWith('.ts'));
+  const flagged = main.filter((f) => /runtimes: true/.test(read(path.join('src/main', f)))).map((f) => f.replace(/\\/g, '/'));
+  assert.deepEqual(flagged, ['nexus/platform.ts']);
+  const platform = read('src/main/nexus/platform.ts');
+  assert.equal((platform.match(/op: 'probe', runtimes: true\b/g) || []).length >= 1, true);
+  assert.match(platform, /if \(m\.runtimes === true && runtimeCache\)/, 'the flag passes only with agents on');
+  // The scheduler's probes (execution service) never name the flag, the consent hash or an adapter.
+  const exec = read('src/main/nexus/exec/executionService.ts');
+  assert.doesNotMatch(exec, /runtimes: true|consentHostsSha256|probeAdapters/);
+  assert.equal((exec.match(/op: 'probe'/g) || []).length, 2);
+  // The runner: adapters are reached from one place, behind the flag; the entry runs none by itself.
+  const core = read('src/runner/core.ts');
+  assert.match(core, /if \(withRuntimes && this\.deps\.runtimeProbe\)/);
+  assert.equal((core.match(/this\.probeRuntimes\(/g) || []).length, 1);
+  assert.doesNotMatch(read('src/runner/index.ts'), /setInterval|setTimeout|\.probe\(/);
+  // Hosts: only #51's consent view builds them; #23's agent row and every other view are built without.
+  const setup = read('src/main/nexusIpc/agentSetup.ts');
+  assert.equal((setup.match(/export function agentConsentView/g) || []).length, 1);
+  const body = setup.slice(setup.indexOf('export function agentSetupView'));
+  assert.doesNotMatch(body, /\bhosts\b\s*[:=]|\.hosts\b(?!\.length)|egressHosts/, 'the plain setup row only counts the hosts');
+  const ipc = read('src/shared/nexus/ipc.ts');
+  assert.equal((ipc.match(/\bhosts: string\[\]/g) || []).length, 1, 'one view type has a hosts field');
+  assert.match(ipc, /export interface AgentConsentView extends AgentSetupView \{\s*consent: AgentSetupView\['consent'\] & \{ hosts: string\[\] \};/);
+  assert.match(read('src/preload/index.ts'), /nexusAgentConsent: \(args: AgentConsentArgs\): Promise<NexusResult<AgentConsentView>>/);
+});

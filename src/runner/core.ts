@@ -312,7 +312,7 @@ export class RunnerCore {
       switch (m.op) {
         case 'hello': return await this.onHello(m);
         case 'mcp.reply': this.onMcpReply(m); return;
-        case 'probe': return await this.onProbe(typeof m.consentHostsSha256 === 'string' ? m.consentHostsSha256 : null);
+        case 'probe': return await this.onProbe(m.runtimes === true, typeof m.consentHostsSha256 === 'string' ? m.consentHostsSha256 : null);
         case 'attempt.start': return await this.onStart(m.attemptId as string, m.plan as AttemptPlan);
         case 'attempt.cancel': return await this.onCancel(m.attemptId as string, m.graceMs as number, m.reason as CancelReason);
         case 'attempt.adopt': return await this.onAdopt(m.attemptId as string, m.containerId as string, m.logPath as string);
@@ -475,7 +475,7 @@ stderr: ${r.stderr}` : ''}`
 
   private runtimeProber: RuntimeProber | null = null;
 
-  private async onProbe(consentHostsSha256: string | null = null): Promise<void> {
+  private async onProbe(withRuntimes = false, consentHostsSha256: string | null = null): Promise<void> {
     const gpu = { detected: false, usableInContainers: false as const };
     let probe: SandboxProbe;
     try { probe = await this.driver.probe(); } catch { probe = { docker: 'stopped', gpu }; }
@@ -490,8 +490,14 @@ stderr: ${r.stderr}` : ''}`
         ...(typeof info.versions === 'string' && info.versions.length <= 300 && IMAGE_VERSIONS_RE.test(info.versions) ? { versions: info.versions } : {}) });
     }
     const free = this.paths ? await this.freeBytes(this.paths.root) : null;
-    this.post({ op: 'probe.result', probe, images, freeBytes: free !== null && Number.isSafeInteger(Math.floor(free)) && free >= 0 ? Math.floor(free) : null,
-      runtimes: await this.probeRuntimes(consentHostsSha256) });
+    const result = { op: 'probe.result' as const, probe, images,
+      freeBytes: free !== null && Number.isSafeInteger(Math.floor(free)) && free >= 0 ? Math.floor(free) : null };
+    // The sandbox facts the scheduler leases against go out at once; the engine check never holds them back.
+    this.post({ ...result, runtimes: [] });
+    // The engine is checked only when main asked (a refresh of the runtime check), and its answer follows as a second message.
+    if (withRuntimes && this.deps.runtimeProbe) {
+      void this.probeRuntimes(consentHostsSha256).then((runtimes) => { if (runtimes.length > 0) this.post({ ...result, runtimes }); }).catch(() => undefined);
+    }
   }
 
   /** `probe.result.runtimes`: the adapters' health through a deny-all proxy (no consent) or the allow-list proxy (after consent). */

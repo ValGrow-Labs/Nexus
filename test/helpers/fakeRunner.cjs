@@ -22,7 +22,8 @@ class FakeRunner {
   send(msg) {
     if (typeof this.o.failSend === 'function' && this.o.failSend(msg)) throw new Error('the runner is gone');
     this.sent.push(JSON.parse(JSON.stringify(msg)));
-    if (msg.op === 'probe' && typeof this.o.probeReply === 'function') this.report(this.o.probeReply());
+    // `probeReply(msg)` may answer with one report or a list of them (the sandbox probe first, then the runtimes, as the real runner does).
+    if (msg.op === 'probe' && typeof this.o.probeReply === 'function') for (const r of [].concat(this.o.probeReply(msg))) this.report(r);
     if (this.o.neverAnswers || this.o.quiet) return;
     if (msg.op === 'hello') this.report({ op: 'ready', bootId: msg.bootId });
   }

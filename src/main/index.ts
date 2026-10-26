@@ -56,7 +56,7 @@ import { createNexusPlatform, type NexusPlatform } from './nexus/platform';
 import { registerNexusIpc } from './nexusIpc/registerNexusIpc';
 import { createSourcePorts } from './nexusIpc/sources';
 import { startExecution, type ExecutionHandle } from './nexusExec/execWiring';
-import { confirmMergeWith } from './nexusExec/mergeDialog';
+import { confirmMergeOn } from './nexusExec/mergeDialog';
 import { resolveDataHome } from './nexusExec/dataHome';
 import { imagesDirFor, loadImageProfiles } from './nexusExec/profiles';
 import { readAgentUsage, readContextTokens, seedSessionTranscript, resolveSessionCwd } from './transcript';
@@ -5759,10 +5759,8 @@ app.whenReady().then(() => {
         log: (line) => nexusMainLog(`${new Date().toISOString()} ${line}`),
         hintTargets: () => [...allWindows].map((win) => (win.isDestroyed() ? null : win.webContents)),
         // The native confirmation of "Merge accepted work" (Cancel is the default button); the only way a merge is ever confirmed.
-        mergeDialog: (info) => confirmMergeWith((o) => {
-          const win = BrowserWindow.getFocusedWindow() ?? mainWindow;
-          return win && !win.isDestroyed() ? dialog.showMessageBox(win, o) : dialog.showMessageBox(o);
-        }, info) })
+        // With no window to parent it (none focused, no main window) nothing is shown and the merge is not confirmed.
+        mergeDialog: (info) => confirmMergeOn(BrowserWindow.getFocusedWindow() ?? mainWindow, (win, o) => dialog.showMessageBox(win, o), info) })
         .then((h) => { nexusExecution = h; })
         .catch((e) => nexusMainLog(`${new Date().toISOString()} [nexus] execution did not start error=${e instanceof Error ? e.name : typeof e}`));
     }

@@ -340,9 +340,12 @@ export function createNexusPlatform(db: Database.Database, opts?: NexusPlatformO
     : null;
   // What the gateway keeps in memory for a turn (retried-call replies, call count, pending execs) goes with its tokens.
   if (tokens && mcpGateway) tokens.onRevoked((jobId) => { if (jobId === null) mcpGateway.evictAll(); else mcpGateway.evictJob(jobId); });
-  // B2b Task 14: the runtime probe. The live consent's hash rides on every `probe` main sends (only a hash that verifies against
-  // its own hosts), so the runner checks the engine under the allow-list proxy only after a live consent. Each `probe.result`
-  // fills the health cache; a newly attached runner is unknown until its own probe answers (and an entry never outlives its TTL).
+  // B2b Task 14: the runtime probe, ON DEMAND and only with agents on. The engine is checked only when `agentProbe.refresh()` sends a
+  // probe flagged `runtimes: true` (the setup sheet opened, a consent change, a start with a stale answer); the scheduler's own
+  // periodic probe never carries the flag, so the user's engine is never run on a timer and never with agents off. The flagged probe
+  // carries the live consent's hash (only a hash that verifies against its own hosts), so the runner checks the engine under the
+  // allow-list proxy only after a live consent. A `probe.result` that holds runtimes fills the health cache; a newly attached runner
+  // is unknown until asked (and an entry never outlives its TTL).
   let probePort: RunnerPort | null = null;
   const consentHash = (): string | null => {
     try {
@@ -356,7 +359,7 @@ export function createNexusPlatform(db: Database.Database, opts?: NexusPlatformO
     cache: runtimeCache,
     refresh(): boolean {
       if (!probePort) return false;
-      try { probePort.send({ op: 'probe' }); return true; } catch { return false; }
+      try { probePort.send({ op: 'probe', runtimes: true }); return true; } catch { return false; }
     },
     async refreshAndWait(timeoutMs: number): Promise<boolean> {
       const since = now();
@@ -374,14 +377,20 @@ export function createNexusPlatform(db: Database.Database, opts?: NexusPlatformO
       const wrapped: RunnerPort = {
         state: () => port.state(),
         send: (m) => {
-          if (m.op === 'probe' && runtimeCache) { const h = consentHash(); port.send(h ? { op: 'probe', consentHostsSha256: h } : { op: 'probe' }); return; }
+          if (m.op === 'probe') {
+            // Only the runtime refresh may ask the runner to check the engine, and only with agents on; the hash rides on that probe alone.
+            if (m.runtimes === true && runtimeCache) { const h = consentHash(); port.send(h ? { op: 'probe', runtimes: true, consentHostsSha256: h } : { op: 'probe', runtimes: true }); return; }
+            port.send({ op: 'probe' });
+            return;
+          }
           port.send(m);
         },
         onMessage: (fn) => port.onMessage((raw) => {
           const op = (raw as { op?: unknown } | null)?.op;
           if (op === 'probe.result' && runtimeCache) {
             const m = parseRunnerMessage(raw);
-            if (m && m.op === 'probe.result') runtimeCache.record(m.runtimes);
+            // The scheduler's sandbox probe answers `runtimes: []` (it never checks the engine): only a non-empty list is a runtime answer.
+            if (m && m.op === 'probe.result' && m.runtimes.length > 0) runtimeCache.record(m.runtimes);
           }
           // B2b Task 9: a `git.read.result` answers a waiting read; the execution core never sees it.
           if (op === 'git.read.result' && gitRead) {

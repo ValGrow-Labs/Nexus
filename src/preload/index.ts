@@ -8,7 +8,7 @@ import type {
   ActionAvailabilityView, ActionsQuery, ApprovalDecisionArg, ApprovalsListFilter, ApprovalView, BlobGcArgs, BlobGcView, DeploymentsListFilter,
   DeploymentView, DomainSpecView, EventsPageView, EventsQuery, HealthQuery, HealthView, ImageProfileArg, InlineSaveView, JobDetailView, JobLogsQuery,
   JobsListFilter, JobStartArgs, JobStartView, JobView, LogPageView, NexusHint, PreviewQuery, PreviewView, SaveInlineArgs, ValidationResultView,
-  AcceptResultView, AgentConsentArgs, AgentSetupView, AgentStartArgs, AgentStartResultView, MergeView, RepoMergeArgs, RepoStatusView, ReviewDecideArgs,
+  AcceptResultView, AgentConsentArgs, AgentConsentView, AgentStartArgs, AgentStartResultView, MergeView, RepoMergeArgs, RepoStatusView, ReviewDecideArgs,
   ReviewResultView, SessionDetailView, SessionsListFilter, SessionView
 } from '../shared/nexus/ipc';
 
@@ -1727,7 +1727,7 @@ const api = {
     ipcRenderer.invoke('nexus:repo:status', projectId),
   nexusRepoMergeAccepted: (projectId: string, args: RepoMergeArgs): Promise<NexusResult<MergeView>> =>
     ipcRenderer.invoke('nexus:repo:mergeAccepted', projectId, args),
-  nexusAgentConsent: (args: AgentConsentArgs): Promise<NexusResult<AgentSetupView>> =>
+  nexusAgentConsent: (args: AgentConsentArgs): Promise<NexusResult<AgentConsentView>> =>
     ipcRenderer.invoke('nexus:agent:consent', args),
   /** The hint push: the newest event seq only (pull nexusEventsSince for what changed). Returns an unsubscribe. */
   onNexusHint: (cb: (hint: NexusHint) => void): (() => void) => {

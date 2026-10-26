@@ -367,6 +367,14 @@ export interface AgentSetupView {
   /** Today's usage: cost in US cents (reported, or estimated at the cap where none was reported) and turns started. */
   usageToday: { usdCents: number; turns: number; estimated: boolean };
 }
+/**
+ * #51's answer (get, grant and revoke): the setup row plus, in its consent row ONLY, the destinations the permission covers
+ * (F24). `hosts` are `host:port` strings: the live consent's own, or, with none, the ones the runtime's probe reported (what a
+ * grant would cover). No other view carries them: #23's `agent` keeps `hostsCount` and nothing else.
+ */
+export interface AgentConsentView extends AgentSetupView {
+  consent: AgentSetupView['consent'] & { hosts: string[] };
+}
 
 // ---------- requests (what the renderer sends: ids and small values only) ----------
 

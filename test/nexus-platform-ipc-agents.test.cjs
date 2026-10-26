@@ -37,6 +37,8 @@ const okRuntime = (o = {}) => ({ kind: 'cli-agent', health: o.health ?? OK_HEALT
   setup: { signedIn: o.signedIn ?? 'yes', flagsOk: true, label: 'Test Engine', egressHosts: o.hosts ?? [API_HOST] } });
 const probeMsg = (st) => ({ op: 'probe.result', probe: { docker: 'running', gpu: { detected: false, usableInContainers: false } }, images: [],
   freeBytes: 10 ** 12, runtimes: st.runtimes });
+/** What the scheduler's own probe is answered with: the sandbox facts and NO runtimes (the engine is checked only on request). */
+const sandboxMsg = () => probeMsg({ runtimes: [] });
 
 /** A v10 world, a runner that answers every probe with `st.runtimes`, and the 51 channels registered as main does. */
 function world(o = {}) {
@@ -45,8 +47,11 @@ function world(o = {}) {
   w.dataHome = dataHome;
   w.st = { runtimes: o.runtimes ?? [okRuntime()] };
   if (o.agents !== false && !o.noRunner) {
-    w.runner = new FakeRunner(o.hung ? { neverAnswers: true } : { probeReply: () => probeMsg(w.st) });
+    // As the real runner answers: the sandbox probe at once; the runtimes (a second result) only for a probe flagged `runtimes: true`.
+    w.runner = new FakeRunner(o.hung ? { neverAnswers: true } : { probeReply: (msg) => (msg.runtimes === true ? [sandboxMsg(), probeMsg(w.st)] : [sandboxMsg()]) });
     w.nx.exec.attachRunner(w.runner, w.nx.bootId);
+    // The first look at the engine is on demand (the setup sheet opening); nothing asks for it at attach or on a timer.
+    if (!o.noInitialRefresh && w.nx.agentProbe) w.nx.agentProbe.refresh();
   }
   w.confirms = [];
   w.confirmAnswer = o.confirm ?? false;
@@ -228,8 +233,11 @@ test('H1 #23 carries the agent row: state, label (this row only), version, signe
   assert.doesNotMatch(JSON.stringify(rest), /Test Engine|anthropic|api\./);
   const g = await grant(w);
   assert.equal(g.consent.live, true); assert.equal(g.consent.hostsCount, 1);
-  assert.doesNotMatch(JSON.stringify(await w.x.ok('nexus:platform:health')), /anthropic|api\.|engine\.example/, 'hosts are never in a view');
-  assert.doesNotMatch(JSON.stringify(g), /anthropic|api\./);
+  assert.doesNotMatch(JSON.stringify(await w.x.ok('nexus:platform:health')), /anthropic|api\.|engine\.example/, 'hosts are never in #23');
+  // ... only in #51's consent row (F24): the same answer without its `hosts` names none.
+  assert.deepEqual(g.consent.hosts, ['api.anthropic.com:443']);
+  const { hosts: _h, ...consentRest } = g.consent;
+  assert.doesNotMatch(JSON.stringify({ ...g, consent: consentRest }), /anthropic|api\./);
   // Every state of the cached health.
   const states = [[{ ok: false, reason: 'not_installed', detail: 'x' }, 'not_installed'], [{ ok: false, reason: 'not_authenticated', detail: 'x' }, 'not_signed_in'],
     [{ ok: false, reason: 'version_unsupported', detail: 'x' }, 'version_unsupported'], [{ ok: false, reason: 'error', detail: 'x' }, 'unavailable']];
@@ -281,9 +289,6 @@ test('C2 the destinations of a grant are the adapter\'s own as the probe reporte
   const r = await none.x.refused('nexus:agent:consent', [{ op: 'grant' }], 'unavailable', { reason: 'runtime_unknown' });
   assert.equal(r.message, REASON_MESSAGES.runtime_unknown);
   assert.equal(none.db.prepare('SELECT COUNT(*) n FROM runtime_consents').get().n, 0);
-  // A runner that reports no runtime (no adapters) is the same.
-  const empty = world({ runtimes: [] });
-  await empty.x.refused('nexus:agent:consent', [{ op: 'grant' }], 'unavailable', { reason: 'runtime_unknown' });
 });
 
 test('IA9 #51 grant and revoke need the owner role: a viewer is denied, audited, and nothing is stored; get is judged like #23', async () => {
@@ -311,22 +316,65 @@ test('IA9 #51 grant and revoke need the owner role: a viewer is denied, audited,
   assert.equal((await w.x.ok('nexus:agent:consent', { op: 'get' })).consent.live, true, 'still live');
 });
 
-test('H2 main\'s probe carries the live consent\'s hash only while a consent is live, and a grant or revoke asks for a fresh probe at once', async () => {
-  const w = world();
+test('H2 the engine check is on demand: the flag rides only on a refresh, with the live consent\'s hash only while a consent is live; a grant or revoke refreshes', async () => {
+  const w = world({ noInitialRefresh: true });
   const probes = () => w.runner.sentOf('probe');
   assert.ok(probes().length >= 1);
-  assert.ok(probes().every((p) => p.consentHostsSha256 === undefined), 'before consent: no hash, so the runner stays deny-all');
+  assert.ok(probes().every((p) => p.runtimes === undefined && p.consentHostsSha256 === undefined), 'attach: the scheduler\'s probe is sandbox-only, never the engine');
+  w.nx.exec.requestProbe();
+  assert.ok(probes().every((p) => p.runtimes === undefined), 'the scheduler/requestProbe path never carries the flag');
+  assert.equal(w.nx.agentProbe.cache.fresh(), null, 'nothing was checked yet: unknown, not ok');
+  assert.equal(w.nx.agentProbe.refresh(), true);
+  assert.deepEqual(probes().at(-1), { op: 'probe', runtimes: true }, 'a refresh before consent: flagged, no hash (the runner stays deny-all)');
+  assert.ok(w.nx.agentProbe.cache.fresh(), 'its answer filled the cache');
   const n0 = probes().length;
   await grant(w);
-  assert.equal(probes().length, n0 + 1, 'a grant asks for a fresh probe');
-  assert.equal(probes().at(-1).consentHostsSha256, hostsSha256([API_HOST]));
-  // The scheduler's own probe (exec.requestProbe goes through the same port) carries it too.
+  assert.equal(probes().length, n0 + 1, 'a grant asks for a fresh check at once');
+  assert.deepEqual(probes().at(-1), { op: 'probe', runtimes: true, consentHostsSha256: hostsSha256([API_HOST]) });
+  // The scheduler's own probe, even with a live consent, stays plain (requestProbe is rate limited: let its window pass).
+  w.advance(6000);
   w.nx.exec.requestProbe();
-  assert.equal(probes().at(-1).consentHostsSha256, hostsSha256([API_HOST]));
+  assert.deepEqual(probes().at(-1), { op: 'probe' });
   const n1 = probes().length;
   await w.x.ok('nexus:agent:consent', { op: 'revoke' });
-  assert.equal(probes().length, n1 + 1, 'a revoke asks for a fresh probe');
-  assert.equal(probes().at(-1).consentHostsSha256, undefined, 'revoked: the probe is deny-all again');
+  assert.equal(probes().length, n1 + 1, 'a revoke asks for a fresh check');
+  assert.deepEqual(probes().at(-1), { op: 'probe', runtimes: true }, 'revoked: the check is deny-all again');
+});
+
+test('I1 with agents off the engine is never asked for: no flag on any probe, #23 \"Check again\" included; the wrapper drops a flag nobody should send', async () => {
+  const w = world({ agents: false, agentsReason: () => 'not_enabled' });
+  w.runner = new FakeRunner({ probeReply: () => sandboxMsg() });
+  w.nx.exec.attachRunner(w.runner, w.nx.bootId);
+  assert.equal(w.nx.agentProbe, null);
+  w.nx.exec.requestProbe();
+  await w.x.ok('nexus:platform:health', { probe: true });
+  w.clock.t += 120_000;
+  w.nx.exec.tick(w.clock.t);
+  w.nx.exec.sendToRunner({ op: 'probe', runtimes: true, consentHostsSha256: 'a'.repeat(64) });
+  assert.ok(w.runner.sentOf('probe').length >= 2);
+  assert.ok(w.runner.sentOf('probe').every((p) => p.runtimes === undefined && p.consentHostsSha256 === undefined), JSON.stringify(w.runner.sentOf('probe')));
+});
+
+test('I1b with agents on: no flag at attach, none from the scheduler\'s ticks; the flag comes from the setup sheet (#51 get when stale, #23 check again), a consent change, and a start with a stale answer', async () => {
+  const w = world({ noInitialRefresh: true, platform: { runtimeHealthTtlMs: 60_000 } });
+  const flagged = () => w.runner.sentOf('probe').filter((p) => p.runtimes === true).length;
+  w.clock.t += 5 * 60_000;
+  w.nx.exec.tick(w.clock.t);
+  w.nx.exec.tick(w.clock.t + 120_000);
+  assert.equal(flagged(), 0, 'no timer ever asks for the engine');
+  await w.x.ok('nexus:agent:consent', { op: 'get' });
+  assert.equal(flagged(), 1, 'the setup sheet opening (get while stale)');
+  await w.x.ok('nexus:agent:consent', { op: 'get' });
+  assert.equal(flagged(), 1, 'a fresh answer is not asked for again');
+  await w.x.ok('nexus:platform:health', { probe: true });
+  assert.equal(flagged(), 2, '"Check again" in the setup sheet');
+  await grant(w);
+  assert.equal(flagged(), 3);
+  w.advance(60_001);
+  await w.x.ok('nexus:agent:start', startArgs());
+  assert.equal(flagged(), 4, 'a start with a stale answer asks first');
+  await w.x.ok('nexus:platform:health');
+  assert.equal(flagged(), 4, 'a plain health read never asks');
 });
 
 test('H3 the cached health is bounded in age: a stale ok reads unknown, is refreshed before a start, and never passes a start without an answer', async () => {
@@ -341,6 +389,7 @@ test('H3 the cached health is bounded in age: a stale ok reads unknown, is refre
   const r = await w.x.ok('nexus:agent:start', startArgs());
   assert.equal(r.job.kind, 'agent.run');
   assert.equal(w.runner.sentOf('probe').length, n0 + 1, 'exactly one refresh');
+  assert.equal(w.runner.sentOf('probe').at(-1).runtimes, true);
   // Stale and no runner to ask: the start is refused (the old ok never passes).
   const w2 = world({ platform: { runtimeHealthTtlMs: 60_000 } });
   await grant(w2);
@@ -593,7 +642,8 @@ test('IA8 #50 cancel answers cancelled; the only confirmation the accept service
   // main: the dependency is the execution handle's confirmMerge; the dialog is passed to startExecution only.
   const idx = read('src/main/index.ts');
   assert.match(idx, /confirmMerge: \(info\) => \(nexusExecution \? nexusExecution\.confirmMerge\(info\) : Promise\.resolve\(false\)\)/);
-  assert.match(idx, /mergeDialog: \(info\) => confirmMergeWith\(\(o\) => \{[\s\S]{0,300}dialog\.showMessageBox\(win, o\)[\s\S]{0,120}\}, info\) \}\)/);
+  assert.match(idx, /mergeDialog: \(info\) => confirmMergeOn\(BrowserWindow\.getFocusedWindow\(\) \?\? mainWindow, \(win, o\) => dialog\.showMessageBox\(win, o\), info\) \}\)/);
+  assert.doesNotMatch(idx, /dialog\.showMessageBox\(o\)/, 'never a parent-less dialog');
   assert.equal((idx.match(/confirmMerge/g) || []).length, 4, 'the import of the dialog, the dep, the comment line, and the handle call');
   assert.equal((idx.match(/mergeAccepted|\.accepts\b/g) || []).length, 0, 'index.ts never calls the accept service');
   // Nothing else under src/main calls mergeAccepted or builds a confirm.
@@ -818,4 +868,97 @@ test('IA12 no system-only method is reachable: the agent channels call a closed 
   assert.equal((mod.match(/principals\.localUser\(\)/g) || []).length, 1);
   // Through the real handlers: a request that tries to act for someone else is a bad request, never an action.
   assert.doesNotMatch(mod, /\b(o|a|q)\.(principal|principalId|actor|actorId|role|onBehalfOf)\b/);
+});
+
+// ---------- fix round 1: hosts in #51's consent row only, merge single-flight, the dialog fails closed ----------
+
+test('I3 #51 names the destination in its consent row (hosts, `host:port`, the adapter\'s own) and no other answer does; #23 keeps only hostsCount', async () => {
+  const w = world();
+  // Before any grant: what a grant would cover, from the probe.
+  const g0 = await w.x.ok('nexus:agent:consent', { op: 'get' });
+  assert.deepEqual(g0.consent.hosts, ['api.anthropic.com:443']);
+  assert.deepEqual([g0.consent.live, g0.consent.hostsCount], [false, 0]);
+  const g1 = await grant(w);
+  assert.deepEqual(g1.consent.hosts, ['api.anthropic.com:443']);
+  assert.deepEqual([g1.consent.live, g1.consent.hostsCount], [true, 1]);
+  assert.deepEqual((await w.x.ok('nexus:agent:consent', { op: 'get' })).consent.hosts, ['api.anthropic.com:443'], 'the live consent\'s own hosts');
+  assert.deepEqual((await w.x.ok('nexus:agent:consent', { op: 'revoke' })).consent.hosts, ['api.anthropic.com:443'], 'after a revoke the sheet still names what a grant covers');
+  await grant(w);
+  // Every other answer: no host, no `hosts` key.
+  const a = await w.x.ok('nexus:agent:start', startArgs());
+  const others = [await w.x.ok('nexus:platform:health'), a, await w.x.ok('nexus:sessions:list', { projectId: PROJECT }), await w.x.ok('nexus:session:get', a.session.id),
+    await w.x.ok('nexus:job:get', a.job.id), await w.x.ok('nexus:jobs:list', {}), await w.x.ok('nexus:actions:available', { projectId: PROJECT, workspaceId: WS }),
+    await w.x.ok('nexus:events:since', { sinceSeq: 0 }), await w.x.ok('nexus:activity:byProject', PROJECT)];
+  const text = JSON.stringify(others);
+  assert.doesNotMatch(text, /anthropic|api\.|engine\.example|:443/);
+  const keys = new Set(); const walk = (v) => { if (v && typeof v === 'object') for (const [k, x] of Object.entries(v)) { keys.add(k); walk(x); } };
+  walk(others);
+  assert.ok(![...keys].some((k) => /^hosts?$/i.test(k)), 'no view but #51 has a hosts key');
+  assert.equal(others[0].agent.consent.hostsCount, 1);
+  assert.ok(!('hosts' in others[0].agent.consent));
+  // The hosts are the adapter's own, whatever it reports.
+  const w2 = world({ runtimes: [okRuntime({ hosts: [{ host: 'models.example.com', port: 443 }] })] });
+  assert.deepEqual((await w2.x.ok('nexus:agent:consent', { op: 'get' })).consent.hosts, ['models.example.com:443']);
+  assert.deepEqual((await grant(w2)).consent.hosts, ['models.example.com:443']);
+  // Nothing probed yet: no host to show.
+  const w3 = world({ noRunner: true });
+  assert.deepEqual((await w3.x.ok('nexus:agent:consent', { op: 'get' })).consent.hosts, []);
+  // The source: the consent view is built in one place and nowhere else puts a host into a view.
+  const setup = read('src/main/nexusIpc/agentSetup.ts');
+  assert.equal((setup.match(/hosts/g) || []).length > 0, true);
+  const mod = read('src/main/nexusIpc/registerNexusIpc.ts');
+  assert.equal((mod.match(/agentConsentView\(nx\)/g) || []).length, 3, 'get, grant and revoke of #51 only');
+  assert.match(mod, /agentSetupView\(nx\)\)\);/, '#23 keeps the plain setup row');
+  const dto = read('src/main/nexusIpc/dto.ts');
+  assert.doesNotMatch(dto, /hosts\??\s*:|\.hosts|egressHosts/, 'dto.ts builds no view from a host list');
+});
+
+test('S3 #43 answers closed SessionView rows; #50 is single-flight per project: a second call answers merge_pending (no second dialog), and the slot is released afterwards', async () => {
+  const w = world();
+  await grant(w);
+  const a = await w.x.ok('nexus:agent:start', startArgs());
+  const list = await w.x.ok('nexus:sessions:list', { projectId: PROJECT });
+  assert.deepEqual(Object.keys(list[0]).sort(), ['createdAt', 'id', 'liveJobId', 'projectId', 'status', 'turns', 'updatedAt', 'workspaceId']);
+  assert.equal(list[0].id, a.session.id);
+  // Single flight: the first merge waits on a repository read that does not answer.
+  setRoot(w, w.dataHome.root);
+  addChangeSet(w, { kind: 'repository', status: 'active', metadata: { profile: 'sde-node', branch: 'main', lockfile: { sha256: 'a'.repeat(64) } } });
+  let release = () => {};
+  const gate = new Promise((resolve) => { release = () => resolve({ ok: false, code: 'git_missing', message: 'x' }); });
+  withFakeGit(w, { request: () => gate });
+  const margs = [PROJECT, { branch: 'main', expectedAcceptedHead: HEAD }];
+  const first = w.x.call('nexus:repo:mergeAccepted', ...margs);
+  await new Promise((r) => setImmediate(r));
+  const second = await w.x.refused('nexus:repo:mergeAccepted', margs, 'conflict', { reason: 'merge_pending' });
+  assert.equal(second.message, 'The merge is still running. Ask again in a moment.');
+  assert.equal(w.confirms.length, 0, 'no dialog was opened');
+  release();
+  const done = await first;
+  assert.deepEqual([done.ok, done.code, done.reason], [false, 'unavailable', 'git_missing']);
+  // The slot is free again: the next call is judged on its own (here: the repository answer), never merge_pending.
+  withFakeGit(w, fakeGitRead({ ok: false, code: 'git_missing', message: 'x' }));
+  const third = await w.x.call('nexus:repo:mergeAccepted', ...margs);
+  assert.equal(third.reason, 'git_missing');
+});
+
+test('M2 the merge dialog fails closed: with no live window to parent it nothing is shown and the answer is no; only the Merge button on a live window confirms', async () => {
+  const { confirmMergeOn } = loadTs('src/main/nexusExec/mergeDialog.ts');
+  const info = { projectId: PROJECT, branch: 'main', from: BASE, to: HEAD, commitCount: 1, accepted: [{ versionId: UNKNOWN, title: 'T', mergeCommit: HEAD, acceptedAt: 1 }] };
+  let shown = 0;
+  const show = (answer) => async () => { shown++; return { response: answer }; };
+  assert.equal(await confirmMergeOn(null, show(1), info), false);
+  assert.equal(await confirmMergeOn(undefined, show(1), info), false);
+  assert.equal(await confirmMergeOn({ isDestroyed: () => true }, show(1), info), false);
+  assert.equal(await confirmMergeOn({ isDestroyed: () => { throw new Error('gone'); } }, show(1), info), false);
+  assert.equal(shown, 0, 'no dialog without a window');
+  const win = { isDestroyed: () => false };
+  let parent = null;
+  assert.equal(await confirmMergeOn(win, async (p, o) => { parent = p; assert.equal(o.defaultId, 0); return { response: 1 }; }, info), true);
+  assert.equal(parent, win, 'the dialog is parented to the window');
+  assert.equal(await confirmMergeOn(win, show(0), info), false);
+  assert.equal(await confirmMergeOn(win, async () => { throw new Error('closed'); }, info), false);
+  // main uses it with the focused or main window and has no other way to show the dialog.
+  const idx = read('src/main/index.ts');
+  assert.equal((idx.match(/confirmMergeOn\(/g) || []).length, 1);
+  assert.doesNotMatch(idx, /confirmMergeWith/);
 });

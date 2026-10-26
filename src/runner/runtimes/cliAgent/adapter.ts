@@ -208,21 +208,27 @@ export class CliAgentAdapter implements AgentRuntime {
    * run (neither needs the network) and `auth status` is not asked.
    */
   async health(opts: { proxyUrl?: string } = {}): Promise<RuntimeHealth> {
-    const pf = await this.preflight(opts.proxyUrl);
-    if (!pf.ok) return { ok: false, reason: pf.reason ?? 'error', detail: pf.detail };
-    const bin = this.binary();
-    if (bin && opts.proxyUrl && (await this.signedIn(bin, opts.proxyUrl)) === 'no') {
-      return { ok: false, reason: 'not_authenticated', detail: 'the agent CLI is not signed in' };
-    }
-    return { ok: true, version: pf.version ?? 'unknown' };
+    return (await this.check(opts)).health;
   }
 
   /** The setup row's facts: signed in or not (one word), flags, label, hosts. */
   async setup(opts: { proxyUrl?: string } = {}): Promise<RuntimeSetup> {
+    return (await this.check(opts)).setup;
+  }
+
+  /**
+   * Health and setup from ONE look at the engine: the version and flag runs (cached per executable) and, with a proxy, ONE
+   * status run whose single word (`yes|no|unknown`) both answers use. The runner's probe asks for this, so a refresh of the
+   * runtime check starts the engine's status command once, never twice.
+   */
+  async check(opts: { proxyUrl?: string } = {}): Promise<{ health: RuntimeHealth; setup: RuntimeSetup }> {
     const pf = await this.preflight(opts.proxyUrl);
     const bin = this.binary();
     const signedIn = pf.ok && bin ? await this.signedIn(bin, opts.proxyUrl) : 'unknown';
-    return { signedIn, flagsOk: pf.ok, label: ADAPTER_LABEL, egressHosts: EGRESS_HOSTS.map((h) => ({ host: h.host, port: h.port })) };
+    const health: RuntimeHealth = !pf.ok ? { ok: false, reason: pf.reason ?? 'error', detail: pf.detail }
+      : signedIn === 'no' ? { ok: false, reason: 'not_authenticated', detail: 'the agent CLI is not signed in' }
+        : { ok: true, version: pf.version ?? 'unknown' };
+    return { health, setup: { signedIn, flagsOk: pf.ok, label: ADAPTER_LABEL, egressHosts: EGRESS_HOSTS.map((h) => ({ host: h.host, port: h.port })) } };
   }
 
   async *start(req: RunRequest, signal: AbortSignal): AsyncIterable<RuntimeEvent> {

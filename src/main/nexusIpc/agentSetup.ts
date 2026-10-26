@@ -6,7 +6,7 @@
  * model id, a credential, a path or a principal. The engine's display name (`label`) is the adapter's own and is shown on the
  * setup row only. A cached health older than its TTL reads as unknown.
  */
-import type { AgentSetupState, AgentSetupView } from '../../shared/nexus/ipc';
+import type { AgentConsentView, AgentSetupState, AgentSetupView } from '../../shared/nexus/ipc';
 import type { NexusPlatform } from '../nexus/platform';
 import { scrubMessage } from './envelope';
 import { UNKNOWN_AGENT } from './dto';
@@ -14,6 +14,22 @@ import { UNKNOWN_AGENT } from './dto';
 const STATE_OF: Record<string, AgentSetupState> = {
   not_installed: 'not_installed', not_authenticated: 'not_signed_in', version_unsupported: 'version_unsupported', error: 'unavailable'
 };
+
+/**
+ * #51's view: the setup row plus the destinations, in the consent row only. The live consent's hosts, else the hosts the fresh
+ * probe entry reported (what a grant would cover); none while the agents are off or nothing was probed. The only place a host
+ * is ever put into a view.
+ */
+export function agentConsentView(nx: NexusPlatform): AgentConsentView {
+  const base = agentSetupView(nx);
+  let hosts: string[] = [];
+  if (nx.agentsAvailable && nx.budget) {
+    const live = nx.budget.live();
+    const probed = nx.agentProbe?.cache.egressHosts() ?? null;
+    hosts = live ? [...live.hosts] : (probed ?? []).map((h) => `${h.host}:${h.port}`);
+  }
+  return { ...base, consent: { ...base.consent, hosts: hosts.map((h) => scrubMessage(h).slice(0, 260)).slice(0, 16) } };
+}
 
 export function agentSetupView(nx: NexusPlatform): AgentSetupView {
   if (!nx.agentsAvailable || !nx.budget) {
