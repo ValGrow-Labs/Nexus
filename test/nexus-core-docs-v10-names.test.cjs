@@ -276,3 +276,36 @@ test('DOC10-13 the proxy records its decisions, a change set is not promotable, 
   assert.match(s59, /O23 and O24 are not defined anywhere/);
   assert.match(s59, /about 91 s/);
 });
+
+test('DOC10-14 the consent disclosure, the new-in-this-release note and the vendor allow-list are quoted as the code has them', () => {
+  const read = (rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8');
+  // The consent disclosure: the doc quotes the committed string, word for word.
+  const model = read('src/renderer/src/nexus/data/executionModel.ts');
+  const m = /export const AGENT_STATE_DISCLOSURE =([\s\S]*?);\n/.exec(model);
+  assert.ok(m, 'AGENT_STATE_DISCLOSURE found');
+  const text = [...m[1].matchAll(/'((?:[^'\\]|\\.)*)'/g)].map((x) => x[1].replace(/\\'/g, "'")).join('');
+  assert.ok(section(54).includes(text), 'section 54 quotes AGENT_STATE_DISCLOSURE exactly');
+  assert.doesNotMatch(text, /sandbox with no other network/, 'the false claim is gone from the code');
+  assert.match(section(54), /that was false and is gone/);
+  // AGENT_NEW_NOTE: the SDE notes carry it, and section 49 quotes it.
+  const note = /const AGENT_NEW_NOTE = '([^']*)'/.exec(read('src/shared/nexus/domains/sde.ts'));
+  assert.ok(note, 'AGENT_NEW_NOTE found');
+  assert.ok(section(49).includes(note[1]), 'section 49 quotes AGENT_NEW_NOTE');
+  // The vendor-neutral allow-list: section 59 item 68 states every entry with its count.
+  const v5 = /const V5_ALLOWED = \{([\s\S]*?)\};/.exec(read('test/nexus-core-vendor-neutral.test.cjs'));
+  assert.ok(v5, 'V5_ALLOWED found');
+  const entries = [...v5[1].matchAll(/'([^']+)':\s*(\d+)/g)].map((x) => [x[1], Number(x[2])]);
+  assert.ok(entries.length >= 8);
+  const item68 = section(59).split('\n').find((l) => l.startsWith('68. '));
+  for (const [file, n] of entries) {
+    const shown = file.startsWith('src/renderer/src/nexus/') ? file.slice('src/renderer/src/nexus/'.length) : file;
+    assert.ok(item68.includes(`\`${shown}\` ${n}`), `item 68 lists ${shown} with ${n}`);
+  }
+  // The final-review behaviours exist in the code the doc describes.
+  assert.match(read('src/main/nexus/exec/acceptIngest.ts'), /repo\.integration_resync/);
+  assert.match(read('src/main/nexus/review/reviewService.ts'), /preview_incomplete/);
+  assert.match(read('src/main/nexus/agents/agentService.ts'), /consent_revoked/);
+  for (const w of ['repo.integration_resync', 'preview_incomplete', 'consent_revoked', 'integration_diverged', 'not_cancellable']) {
+    assert.ok(PART4.includes(w), `Part IV names ${w}`);
+  }
+});
