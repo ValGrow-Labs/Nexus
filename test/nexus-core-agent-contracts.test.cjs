@@ -482,23 +482,24 @@ test('SC5 the registry passes at B2b: SDE steps 5, 7 and 12 are REAL; the other 
   assert.equal(SKILLS.length, 4);
   for (const r of ['repo.worktree', 'changeset.collect', 'changeset.merge_check', 'changeset.accept', 'changeset.accept_rollback', 'repo.ff'])
     assert.ok(sde.recipes.includes(r), r);
-  // Wave-1 review, ruling on finding 1: SDE is executable end to end at B2b by the registry (status alone); as delivered
-  // (the default, DELIVERED_SUB_PHASE = B2a) no domain is, and the SDE notes keep their B2a words until Task 16.
+  // Wave-1 review, ruling on finding 1 (restored by B2b Task 16): SDE is executable end to end at B2b by the registry (status
+  // alone) and, now that the scripted end-to-end flows pass (DELIVERED_SUB_PHASE = B2b), as delivered; the other five never are.
+  // The SDE notes carry their B2b words.
   assert.equal(spec.isExecutableEndToEnd(sde, 'B2b'), true);
   for (const d of DOMAINS.filter((x) => x.id !== 'sde')) assert.equal(spec.isExecutableEndToEnd(d, 'B2b'), false, d.id);
-  for (const d of DOMAINS) assert.equal(spec.isExecutableEndToEnd(d), false, `${d.id} as delivered`);
+  for (const d of DOMAINS) assert.equal(spec.isExecutableEndToEnd(d), d.id === 'sde', `${d.id} as delivered`);
   assert.ok(!/complete/i.test(sde.statusNote));
-  assert.match(sde.statusNote, /AI-assisted implementation, review and iteration arrive in B2b\.$/);
-  assert.equal(step('requirement').scopeNote, 'You write it in Nexus. Agent drafts arrive in B2b.');
+  assert.match(sde.statusNote, /The agent drafts requirements and implements changes in its own worktree; you review, accept and merge them\.$/);
+  assert.equal(step('requirement').scopeNote, 'You write it in Nexus, or the agent drafts it for you to review.');
   // The delivery pin: DELIVERED_SUB_PHASE equals CURRENT_SUB_PHASE exactly when the e2e stub and the pending list are
   // empty, so Task 16 cannot empty the stub without flipping the constant, nor flip it without writing the titles.
   const pendingEmpty = B2B_PENDING.recipes.length === 0 && B2B_PENDING.validators.length === 0;
   assert.equal(spec.DELIVERED_SUB_PHASE === spec.CURRENT_SUB_PHASE, B2B_E2E_STUB.length === 0 && pendingEmpty,
     'DELIVERED_SUB_PHASE reaches CURRENT_SUB_PHASE in the same commit that empties B2B_E2E_STUB and B2B_PENDING');
-  // B2B_IMPL extends B2A_IMPL; the e2e stub records the B2b ids in lifecycle order until Task 16 writes the titles.
+  // B2B_IMPL extends B2A_IMPL; the e2e stub is empty (Task 16 wrote the titles) and B2B_IMPL names the three B2b ids in lifecycle order.
   for (const k of ['recipes', 'validators', 'viewers', 'e2eTests']) for (const id of B2A_IMPL[k]) assert.ok(B2B_IMPL[k].includes(id), `${k}: ${id}`);
-  assert.deepEqual([...B2B_E2E_STUB], ['e2e.sde.ai-implementation', 'e2e.sde.review', 'e2e.sde.iteration']);
-  assert.deepEqual(B2B_IMPL.e2eTests.slice(-3), [...B2B_E2E_STUB]);
+  assert.deepEqual([...B2B_E2E_STUB], []);
+  assert.deepEqual(B2B_IMPL.e2eTests.slice(-3), ['e2e.sde.ai-implementation', 'e2e.sde.review', 'e2e.sde.iteration']);
   assert.ok(B2B_IMPL.viewers.includes('viewer.change_set'));
   for (const r of B2B_PENDING.recipes) assert.ok(B2B_IMPL.recipes.includes(r) && !B2A_IMPL.recipes.includes(r), r);
   for (const v of B2B_PENDING.validators) assert.ok(B2B_IMPL.validators.includes(v) && !B2A_IMPL.validators.includes(v), v);
@@ -614,4 +615,23 @@ test('SC9 the B2b views name no host, model id, token, path, folder, pid, contai
   for (const n of ['repoPath', 'worktreePath', 'egressHosts', 'modelId', 'containerId', 'principalId', 'token', 'configDir', 'pid'])
     assert.match(n, BANNED, `${n} would be refused`);
   for (const n of ['hostsCount', 'inputTokens', 'turnTokens', 'integrationRef']) assert.doesNotMatch(n, BANNED, `${n} is a count or a ref`);
+});
+
+test('B2b Task 16: the sandbox profile of a project\'s code (a Python project\'s change sets are checked with pytest in the python image)', () => {
+  const { profileFromFacts, projectSandboxProfile } = loadTs('src/main/nexus/exec/sandboxProfile.ts');
+  const db = (rows) => ({ prepare: (sql) => ({ get: () => (/FROM projects/.test(sql) ? rows.project : rows.repo) }) });
+  const project = (langs) => ({ metadata_json: JSON.stringify({ detectedLanguages: langs }) });
+  // An input's recorded profile wins; then the project's languages (Python only is python); else node.
+  assert.equal(profileFromFacts(db({ project: project(['JavaScript']) }), 'p', [{ metadata: { profile: 'sde-python' } }]), 'sde-python');
+  assert.equal(profileFromFacts(db({ project: project(['Python']) }), 'p', []), 'sde-python');
+  assert.equal(profileFromFacts(db({ project: project(['python', 'TypeScript']) }), 'p', []), 'sde-node');
+  assert.equal(profileFromFacts(db({ project: project([]) }), 'p', []), 'sde-node');
+  assert.equal(profileFromFacts(db({ project: undefined }), 'p', [{ metadata: { profile: 'not-a-profile' } }]), 'sde-node');
+  // The project's repository (its newest live version's record) is read the same way.
+  assert.equal(projectSandboxProfile(db({ project: project([]), repo: { metadata_json: JSON.stringify({ profile: 'sde-python' }) } }), 'p'), 'sde-python');
+  assert.equal(projectSandboxProfile(db({ project: project(['python']) }), 'p'), 'sde-python');
+  // The change-set check no longer takes the discovery recipe's first profile for every project (source pin).
+  const v = fs.readFileSync(path.join(__dirname, '..', 'src', 'main', 'nexus', 'validation', 'validationService.ts'), 'utf8');
+  assert.match(v, /projectSandboxProfile\(this\.db, s\.projectId\)/);
+  assert.doesNotMatch(v, /\? meta\.profile : recipe\.profiles\[0\];/);
 });

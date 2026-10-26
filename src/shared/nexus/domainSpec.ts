@@ -20,10 +20,12 @@ export const SUB_PHASES: readonly SubPhase[] = ['B1', 'B2a', 'B2b', 'B2c', 'B3',
 /** The sub-phase this build implements: the registry's soundness checks (which steps may be REAL, which actions
  *  are planned) are made against it. It is never a claim to the user that a step runs. */
 export const CURRENT_SUB_PHASE: SubPhase = 'B2b';
-/** The sub-phase this build has proven end to end; Task 16 sets it to CURRENT_SUB_PHASE in the commit that empties
- *  B2B_E2E_STUB. Every user-facing or derived claim (delivered, "In this release", executable end to end, the
- *  summary) reads against it, never against CURRENT_SUB_PHASE. */
-export const DELIVERED_SUB_PHASE: SubPhase = 'B2a';
+/** The sub-phase this build has proven end to end; B2b Task 16 set it to CURRENT_SUB_PHASE in the commit that emptied
+ *  B2B_E2E_STUB, once the scripted end-to-end flows (test/nexus-platform-b2b-flows-*.test.cjs) passed. It claims the
+ *  PLATFORM's wiring from request to merge, proven with ScriptedRuntime; a real model is proven separately (Verification V5).
+ *  Every user-facing or derived claim (delivered, "In this release", executable end to end, the summary) reads against it,
+ *  never against CURRENT_SUB_PHASE. */
+export const DELIVERED_SUB_PHASE: SubPhase = 'B2b';
 
 export function isSubPhase(v: unknown): v is SubPhase {
   return typeof v === 'string' && (SUB_PHASES as readonly string[]).includes(v);

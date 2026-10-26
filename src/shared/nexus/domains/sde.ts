@@ -2,9 +2,9 @@
 // triggered by the user: requirements, repository snapshots, tests, builds,
 // applications, dev deployments on 127.0.0.1 and diagnostics. B2b: AI-assisted
 // implementation, review and iteration (the agent works in a Nexus worktree;
-// the user reviews, accepts into refs/nexus/accepted/<branch> and merges). The B2b steps are REAL for the registry
-// (CURRENT_SUB_PHASE) but not delivered (DELIVERED_SUB_PHASE is B2a), so the statusNote and the step-1 note keep the
-// B2a words until Task 16 proves the flow and restores the B2b ones.
+// the user reviews, accepts into refs/nexus/accepted/<branch> and merges). The B2b steps are REAL and delivered
+// (CURRENT_SUB_PHASE = DELIVERED_SUB_PHASE = B2b: the scripted end-to-end flows prove the platform's wiring; a real model is
+// proven separately), so the statusNote and the step-1 note carry the B2b words.
 
 import type { DomainSpec } from '../domainSpec';
 
@@ -21,7 +21,7 @@ export const SDE: DomainSpec = {
   description: 'Turn a requirement into tested, built and running code, with every claim backed by commits, test reports, build manifests and health checks.',
   tier: 'first-class', hueSlot: 0, icon: 'sde', order: 1,
   participationFromSubPhase: 'B1',
-  statusNote: 'Requirements, repository snapshots, tests, builds, applications, dev deployments and diagnostics run in this release. AI-assisted implementation, review and iteration arrive in B2b.',
+  statusNote: 'Requirements, repository snapshots, tests, builds, applications, dev deployments and diagnostics run in this release. The agent drafts requirements and implements changes in its own worktree; you review, accept and merge them.',
   legacyDomainIds: ['software-engineering', 'web-app-dev', 'mobile-dev', 'game-dev', 'embedded-systems', 'robotics-iot', 'blockchain-web3', 'automation-rpa'],
   vocabulary: {
     requirement: { singular: 'Requirement', plural: 'Requirements' },
@@ -54,7 +54,7 @@ export const SDE: DomainSpec = {
       via: [{ userAction: 'sde.requirement.write' }, { skill: 'nexus-sde-requirement-draft' }],
       doneWhen: { kind: 'requirement', statuses: ['candidate', 'active'], validators: ['req.schema'] },
       status: 'REAL', subPhase: 'B2a', prerequisites: [], e2eTestId: 'e2e.sde.requirement',
-      scopeNote: 'You write it in Nexus. Agent drafts arrive in B2b.' },
+      scopeNote: 'You write it in Nexus, or the agent drafts it for you to review.' },
     { id: 'project', label: 'Project', consumes: [], produces: [],
       via: [{ platform: 'project.import' }, { platform: 'project.attach' }],
       doneWhen: { record: 'participation' },

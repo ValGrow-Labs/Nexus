@@ -183,3 +183,19 @@ test('T10 fix 1: redactText and containsSecret ignore every size cap; redactDeta
   assert.equal(containsSecret({ password: '' }), true);
   assert.equal(containsSecret({ tokensUsed: 5, contentHash: 'a'.repeat(64), path: 'src/a.ts', n: [1, null, true] }), false);
 });
+
+test('B2b Task 16: the collect result\'s hit lists are scanned but not withheld for their names (the runner sent every collect as secret_in_report)', () => {
+  const { containsSecret } = loadTs('src/main/nexus/activity/redact.ts');
+  const facts = { ok: true, changed: true, parent: 'a'.repeat(40), head: 'b'.repeat(40), tree: 'c'.repeat(40), base: 'a'.repeat(40), ref: 'refs/nexus/job/abc',
+    diffstat: { files: 1, insertions: 2, deletions: 0 }, paths: ['src/a.ts'], pathsTruncated: false, scanTruncated: false };
+  // The names say `secret`, and every collect result carries them, even empty: they are not secrets, the lines they point at might be.
+  assert.equal(containsSecret({ ...facts, secretHits: [], entropyHits: [] }), false);
+  assert.equal(containsSecret({ ...facts, secretHits: [{ path: 'src/a.ts', line: 3, rule: 'provider_key' }], entropyHits: [{ path: 'src/b.ts', line: 9, rule: 'high_entropy' }] }), false);
+  // What is inside them is still scanned: a secret-shaped value, or a key that names one, still withholds the result.
+  assert.equal(containsSecret({ ...facts, secretHits: [{ path: 'AKIAABCDEFGHIJKLMNOP', line: 3, rule: 'provider_key' }] }), true);
+  assert.equal(containsSecret({ ...facts, secretHits: [{ path: 'src/a.ts', line: 3, token: 'x' }] }), true);
+  // Only a list qualifies: the same name holding a string (a value that could carry anything) is still a secret-named key; and so is any other name.
+  assert.equal(containsSecret({ ...facts, secretHits: 'src/a.ts:3' }), true);
+  assert.equal(containsSecret({ ...facts, secretStuff: [] }), true);
+  assert.equal(containsSecret({ ...facts, nested: { secret: [] } }), true);
+});

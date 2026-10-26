@@ -59,12 +59,14 @@ export const B2A_IMPL: RegistryImpl = deepFreeze({
 });
 
 /**
- * The end-to-end ids of the SDE steps B2b makes REAL, in lifecycle order (implementation, review, iteration). A stub:
- * B2b Task 16 writes them as test titles (test/nexus-platform-b2b-flows-*.test.cjs, and the real-Docker
- * test/nexus-exec-agent.test.cjs for the Docker-dependent ones); until then the registry test exempts exactly these
- * from its title check, and Task 16 empties this list.
+ * The end-to-end ids of the SDE steps B2b makes REAL, in lifecycle order (implementation, review, iteration). They are test
+ * titles now: the scripted flows (test/nexus-platform-b2b-flows-node.test.cjs and -python.test.cjs, through the whole agent
+ * stack with ScriptedRuntime) and the gated real-Docker agent suite (test/nexus-exec-agent.test.cjs, which prints NOT RUN
+ * without Docker and the disk gate). B2b Task 16 wrote them and emptied the stub, in the commit that set DELIVERED_SUB_PHASE.
  */
-export const B2B_E2E_STUB: readonly string[] = deepFreeze(['e2e.sde.ai-implementation', 'e2e.sde.review', 'e2e.sde.iteration']);
+export const B2B_E2E_TESTS: readonly string[] = deepFreeze(['e2e.sde.ai-implementation', 'e2e.sde.review', 'e2e.sde.iteration']);
+/** The ids still without a title: none (kept as the name the delivery pin reads; the registry test exempts exactly these). */
+export const B2B_E2E_STUB: readonly string[] = deepFreeze([]);
 
 /**
  * What B2b implements: B2a plus the six engine git recipes, the six change-set validators and the change-set viewer.
@@ -77,7 +79,7 @@ export const B2B_IMPL: RegistryImpl = deepFreeze({
   validators: [...B2A_IMPL.validators, 'git.diff_nonempty', 'git.paths_in_scope', 'sec.secret_scan', 'sec.entropy_notes',
     'cs.tests_pass', 'git.applies_cleanly'],
   viewers: [...B2A_IMPL.viewers, 'viewer.change_set'],
-  e2eTests: [...(B2A_IMPL.e2eTests ?? []), ...B2B_E2E_STUB]
+  e2eTests: [...(B2A_IMPL.e2eTests ?? []), ...B2B_E2E_TESTS]
 });
 
 /**

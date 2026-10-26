@@ -248,6 +248,18 @@ test('MG10 requirement_draft runs req.schema then finalizes to candidate', async
   const v = w.nx.artifacts.getVersion(w.me, result.value.versionId);
   assert.equal(v.status, 'candidate');
   assert.deepEqual(v.storage.json, { title: 'A new requirement', body: 'details', criteria: [{ id: 'c1', text: 'acceptance' }] });
+  // B2b Task 16 (constraint 13): the draft names the turn and the session that made it, so "which versions did this turn register"
+  // is one join for a requirement draft as it is for a change set.
+  assert.deepEqual([v.producedByJobId, v.producedBySessionId], [t.job.id, t.session.id]);
+  // The producer is main's to give: only an agent turn of the same project, requested by the saving user, can be named.
+  const draft = { projectId: 'p-ledger', workspaceId: 'sde', kind: 'requirement', content: { title: 'Another', criteria: [{ id: 'c1', text: 'x' }] }, target: { name: 'Another' } };
+  const refuse = (producedBy) => assert.throws(() => w.nx.artifacts.saveInline(w.me, { ...draft, producedBy }), (e) => e.code === 'invalid' && e.detail.reason === 'bad_producer');
+  refuse({ jobId: 'no-such-job', sessionId: null });
+  refuse('the-turn');
+  refuse({ jobId: 7, sessionId: null });
+  assert.equal(w.db.prepare("SELECT COUNT(*) AS n FROM artifacts WHERE name = 'Another'").get().n, 0, 'a refused producer wrote nothing');
+  const named = w.nx.artifacts.saveInline(w.me, { ...draft, producedBy: { jobId: t.job.id, sessionId: t.session.id } });
+  assert.deepEqual([named.version.producedByJobId, named.version.producedBySessionId], [t.job.id, t.session.id]);
 
   // req.schema refuses bad content before anything is written.
   const bad = await mcpCall(w, t, 'requirement_draft', { title: '', criteria: [], clientKey: 'rd2' });

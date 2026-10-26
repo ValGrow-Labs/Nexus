@@ -49,6 +49,7 @@ import { validateKey, type JobService } from '../jobs/jobService';
 import { appendActivityRow } from '../activity/writer';
 import { ProjectAccess } from '../project/projectAccess';
 import { appendJobEventTx } from '../exec/events';
+import { projectSandboxProfile } from '../exec/sandboxProfile';
 import { errored, type ValidatorOutcome } from './normalized';
 import { checkEvidence, secretCheckView } from './evidenceShape';
 import { CheckRunner, type ResolveCommit, type VersionFacts } from './checkRunner';
@@ -471,7 +472,10 @@ export class ValidationService {
     const recipe = getRecipe('sde.test.discover');
     if (!s || !recipe) return this.checkNotQueued(v, csTestsPass.ID, 'no session or recipe');
     const meta = parse(v.metadata_json);
-    const profile = isObj(meta) && typeof meta.profile === 'string' && recipe.profiles.includes(meta.profile as never) ? meta.profile : recipe.profiles[0];
+    // The profile the project's code runs in (the change set's own record, else the repository's, else the project's languages): a
+    // Python project's change set is discovered with pytest in the python image, never with node's glob in the node image.
+    const wanted = isObj(meta) && typeof meta.profile === 'string' ? meta.profile : projectSandboxProfile(this.db, s.projectId);
+    const profile = recipe.profiles.includes(wanted as never) ? wanted : recipe.profiles[0];
     // A live check of this change set is the answer; a settled one (it errored, or its runner failed) is re-run under a
     // fresh key (revalidate), exactly as the generic branch bounds and re-queues its checks.
     const live = this.liveChangeSetCheck('cs.tests_pass:' + v.id + ':discover%');

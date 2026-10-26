@@ -25,6 +25,9 @@ const crypto = require('node:crypto');
 const cp = require('node:child_process');
 
 const argv = process.argv.slice(2);
+// Run with no argument at all, it has nothing to stand in for: the adapter always passes its pinned argv, so a bare start is not a turn. A
+// plain `node --test test/` collects every file under test/ as a test file and would otherwise wait on this one for ever (B2b Task 16).
+if (argv.length === 0 && process.env.FAKE_CLI_QUICK === undefined) { process.exit(0); }
 const flag = (n) => argv.includes(n);
 const value = (n) => { const a = argv.find((x) => x.startsWith(`${n}=`)); return a ? a.slice(n.length + 1) : null; };
 const done = () => process.stdout.write('', () => process.exit(0));

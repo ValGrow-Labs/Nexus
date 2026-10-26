@@ -24,13 +24,15 @@ const { WORKSPACES } = loadTs('src/renderer/src/nexus/workspaces/registry.ts');
 // is part of a test TITLE in one of these files (the fake-driver recipes file runs under test:db; the real-Docker one
 // behind the test:exec gate). Task 13 added test/nexus-platform-b2a-flows.test.cjs (the flows through the IPC handlers).
 // B2b Task 1 (the registry flip): the build is B2b and the registry is checked against B2B_IMPL. The e2e ids of the three
-// steps B2b makes REAL are a stub (B2B_E2E_STUB) until B2b Task 16 writes them as titles: exactly those are exempt from
-// the title checks below, and a pin records them in lifecycle order.
+// steps B2b makes REAL were a stub (B2B_E2E_STUB) until B2b Task 16 wrote them as titles; it did, in the scripted flows
+// (test/nexus-platform-b2b-flows-node.test.cjs and -python.test.cjs, run by test:db) and in the gated real-Docker agent suite
+// (test/nexus-exec-agent.test.cjs, behind the test:exec gate). The stub is empty and the title checks below cover every REAL step.
 const E2E_ENFORCED = true;
 const E2E_PENDING = new Set(B2B_E2E_STUB);
-const E2E_FILES = ['test/nexus-platform-exec-recipes.test.cjs', 'test/nexus-exec-recipes.test.cjs', 'test/nexus-platform-b2a-flows.test.cjs'];
-/** The real-Docker recipes file (test:exec gate): a Docker-dependent step's e2e id must be a title there too (fix round 1). */
-const REAL_DOCKER_E2E_FILE = 'test/nexus-exec-recipes.test.cjs';
+const E2E_FILES = ['test/nexus-platform-exec-recipes.test.cjs', 'test/nexus-exec-recipes.test.cjs', 'test/nexus-platform-b2a-flows.test.cjs',
+  'test/nexus-platform-b2b-flows-node.test.cjs', 'test/nexus-platform-b2b-flows-python.test.cjs', 'test/nexus-exec-agent.test.cjs'];
+/** The real-Docker files (test:exec gate): a Docker-dependent step's e2e id must be a title in one of them too (fix round 1; B2b Task 16 added the agent suite). */
+const REAL_DOCKER_E2E_FILES = ['test/nexus-exec-recipes.test.cjs', 'test/nexus-exec-agent.test.cjs'];
 
 /** A deep, mutable copy of the registry for negative fixtures. */
 const clone = () => JSON.parse(JSON.stringify(DOMAINS));
@@ -87,11 +89,12 @@ test('DR2 checkRegistry(DOMAINS, B2B_IMPL) is clean; every REAL step names a wel
     const titles = [...text.matchAll(/\btest\(\s*(['"`])((?:(?!\1).)*)\1/g)].map((m) => m[2]);
     for (const id of titled) assert.ok(titles.some((t) => t.split(/\s+/).includes(id)), `${id} is part of a test title`);
     assert.deepEqual([...B2B_IMPL.e2eTests].sort(), [...all].sort(), 'B2B_IMPL.e2eTests lists exactly the REAL steps\' e2e ids');
-    // The B2b stub (pin): exactly the three B2b steps, in lifecycle order, none of them a title yet. Task 16 writes the
-    // titles and removes each from B2B_E2E_STUB; a stub id that became a title must leave the stub.
-    assert.deepEqual([...E2E_PENDING], ['e2e.sde.ai-implementation', 'e2e.sde.review', 'e2e.sde.iteration']);
-    assert.deepEqual(all.filter((id) => E2E_PENDING.has(id)), [...E2E_PENDING], 'the stub ids are REAL steps\' ids, in lifecycle order');
-    for (const id of E2E_PENDING) assert.ok(!titles.some((t) => t.split(/\s+/).includes(id)), `${id} is a title now: remove it from B2B_E2E_STUB`);
+    // The B2b stub (pin): empty since B2b Task 16 wrote the three B2b steps' titles (in lifecycle order below); a stub id that is
+    // a title must not be in the stub, and nothing is exempt from the title checks.
+    assert.deepEqual([...E2E_PENDING], [], 'the e2e stub is empty');
+    assert.deepEqual(['e2e.sde.ai-implementation', 'e2e.sde.review', 'e2e.sde.iteration'].filter((id) => !titles.some((t) => t.split(/\s+/).includes(id))), [],
+      'the three B2b steps are titles');
+    assert.deepEqual(B2B_IMPL.e2eTests.slice(-3), ['e2e.sde.ai-implementation', 'e2e.sde.review', 'e2e.sde.iteration'], 'in lifecycle order');
     // Fix round 1, item 12: a step whose proof needs Docker (its prerequisites name docker or an image) must ALSO be a
     // test title in the real-Docker file; the fake-driver titles alone never satisfy it.
     const dockerSteps = real.filter(({ s }) => (s.prerequisites ?? []).some((p) => p === 'docker' || String(p).startsWith('image:')));
@@ -102,13 +105,16 @@ test('DR2 checkRegistry(DOMAINS, B2B_IMPL) is clean; every REAL step names a wel
       const t = [...fileText.matchAll(/\btest\(\s*(['"`])((?:(?!\1).)*)\1/g)].map((m) => m[2]);
       return dockerSteps.map(({ s }) => s.e2eTestId).filter((id) => !t.some((x) => x.split(/\s+/).includes(id)));
     };
-    const realDocker = fs.readFileSync(path.join(ROOT, REAL_DOCKER_E2E_FILE), 'utf8');
-    // Every Docker-dependent e2e id is a title in the real-Docker recipes file, except the two B2b stub ids (Task 16
-    // writes them in its real-Docker agent suite).
-    assert.deepEqual(missingFrom(realDocker), ['e2e.sde.ai-implementation', 'e2e.sde.iteration'],
-      'every Docker-dependent e2e id outside the B2b stub is a title in the real-Docker recipes file');
-    // Not vacuous: the real file without its build title fails it, whatever the fake-driver file's titles say.
-    assert.deepEqual(missingFrom(realDocker.replace('X5 e2e.sde.build ', 'X5 ')), ['e2e.sde.ai-implementation', 'e2e.sde.build', 'e2e.sde.iteration']);
+    const realDockerTexts = REAL_DOCKER_E2E_FILES.map((f) => fs.readFileSync(path.join(ROOT, f), 'utf8'));
+    const realDocker = realDockerTexts.join('\n');
+    // Every Docker-dependent e2e id is a title in a real-Docker file: the recipes file (B2a's steps) or the agent suite (the two
+    // agent steps, B2b Task 16).
+    assert.deepEqual(missingFrom(realDocker), [], 'every Docker-dependent e2e id is a title in a real-Docker file');
+    assert.deepEqual(missingFrom(realDockerTexts[1]).sort(), ['e2e.sde.application', 'e2e.sde.build', 'e2e.sde.dev-deployment', 'e2e.sde.diagnostics', 'e2e.sde.tests'],
+      'the agent suite proves the two agent steps and none of B2a\'s');
+    // Not vacuous: the real files without a title fail it, whatever the fake-driver files' titles say.
+    assert.deepEqual(missingFrom(realDocker.replace('X5 e2e.sde.build ', 'X5 ')), ['e2e.sde.build']);
+    assert.deepEqual(missingFrom(realDocker.replace('XA1 e2e.sde.ai-implementation ', 'XA1 ').replace('XA6 e2e.sde.iteration ', 'XA6 ')), ['e2e.sde.ai-implementation', 'e2e.sde.iteration']);
   }
   // A REAL step whose implementation is not registered fails.
   const noRecipe = { ...B2B_IMPL, recipes: B2B_IMPL.recipes.filter((r) => r !== 'sde.build.node') };
@@ -145,10 +151,11 @@ test('DR3 a step is REAL only at or after its sub-phase; SDE matches the B2b sta
     for (const s of d.lifecycle.filter((x) => x.status === 'FUTURE'))
       assert.ok(!spec.isAtOrBefore(s.subPhase, 'B2b'), `${id}/${s.id} FUTURE names a later sub-phase`);
   }
-  // Wave-1 review, ruling on finding 1 (restored): as delivered (the default, DELIVERED_SUB_PHASE = B2a) no domain is
-  // executable end to end. At the registry's sub-phase (B2b) only SDE is, by step status alone, never the other five.
-  assert.equal(spec.DELIVERED_SUB_PHASE, 'B2a');
-  for (const d of DOMAINS) assert.equal(spec.isExecutableEndToEnd(d), false, `${d.id} as delivered`);
+  // Wave-1 review, ruling on finding 1 (restored by B2b Task 16): the build has now proven the B2b flow end to end with
+  // ScriptedRuntime (DELIVERED_SUB_PHASE = B2b), so as delivered, as at the registry's sub-phase (B2b), only SDE is executable
+  // end to end, never the other five. At B2a (what B2a delivered) none was.
+  assert.equal(spec.DELIVERED_SUB_PHASE, 'B2b');
+  for (const d of DOMAINS) assert.equal(spec.isExecutableEndToEnd(d), d.id === 'sde', `${d.id} as delivered`);
   for (const d of DOMAINS) assert.equal(spec.isExecutableEndToEnd(d, 'B2a'), false, `${d.id} at B2a`);
   for (const d of DOMAINS) assert.equal(spec.isExecutableEndToEnd(d, 'B2b'), d.id === 'sde', `${d.id} at B2b (the registry-level fact)`);
   // Negative fixture: a step of a later sub-phase (B2c) marked REAL fails.

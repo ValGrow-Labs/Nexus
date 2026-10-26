@@ -372,4 +372,4 @@ async function fakeWorld() {
   return w;
 }
 
-module.exports = { fakeWorld, openPlatform, addCommon, fixtureRepo, fixtureText, globFiles, FakeClock, bridge, LOCK, ROOT, FIXTURES, WORLDS };
+module.exports = { fakeWorld, openPlatform, addCommon, fixtureRepo, fixtureText, globFiles, FakeClock, bridge, trackRealIo, LOCK, ROOT, FIXTURES, WORLDS };

@@ -97,7 +97,8 @@
  */
 import type Database from 'better-sqlite3';
 import type { AgentPlan, ImageStatus, SandboxProfile, SandboxProfileId, StagedOutput, ParsedOutput, ExitInfo, ResourceLimits } from '../../../shared/nexus/execution';
-import { DIAGNOSE_MAX_RANGES, SANDBOX_PROFILE_IDS } from '../../../shared/nexus/execution';
+import { DIAGNOSE_MAX_RANGES } from '../../../shared/nexus/execution';
+import { profileFromFacts } from './sandboxProfile';
 import type { RuntimeEvent } from '../../../shared/nexus/runtime';
 import type { Job, JobKind, JobState, Principal, ScopeRef } from '../../../shared/nexus/platform';
 import { getUserAction, USER_ACTIONS, type UserActionDef } from '../../../shared/nexus/actions';
@@ -2687,15 +2688,7 @@ export class ExecutionService {
 
   /** The sandbox profile for this project's repository: an input's recorded profile, else the project's languages, else node. */
   private profileFor(projectId: string, facts: { kind: string; metadata: unknown }[]): SandboxProfileId {
-    for (const f of facts) {
-      const m = isPlainObject(f.metadata) ? f.metadata.profile : undefined;
-      if (typeof m === 'string' && (SANDBOX_PROFILE_IDS as readonly string[]).includes(m)) return m as SandboxProfileId;
-    }
-    const row = this.db.prepare('SELECT metadata_json FROM projects WHERE id = ?').get(projectId) as { metadata_json: string | null } | undefined;
-    const meta = parseJson(row?.metadata_json ?? null);
-    const langs = isPlainObject(meta) && Array.isArray(meta.detectedLanguages) ? meta.detectedLanguages.map((x) => String(x).toLowerCase()) : [];
-    if (langs.includes('python') && !langs.some((l) => l === 'javascript' || l === 'typescript')) return 'sde-python';
-    return 'sde-node';
+    return profileFromFacts(this.db, projectId, facts);
   }
 
   /**

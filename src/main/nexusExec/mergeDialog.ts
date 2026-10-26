@@ -28,7 +28,9 @@ function line(s: unknown, max: number): string {
 const short = (sha: unknown): string => (typeof sha === 'string' && /^[0-9a-f]{40}$/.test(sha) ? sha.slice(0, 8) : '?');
 
 export function mergeDialogOptions(info: MergeConfirmInfo): MergeDialogOptions {
-  const count = Number.isSafeInteger(info.commitCount) && info.commitCount >= 0 ? info.commitCount : info.accepted.length;
+  // "N accepted changes" counts the CHANGES listed below it (one accepted change set is one change however many commits it adds to the
+  // integration ref: its own and the accept commit). `commitCount` only stands in when no change is listed.
+  const count = info.accepted.length > 0 ? info.accepted.length : Number.isSafeInteger(info.commitCount) && info.commitCount >= 0 ? info.commitCount : 0;
   const branch = line(info.branch, 80);
   const listed = info.accepted.slice(0, MAX_LISTED).map((a) => `• ${line(a.title, MAX_TITLE) || 'Agent change'} (${short(a.mergeCommit)})`);
   const more = info.accepted.length > MAX_LISTED ? [`… and ${info.accepted.length - MAX_LISTED} more`] : [];

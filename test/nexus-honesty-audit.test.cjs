@@ -107,10 +107,11 @@ const RECORDS = [null, { versions: [], liveActions: [], participation: true, dep
 
 test('HA1 no domain is ever called complete; FUTURE steps never carry a state', () => {
   for (const v of L.bundledDomainViews()) {
-    // Wave-1 review, ruling on finding 1 (a restoration, not a weakening): the view reads the delivered sub-phase (B2a),
-    // so no domain is executable end to end until Task 16 proves the B2b flow and sets DELIVERED_SUB_PHASE.
-    assert.equal(v.currentSubPhase, 'B2a', `${v.id}: the view carries the delivered sub-phase`);
-    assert.equal(v.executableEndToEnd, false, `${v.id} is not executable end to end as delivered (B2a)`);
+    // Wave-1 review, ruling on finding 1 (a restoration, not a weakening): the view reads the delivered sub-phase, so a domain is
+    // executable end to end only when the build has proven its flow. B2b Task 16 proved the SDE flow (scripted end to end, node and
+    // python fixtures) and set DELIVERED_SUB_PHASE = B2b: SDE is, the other five are not.
+    assert.equal(v.currentSubPhase, 'B2b', `${v.id}: the view carries the delivered sub-phase`);
+    assert.equal(v.executableEndToEnd, v.id === 'sde', `${v.id} is executable end to end as delivered (B2b) only if it is SDE`);
     for (const records of RECORDS) {
       const r = L.railFor(v, records);
       for (const t of railTexts(r)) assert.doesNotMatch(t, /\bcomplete(d)?\b|finished|end to end/i, `${v.id}: ${t}`);

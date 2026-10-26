@@ -376,7 +376,9 @@ export class McpGateway {
     const content: Record<string, unknown> = { title: args.title, criteria: args.criteria };
     if (typeof args.body === 'string') content.body = args.body;
     const { version, created } = this.deps.artifacts.saveInline(asUser(claims), {
-      projectId: claims.projectId, workspaceId: claims.workspaceId, kind: 'requirement', target: { name: args.title as string }, content
+      projectId: claims.projectId, workspaceId: claims.workspaceId, kind: 'requirement', target: { name: args.title as string }, content,
+      // Recorded as the turn's own work: the version names the turn and its session as its producer.
+      producedBy: { jobId: claims.jobId, sessionId: claims.sessionId }
     });
     const finalized = created && version.status === 'draft'
       ? this.deps.artifacts.finalize(this.deps.system, version.id, 'candidate') : version;

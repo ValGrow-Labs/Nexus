@@ -30,6 +30,13 @@ const SECRET_KEY = new RegExp([
 /** Known non-secret integrity hash fields (controller ruling, Task 5). */
 const HASH_KEYS: ReadonlySet<string> = new Set(['backupSha256', 'sha256', 'contentHash', 'content_hash', 'stdoutSha256', 'argvSha256']);
 const HEX_DIGEST = /^(?:git:)?[0-9a-f]{40,128}$/i;
+/**
+ * The collect result's hit lists (B2b Task 16): `{ path, line, rule }` entries that name WHERE a secret-shaped line was found,
+ * never its text. The key names say `secret` by design, so a result that always carries them (even empty) was withheld whole by
+ * the runner's own scrub and every change-set collect failed `secret_in_report`. An array under exactly these keys is scanned
+ * (every key and string inside it still counts); only the name of the list itself is not taken for a secret.
+ */
+const HIT_LIST_KEYS: ReadonlySet<string> = new Set(['secretHits', 'entropyHits']);
 /** Exact keys whose NUMERIC values are token usage counts (never a credential). */
 const TOKEN_COUNT_KEYS: ReadonlySet<string> = new Set([
   'tokensUsed', 'inputTokens', 'outputTokens', 'totalTokens', 'maxTokens',
@@ -174,6 +181,7 @@ export function containsSecret(v: unknown): boolean {
       const raw = (x as Record<string, unknown>)[key];
       if (TOKEN_COUNT_KEYS.has(key) && typeof raw === 'number') continue;
       if (HASH_KEYS.has(key) && typeof raw === 'string' && HEX_DIGEST.test(raw)) continue;
+      if (HIT_LIST_KEYS.has(key) && Array.isArray(raw)) { stack.push(raw); continue; }
       if (hasLongToken(key) || SECRET_KEY.test(key) || redactText(key) !== key) return true;
       stack.push(raw);
     }

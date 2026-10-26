@@ -126,7 +126,7 @@ test('P5 environment: a NEXUS_DB_HOLD_* variable or a temp data home inside the 
 test('P6 a passing preflight runs every nexus-exec-* file under the test:db rules: PASS n/n exit 0, FAIL exit 1 (skip, todo, 0 tests, banner, timeout)', async () => {
   const files = runner.listFiles();
   assert.deepEqual(files.map((f) => path.basename(f)),
-    ['nexus-exec-lifecycle.test.cjs', 'nexus-exec-recipes.test.cjs', 'nexus-exec-recovery.test.cjs', 'nexus-exec-sandbox.test.cjs']);
+    ['nexus-exec-agent.test.cjs', 'nexus-exec-lifecycle.test.cjs', 'nexus-exec-recipes.test.cjs', 'nexus-exec-recovery.test.cjs', 'nexus-exec-sandbox.test.cjs']);
   const ok = await run(probes(), { files });
   assert.equal(ok.code, 0);
   assert.deepEqual(ok.spawned, files, 'every file ran, in order');
