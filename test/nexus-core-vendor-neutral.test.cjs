@@ -93,3 +93,39 @@ test('V4 the runner protocol accepts any well-formed runtime kind and favours no
   const values = JSON.stringify(Object.values(execution));
   assert.equal(VENDOR.test(values), false, 'no engine name in a profile, parser or output code');
 });
+
+/**
+ * V5 (B2b final review I7): the engine's name stays at the engine boundary. Every Nexus file of main, the runner, the IPC layer, the
+ * execution wiring and the renderer is scanned (code and comments); the ONLY hits allowed are listed here, each with its exact
+ * count, so any NEW engine word anywhere fails this test (and a removed one asks for the entry to be removed).
+ * Not scanned: src/runner/runtimes/cliAgent/** (the one adapter that names the engine), which is the boundary itself.
+ */
+const V5_DIRS = ['src/main/nexus', 'src/main/nexusIpc', 'src/main/nexusExec', 'src/runner', 'src/renderer/src/nexus', 'src/shared/nexus'];
+const V5_SKIP = (rel) => rel.startsWith('src/runner/runtimes/cliAgent/') || rel === 'src/shared/nexus/runtime.ts';
+/** file -> exact number of lines that carry an engine word. */
+const V5_ALLOWED = {
+  // A comment in the database layout naming the example runtime kind of two columns (the value itself is free text).
+  'src/main/nexus/db/schemaV7.ts': 2,
+  // The agent CLI's own per-worktree settings folder is never part of a change: its folder name is the only way to exclude it.
+  'src/main/nexus/validation/validators/pathsInScope.ts': 3,
+  'src/runner/gitWrite.ts': 2,
+  // The legacy lead-agent workbench (Agents page) and its assistant port: their subject is the provider choice of the old app.
+  'src/renderer/src/nexus/agents/agentList.ts': 1,
+  'src/renderer/src/nexus/agents/workbench/TeamSection.tsx': 4,
+  'src/renderer/src/nexus/agents/workbench/useFleetRoster.ts': 2,
+  'src/renderer/src/nexus/agents/workbench/useRestartAgent.ts': 2,
+  'src/renderer/src/nexus/assistant/port.ts': 1
+};
+const v5Files = () => V5_DIRS.flatMap((d) => (fs.existsSync(path.join(ROOT, d)) ? walkShared(d, /\.(ts|tsx|cjs|js|mjs|json|md)$/) : [])).filter((rel) => !V5_SKIP(rel));
+
+test('V5 no engine name outside the cliAgent adapter except an explicit, exact allow-list (main, runner, IPC, renderer, shared)', () => {
+  const files = v5Files();
+  assert.ok(files.length > 300, `the walk sees the Nexus code (${files.length})`);
+  const found = {};
+  for (const rel of files) { const n = hits(read(rel)).length; if (n > 0) found[rel] = n; }
+  assert.deepEqual(found, V5_ALLOWED);
+  // The boundary exists and is where the engine is named.
+  assert.ok(fs.existsSync(path.join(ROOT, 'src/runner/runtimes/cliAgent')), 'the adapter folder');
+  // The allow-listed shared hits are none: shared contracts stay vendor-neutral (V1), so no allow-list entry may name src/shared.
+  assert.ok(Object.keys(V5_ALLOWED).every((rel) => !rel.startsWith('src/shared/')));
+});

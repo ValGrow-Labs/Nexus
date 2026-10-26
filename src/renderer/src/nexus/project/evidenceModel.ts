@@ -52,7 +52,7 @@ const VALIDATOR_LABEL: Readonly<Record<string, string>> = Object.freeze({
   // B2b: a change made by the agent. The tests of a change are named as the change's own, and no label says "passed".
   'git.diff_nonempty': 'The change contains file changes',
   'git.paths_in_scope': 'Every changed file is inside the allowed folders',
-  'sec.secret_scan': 'The change holds no key or secret',
+  'sec.secret_scan': 'Scan of the change for known key and private-key patterns',
   'sec.entropy_notes': 'Long random-looking strings (advice only)',
   'cs.tests_pass': 'The change’s own tests',
   'git.applies_cleanly': 'The change merges onto the accepted work'

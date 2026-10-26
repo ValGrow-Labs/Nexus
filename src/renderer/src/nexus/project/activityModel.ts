@@ -53,7 +53,9 @@ export const ACTIVITY_ACTIONS: readonly string[] = Object.freeze([
   // B2b Task 5 (sentences added in Task 9's fix round): an agent tool call, and context left out of a turn for looking like a secret.
   'mcp.call', 'context_redacted',
   // B2b Task 5: the gateway's one refusal row for a turn permission that did not cover a call (words, never the call).
-  'auth.denied'
+  'auth.denied',
+  // B2b B6: the integration ref was moved forward to the user's own commits (commit ids only in its details).
+  'repo.integration_resync'
 ]);
 
 /** Plain words for an action a person may be refused (every platform action). */
@@ -116,6 +118,7 @@ const ACTION_WORDS: Record<string, string> = {
   'repo.worktree': "prepare the agent's working copy",
   'changeset.rollback': 'undo an accept that did not finish',
   'mcp.call': 'use a tool',
+  'repo.integration_resync': 'bring the accepted branch up to your latest commits',
   'context_redacted': "leave part of the agent's context out",
   'agent.consent': "change the agent's network permission",
   'token.mint': "issue the agent's turn permission",
@@ -320,6 +323,7 @@ function sentence(row: ActivityView, ctx: ActivityContext): string | null {
       const reason = detail(row, 'reason');
       if (reason === 'egress.deps') return 'Approval asked: network access for one dependency install';
       if (reason === 'image.prepare') return 'Approval asked: prepare a sandbox image';
+      if (reason === 'repo.write_refs') return 'Approval asked: let Nexus write hidden refs in this repository';
       return 'Approval asked';
     }
     case 'approval.respond': {
@@ -329,6 +333,7 @@ function sentence(row: ActivityView, ctx: ActivityContext): string | null {
       if (decision === 'once') {
         if (reason === 'egress.deps') return 'Network access approved once, for one dependency install';
         if (reason === 'image.prepare') return 'Sandbox image preparation approved once';
+        if (reason === 'repo.write_refs') return 'Nexus was allowed to write hidden refs in this repository';
         return 'Approved once';
       }
       return 'Approval answered';
@@ -382,6 +387,7 @@ function sentence(row: ActivityView, ctx: ActivityContext): string | null {
       return 'A review was recorded';
     }
     case 'mcp.call': return 'The agent used a tool';
+    case 'repo.integration_resync': return 'The accepted branch was brought up to your latest commits, so new work starts from your latest code';
     case 'context_redacted': return "Part of the agent's context was left out because it looked like a secret";
     case 'changeset.accept': return 'The change was accepted; it waits on the Nexus branch until you merge it';
     case 'changeset.rollback': return 'An accept that did not finish was undone; the Nexus branch is back as it was';

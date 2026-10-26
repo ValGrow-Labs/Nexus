@@ -6,7 +6,7 @@ import { usePlatform } from '../data/platformStore';
 import { useExecutionUi } from '../project/execContext';
 import { Button } from '../ui/Button';
 import { SessionLog } from './SessionLog';
-import { agentFailText, agentPanelModel, startArgs } from './agentModel';
+import { agentFailText, agentPanelModel, messageKey, startArgs } from './agentModel';
 
 /** The agent in the bench: where it stands (set up, working, waiting for you), a message box when it can take one, and the
  *  project's conversations with their logs. A prerequisite that is not met is a sentence with the way forward, never a dead button. */
@@ -31,7 +31,8 @@ export function AgentPanel({ projectId, workspaceId }: { projectId: string; work
   const refresh = () => { usePlatform.getState().bumpRev(); useExecStore.getState().bump(['jobs']); sessions.reload(); };
   const send = async () => {
     if (busy) return;
-    const key = `agent:start:${projectId}:${chosen}:${message.length}:${message.slice(0, 64)}`;
+    // The pending-intent key holds a hash of the message, never the message itself.
+    const key = `agent:start:${projectId}:${chosen}:${messageKey(message)}`;
     const built = startArgs({ projectId, workspaceId, sessionId: chosen === 'new' ? null : chosen, message, intentId: 'pending' });
     if ('problem' in built) { setNote({ text: built.problem, alert: true }); return; }
     setBusy('send'); setNote(null);
@@ -56,7 +57,7 @@ export function AgentPanel({ projectId, workspaceId }: { projectId: string; work
       <div className="nx-ag__head">
         <h2 id={ids.body} className="nx-xq__title">Agent</h2>
         <span className="nx-ag__status" role="status">{status}</span>
-        <Button variant="quiet" onClick={() => setOpen((o) => !o)} ariaLabel={open ? 'Hide the agent panel' : 'Show the agent panel'}>{open ? 'Hide' : 'Show'}</Button>
+        <Button variant="quiet" onClick={() => setOpen((o) => !o)} ariaLabel={open ? 'Hide the agent panel' : 'Show the agent panel'} ariaExpanded={open}>{open ? 'Hide' : 'Show'}</Button>
       </div>
       {open && (
         <div className="nx-ag__body">
@@ -87,6 +88,8 @@ export function AgentPanel({ projectId, workspaceId }: { projectId: string; work
               </div>
             </form>
           )}
+          {panel.note && <p className="nx-muted" role="status">{panel.note}</p>}
+          {panel.readError && <p className="nx-muted" role="status">The conversations could not be read. {panel.readError} <Button variant="quiet" onClick={sessions.reload}>Try again</Button></p>}
           {panel.usageToday && <p className="nx-muted">{panel.usageToday}</p>}
           {note && <p className={note.alert ? 'nx-passport__note' : 'nx-muted'} role={note.alert ? 'alert' : 'status'}>{note.text}</p>}
           {panel.sessions.length > 0 && (
@@ -96,7 +99,7 @@ export function AgentPanel({ projectId, workspaceId }: { projectId: string; work
                   <p className="nx-ag__row">
                     <span className="nx-xq__word">{s.word}</span> <span className="nx-muted">{s.turns}</span>
                     {s.turn && <span>{s.turn}</span>}
-                    <Button variant="quiet" onClick={() => setLogOf(logOf === s.id ? null : s.id)}>{logOf === s.id ? 'Hide log' : 'Show log'}</Button>
+                    <Button variant="quiet" ariaExpanded={logOf === s.id} onClick={() => setLogOf(logOf === s.id ? null : s.id)}>{logOf === s.id ? 'Hide log' : 'Show log'}</Button>
                     {s.canStop && <Button variant="quiet" disabled={busy !== null} onClick={() => { void stop(s.id, 'cancel'); }}>Stop</Button>}
                     {s.canEnd && <Button variant="quiet" disabled={busy !== null} onClick={() => { void stop(s.id, 'end'); }}>End conversation</Button>}
                   </p>

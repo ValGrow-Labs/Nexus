@@ -356,7 +356,8 @@ export interface RepoStatusView {
   checkedAt: number | null;
 }
 export interface MergeView { projectId: ProjectId; branch: string; before: string; after: string; mergedAt: number }
-export type AgentSetupState = 'ready' | 'not_installed' | 'not_signed_in' | 'version_unsupported' | 'unavailable' | 'unknown';
+/** `off`: agent work is not in place in this build or on this database (nothing to check or set up); `unavailable`: the program could not be checked. */
+export type AgentSetupState = 'ready' | 'not_installed' | 'not_signed_in' | 'version_unsupported' | 'unavailable' | 'unknown' | 'off';
 /** The agent setup row (#23's `agent` and #51). */
 export interface AgentSetupView {
   state: AgentSetupState;

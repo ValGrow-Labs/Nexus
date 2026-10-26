@@ -100,7 +100,7 @@ export interface DomainSpec {
 export type StepVia = { userAction: UserActionId } | { recipe: RecipeId } | { skill: SkillId } | { platform: PlatformFlowId };
 
 export type StepRecord = 'participation' | 'review' | 'signature' | 'selection' | 'conclusion' | 'deployment_healthy'
-  | 'export' | 'handoff_sent';
+  | 'export' | 'handoff_sent' | 'iteration';
 
 export type StepDoneWhen =
   | { kind: KindId; statuses: ('candidate' | 'active')[]; validators: ValidatorId[] }

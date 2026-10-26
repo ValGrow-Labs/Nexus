@@ -11,7 +11,7 @@ import { Button } from '../ui/Button';
 import { EvidenceSection } from './EvidenceSection';
 import { useExecutionUi } from './execContext';
 import {
-  BUTTON_LABEL, acceptedText, changeSetModel, changeSetRows, diffLineKind, mergeModel, mergedText, reviewOf, type ChangeSetButton, type ChangeSetRow, type MergeModel
+  BUTTON_LABEL, acceptedText, changeSetModel, changeSetRows, diffLineKind, headTitle, mergeModel, mergedText, mergedTitle, reviewOf, type ChangeSetButton, type ChangeSetRow, type MergeModel
 } from './changeSetModel';
 
 const PAGE_BYTES = 64 * 1024;
@@ -67,13 +67,13 @@ function Diff({ versionId }: { versionId: string }) {
 /** "Merge accepted work": asks the channel; the real confirmation is a native dialog in main. Shows main's answer as a sentence. */
 export function MergeBlock({ projectId, model, onDone }: { projectId: string; model: MergeModel; onDone: () => void }) {
   const [busy, setBusy] = useState(false);
-  const [note, setNote] = useState<{ text: string; alert: boolean } | null>(null);
+  const [note, setNote] = useState<{ text: string; alert: boolean; title?: string } | null>(null);
   const merge = async () => {
     if (!model.button || busy) return;
     setBusy(true); setNote(null);
     const r = await nexusClient.repoMergeAccepted(projectId, model.button.args);
     setBusy(false);
-    setNote(r.ok ? { text: mergedText(r.data), alert: false } : { text: agentFailText(r), alert: r.code !== 'conflict' || r.reason !== 'cancelled' });
+    setNote(r.ok ? { text: mergedText(r.data), alert: false, title: mergedTitle(r.data) } : { text: agentFailText(r), alert: r.code !== 'conflict' || r.reason !== 'cancelled' });
     usePlatform.getState().bumpRev();
     useExecStore.getState().bump(['jobs']);
     onDone();
@@ -86,11 +86,11 @@ export function MergeBlock({ projectId, model, onDone }: { projectId: string; mo
           <div className="nx-passport__actions">
             <Button variant="primary" disabled={busy} onClick={() => { void merge(); }}>{busy ? 'Waiting for your confirmation…' : model.button.label}</Button>
           </div>
-          <p className="nx-muted">Nexus asks you to confirm in a separate window. Your branch moves only if you confirm; nothing else in your folder changes.</p>
+          <p className="nx-muted">Nexus asks you to confirm in a separate window. Your branch and the files git tracks move to the accepted work only if you confirm; untracked files and other branches are not touched.</p>
         </>
       )}
       {model.sentence && <p className="nx-muted" role="status">{model.sentence}</p>}
-      {note && <p className={note.alert ? 'nx-passport__note' : 'nx-muted'} role={note.alert ? 'alert' : 'status'}>{note.text}</p>}
+      {note && <p className={note.alert ? 'nx-passport__note' : 'nx-muted'} role={note.alert ? 'alert' : 'status'} title={note.title}>{note.text}</p>}
     </section>
   );
 }
@@ -115,6 +115,9 @@ export function ChangeSetReview({ versionId, projectId, status, name, withEviden
   const [comment, setComment] = useState('');
   const [note, setNote] = useState<{ text: string; alert: boolean } | null>(null);
   const commentId = useId();
+  const commentBox = useRef<HTMLTextAreaElement | null>(null);
+  // Asking for a comment moves focus into the box (a keyboard user would otherwise have to find it).
+  useEffect(() => { if (asking) commentBox.current?.focus(); }, [asking]);
   // Your decision shows at once; the version's own newest review (latestReview) replaces it as soon as the version is read again.
   useEffect(() => { setLocal(null); }, [detail.data]);
 
@@ -160,7 +163,7 @@ export function ChangeSetReview({ versionId, projectId, status, name, withEviden
           {view.blocking.map((b) => <li key={b.id}><span>{b.label}</span> <span className="nx-xe__word">{b.word}</span></li>)}
         </ul>
       )}
-      {view.diff.head && <p className="nx-muted">Head of the change: <span className="nx-id">{view.diff.head}</span></p>}
+      {view.diff.head && <p className="nx-muted" title={headTitle(view.diff.head)}>The change is recorded at one head commit (hover to see it).</p>}
       {view.buttons.length > 0 && (
         <div className="nx-passport__actions">
           {view.buttons.map((b) => (
@@ -173,7 +176,7 @@ export function ChangeSetReview({ versionId, projectId, status, name, withEviden
       {asking && (
         <div className="nx-xq__confirm">
           <label htmlFor={commentId}>{asking === 'reject' ? 'Why are you rejecting this change?' : 'What should the agent change?'}</label>
-          <textarea id={commentId} className="nx-cs__comment" rows={3} maxLength={4000} value={comment} onChange={(e) => setComment(e.target.value)} />
+          <textarea id={commentId} ref={commentBox} className="nx-cs__comment" rows={3} maxLength={4000} value={comment} onChange={(e) => setComment(e.target.value)} />
           <div className="nx-xq__acts">
             <Button variant="primary" disabled={busy !== null || comment.trim() === ''} onClick={() => { void decide(asking, comment); }}>
               {asking === 'reject' ? 'Reject the change' : 'Send to the agent'}
@@ -213,7 +216,7 @@ function ChangeSetList({ projectId, rows }: { projectId: string; rows: ChangeSet
   return (
     <section className="nx-cs__list" aria-labelledby="nx-cs-title">
       <h2 id="nx-cs-title" className="nx-cs__title">Changes made by the agent</h2>
-      <p className="nx-review__note">Each change was made in a separate copy of your repository. Nothing here has touched your files.</p>
+      <p className="nx-review__note">Each change was made in a separate copy of your repository. Nothing here touches your files until you merge accepted work.</p>
       {merge && <MergeBlock projectId={projectId} model={merge} onDone={repo.reload} />}
       <ul className="nx-cs__rows">
         {rows.map((r) => {
@@ -222,7 +225,7 @@ function ChangeSetList({ projectId, rows }: { projectId: string; rows: ChangeSet
             <li key={r.versionId} className="nx-cs__row">
               <p className="nx-cs__rowhead">
                 <span className="nx-cs__name" title={r.name}>{r.name}</span> <span className="nx-id">v{r.versionNo}</span> <span className="nx-xe__word">{r.word}</span>
-                <Button variant="quiet" onClick={() => setOpen((o) => ({ ...o, [r.versionId]: !expanded }))} ariaLabel={`${expanded ? 'Hide' : 'Show'} ${r.name}`}>
+                <Button variant="quiet" onClick={() => setOpen((o) => ({ ...o, [r.versionId]: !expanded }))} ariaLabel={`${expanded ? 'Hide' : 'Show'} ${r.name}`} ariaExpanded={expanded}>
                   {expanded ? 'Hide' : 'Show'}
                 </Button>
               </p>

@@ -223,7 +223,7 @@ const xa = {
       assert.equal(w.versionRow(two.cs).artifact_id, artifact, 'v2 of the same change set');
       assert.ok(w.db.prepare("SELECT 1 FROM artifact_edges WHERE from_version_id = ? AND to_version_id = ? AND relation = 'derived_from'").get(two.cs, one.cs), 'v2 derived_from v1');
       assert.equal(w.stepOf('ai-implementation'), 'done');
-      assert.equal(w.stepOf('iteration'), 'done');
+      assert.equal(await w.railStep('iteration'), 'done', 'a second version that passed its checks is an iteration');
       assert.equal(w.checks(one.cs)['cs.tests_pass'], 'failed', 'v1 keeps its own failed result');
       sound(w, `XA6 ${kind}`);
     });

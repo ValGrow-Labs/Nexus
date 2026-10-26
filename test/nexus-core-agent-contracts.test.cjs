@@ -473,8 +473,10 @@ test('SC5 the registry passes at B2b: SDE steps 5, 7 and 12 are REAL; the other 
   assert.ok(step('requirement').via.some((v) => v.skill === 'nexus-sde-requirement-draft'), 'step 1 names the drafting skill');
   assert.ok(step('requirement').via.some((v) => v.userAction === 'sde.requirement.write'), 'and still the user action');
   const csValidators = ['git.diff_nonempty', 'git.paths_in_scope', 'sec.secret_scan', 'cs.tests_pass', 'git.applies_cleanly'];
+  assert.deepEqual(step('ai-implementation').doneWhen, { kind: 'change_set', statuses: ['candidate', 'active'], validators: csValidators });
+  // Round 4 (final review C2): one change set is not an iteration. Iteration is a record: a change set revised at least once.
+  assert.deepEqual(step('iteration').doneWhen, { record: 'iteration' });
   for (const id of ['ai-implementation', 'iteration']) {
-    assert.deepEqual(step(id).doneWhen, { kind: 'change_set', statuses: ['candidate', 'active'], validators: csValidators }, id);
     assert.ok(step(id).via.some((v) => v.skill === 'nexus-sde-change') && step(id).via.some((v) => v.userAction === 'sde.agent.turn'), id);
   }
   assert.deepEqual(step('review').via, [{ userAction: 'sde.changeset.review' }, { userAction: 'sde.changeset.accept' }, { userAction: 'sde.repo.merge' }]);
@@ -489,7 +491,7 @@ test('SC5 the registry passes at B2b: SDE steps 5, 7 and 12 are REAL; the other 
   for (const d of DOMAINS.filter((x) => x.id !== 'sde')) assert.equal(spec.isExecutableEndToEnd(d, 'B2b'), false, d.id);
   for (const d of DOMAINS) assert.equal(spec.isExecutableEndToEnd(d), d.id === 'sde', `${d.id} as delivered`);
   assert.ok(!/complete/i.test(sde.statusNote));
-  assert.match(sde.statusNote, /The agent drafts requirements and implements changes in its own worktree; you review, accept and merge them\.$/);
+  assert.match(sde.statusNote, /The agent drafts requirements and implements changes in its own worktree; you review, accept and merge them\. Agent work is new in this release and off by default\. It has been checked with a scripted agent, not yet with a real model on this computer\.$/);
   assert.equal(step('requirement').scopeNote, 'You write it in Nexus, or the agent drafts it for you to review.');
   // The delivery pin: DELIVERED_SUB_PHASE equals CURRENT_SUB_PHASE exactly when the e2e stub and the pending list are
   // empty, so Task 16 cannot empty the stub without flipping the constant, nor flip it without writing the titles.

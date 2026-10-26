@@ -461,7 +461,7 @@ async function flowWorld(o = {}) {
    */
   w.stepOf = (stepId) => {
     const step = getDomain('sde').lifecycle.find((x) => x.id === stepId);
-    if ('record' in step.doneWhen && step.doneWhen.record === 'review') throw new Error("the review step is read through w.railStep('review'), the product own rail");
+    if ('record' in step.doneWhen && (step.doneWhen.record === 'review' || step.doneWhen.record === 'iteration')) throw new Error(`the ${stepId} step is read through w.railStep('${stepId}'), the product own rail`);
     return w.stepState('sde', stepId);
   };
   /**

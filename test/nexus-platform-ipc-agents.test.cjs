@@ -155,7 +155,7 @@ test('IA2 with v10 off the ten channels answer platform_unavailable / agents_una
   assert.equal((await w.x.call('nexus:participations:list')).ok, true);
   assert.equal((await w.x.call('nexus:jobs:list', {})).ok, true);
   const health = await w.x.ok('nexus:platform:health');
-  assert.equal(health.agent.state, 'unavailable');
+  assert.equal(health.agent.state, 'off');
   assert.equal(health.agent.consent.live, false);
   // With agents off, #24 still says so for the agent flow actions.
   const actions = await w.x.ok('nexus:actions:available', { projectId: PROJECT, workspaceId: WS });

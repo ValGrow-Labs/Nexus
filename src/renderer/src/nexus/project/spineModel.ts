@@ -233,5 +233,11 @@ export function railRecordsFor(i: {
     else if (kindIsChecked(s.artifact.kind)) versions.push({ kind: s.artifact.kind, status: v.status, validators: {}, unread: true });
     else versions.push({ kind: s.artifact.kind, status: v.status, validators: {} });
   }
-  return { versions, liveActions: i.liveActions, participation: i.participating, deploymentHealthy: i.deploymentHealthy };
+  // The iteration record: a change set with a second or later version that passed its checks (a version past candidate means every
+  // blocking change-set check passed). One change set alone is never an iteration.
+  const changeRevised = i.artifacts.some((s) => s.artifact.kind === 'change_set' && s.artifact.status === 'active'
+    && (s.artifact.ownerWorkspaceId === i.workspaceId || projectOwned(s.artifact))
+    && ((s.latest !== null && s.latest.versionNo >= 2 && (s.latest.status === 'candidate' || s.latest.status === 'active'))
+      || (s.current !== null && s.current.versionNo >= 2)));
+  return { versions, liveActions: i.liveActions, participation: i.participating, deploymentHealthy: i.deploymentHealthy, changeRevised };
 }

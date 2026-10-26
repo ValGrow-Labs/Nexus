@@ -11,11 +11,13 @@ export interface ButtonProps {
   type?: 'button' | 'submit';
   onClick?: () => void;
   ariaLabel?: string;
+  /** For a button that shows or hides something. */
+  ariaExpanded?: boolean;
 }
 
 const VARIANT_CLASS = { primary: ' nx-btn--primary', secondary: '', quiet: ' nx-btn--quiet' } as const;
 
-export function Button({ variant = 'secondary', icon, children, disabled, title, type = 'button', onClick, ariaLabel }: ButtonProps) {
+export function Button({ variant = 'secondary', icon, children, disabled, title, type = 'button', onClick, ariaLabel, ariaExpanded }: ButtonProps) {
   return (
     <button
       type={type}
@@ -23,6 +25,7 @@ export function Button({ variant = 'secondary', icon, children, disabled, title,
       disabled={disabled}
       title={title}
       aria-label={ariaLabel}
+      aria-expanded={ariaExpanded}
       onClick={onClick}
     >
       {icon && <Icon name={icon} size={15} />}

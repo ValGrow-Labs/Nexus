@@ -39,7 +39,7 @@ export function SessionLog({ sessionId }: { sessionId: string }) {
         <>
           <h3 className="nx-ag__sub">Tool calls</h3>
           <ul className="nx-ag__list" aria-label="Tool calls">
-            {view.toolCalls.map((c) => <li key={c.key}><span className="nx-id">{c.tool}</span> <span className="nx-muted">{c.outcome}; result {c.size}</span></li>)}
+            {view.toolCalls.map((c) => <li key={c.key}><span>{c.tool}</span> <span className="nx-muted">{c.outcome}; result {c.size}</span></li>)}
           </ul>
         </>
       )}

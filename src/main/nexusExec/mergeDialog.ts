@@ -35,7 +35,7 @@ export function mergeDialogOptions(info: MergeConfirmInfo): MergeDialogOptions {
   const listed = info.accepted.slice(0, MAX_LISTED).map((a) => `• ${line(a.title, MAX_TITLE) || 'Agent change'} (${short(a.mergeCommit)})`);
   const more = info.accepted.length > MAX_LISTED ? [`… and ${info.accepted.length - MAX_LISTED} more`] : [];
   const detail = [
-    `Your branch "${branch}" will move from ${short(info.from)} to ${short(info.to)} by fast-forward. Nothing else in your folder is touched.`,
+    `Your branch "${branch}" will move from ${short(info.from)} to ${short(info.to)} by fast-forward. Your branch and the files git tracks move to the accepted work; untracked files and other branches are not touched.`,
     '',
     count === 1 ? '1 accepted change:' : `${count} accepted changes:`,
     ...listed, ...more,

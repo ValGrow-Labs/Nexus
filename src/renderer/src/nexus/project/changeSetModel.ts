@@ -105,6 +105,7 @@ export function changeSetModel(i: ChangeSetInput): ChangeSetView {
   }
   if (i.review === 'approve') {
     if (i.repo && i.repo.acceptedHead) buttons.push('accept');
+    else if (i.repo && i.repo.reason && ['git_missing', 'branch_unknown', 'runner_unavailable'].includes(i.repo.reason)) sentences.push(AGENT_REASON_TEXT[i.repo.reason]);
     else sentences.push('The accepted branch has not been read yet, so the change cannot be accepted. Look again in a moment.');
   } else {
     sentences.push('Accept appears once you have approved the change.');
@@ -140,9 +141,18 @@ export function acceptedText(): string {
   return 'Accepted. The change is on the Nexus branch; your own branch changes only when you merge accepted work.';
 }
 
-export function mergedText(m: Pick<MergeView, 'branch' | 'before' | 'after'>): string {
+/** The result of a merge in words: no commit id in the text (it is in `mergedTitle`, for a hover). */
+export function mergedText(m: Pick<MergeView, 'branch'>): string {
+  return `Merged: ${m.branch} now holds the accepted work.`;
+}
+/** The two commits a merge moved the branch between, for a title attribute only. */
+export function mergedTitle(m: Pick<MergeView, 'before' | 'after'>): string | undefined {
   const b = short(m.before); const a = short(m.after);
-  return b && a ? `Merged: ${m.branch} moved from ${b} to ${a}.` : `Merged into ${m.branch}.`;
+  return b && a ? `The branch moved from ${b} to ${a}` : undefined;
+}
+/** The commit a change records as its head, for a title attribute only. */
+export function headTitle(head: string | null): string | undefined {
+  return head ? `Head commit ${head}` : undefined;
 }
 
 // ---------- the list in the Changes tool ----------
@@ -150,7 +160,7 @@ export function mergedText(m: Pick<MergeView, 'branch' | 'before' | 'after'>): s
 export interface ChangeSetRow { artifactId: string; name: string; versionId: string; versionNo: number; status: VersionView['status']; word: string; reviewable: boolean }
 
 const ROW_WORD: Record<VersionView['status'], string> = {
-  draft: 'Being checked', candidate: 'Ready for your decision', active: 'Accepted', failed: 'Blocked', deprecated: 'Replaced or discarded'
+  draft: 'Being checked', candidate: 'Ready for review', active: 'Accepted', failed: 'Blocked', deprecated: 'Replaced or discarded'
 };
 
 /** The project's changes made by the agent, newest first: the latest version of each active change-set artifact. */

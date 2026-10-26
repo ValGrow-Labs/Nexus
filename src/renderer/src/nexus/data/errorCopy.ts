@@ -166,6 +166,9 @@ export const AGENT_REASON_TEXT: Readonly<Record<string, string>> = Object.freeze
   branch_mismatch: 'Another branch is checked out than the one the accepted work is for, so nothing was merged.',
   not_fast_forward: 'Your branch has moved on, so the accepted work is no longer a fast-forward. Nothing was merged.',
   nothing_to_merge: 'Your branch already has all the accepted work.',
+  integration_diverged: 'Your branch and the accepted work have both moved on, so Nexus cannot start from your latest code. Merge the accepted work in your own tools, then ask again.',
+  preview_incomplete: "Part of this change is hidden or too large to show here, so it can't be approved from Nexus. Review it in your own tools, or ask the agent to rewrite it.",
+  not_cancellable: 'Nexus is recording this step, so it cannot be stopped from here. It finishes on its own.',
   cancelled: 'The merge was cancelled; nothing was changed.',
   accept_pending: 'The accept is still running. Ask again in a moment.',
   merge_pending: 'The merge is still running. Ask again in a moment.',
@@ -183,8 +186,12 @@ export const AGENT_REASONS: readonly string[] = Object.freeze(Object.keys(AGENT_
 /** An accept whose undo could not be queued: said once, after the refusal's own sentence. */
 export const ROLLBACK_OWED_TEXT = 'Nexus still owes an undo of the accepted branch and will not accept or merge anything until it is done.';
 
+/** Agent work is not turned on: no check or setup can change it (so no "check again" advice). */
+export const AGENT_OFF_TEXT = 'Agent work is not available because it is not turned on in this build.';
+
 /** Agent work off: the same sub-reasons as execution say why. */
 export function agentsNotice(subReason: string | null | undefined): string {
+  if (subReason === 'not_enabled') return AGENT_OFF_TEXT;
   const why = subReason ? EXECUTION_WHY[subReason] : undefined;
   return why ? `Agent work is not available because ${why}.` : AGENT_REASON_TEXT.agents_unavailable;
 }

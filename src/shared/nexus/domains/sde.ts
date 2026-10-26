@@ -12,8 +12,10 @@ const CONTAINER_RUN = ['docker', 'disk:5GiB'] as const;
 /** A change set reaches candidate only when every blocking change-set validator passed (sec.entropy_notes is advisory). */
 const CHANGE_SET_VALIDATORS = ['git.diff_nonempty', 'git.paths_in_scope', 'sec.secret_scan', 'cs.tests_pass', 'git.applies_cleanly'];
 const AGENT_RUN = ['git', 'docker', 'image:sde-node', 'runtime:agent', 'credential:agent'] as const;
+/** Until a real model has been tried on this computer: said wherever agent work is stated as part of this release (easy to remove). */
+const AGENT_NEW_NOTE = 'Agent work is new in this release and off by default. It has been checked with a scripted agent, not yet with a real model on this computer.';
 const AGENT_SCOPE = 'The agent edits files in a Nexus worktree and runs every command in its own container without network access. '
-  + 'Its file tools are kept to the worktree by policy, not by the operating system.';
+  + 'Its file tools are kept to the worktree by policy, not by the operating system. ' + AGENT_NEW_NOTE;
 
 export const SDE: DomainSpec = {
   specVersion: 3,
@@ -21,7 +23,7 @@ export const SDE: DomainSpec = {
   description: 'Turn a requirement into tested, built and running code, with every claim backed by commits, test reports, build manifests and health checks.',
   tier: 'first-class', hueSlot: 0, icon: 'sde', order: 1,
   participationFromSubPhase: 'B1',
-  statusNote: 'Requirements, repository snapshots, tests, builds, applications, dev deployments and diagnostics run in this release. The agent drafts requirements and implements changes in its own worktree; you review, accept and merge them.',
+  statusNote: 'Requirements, repository snapshots, tests, builds, applications, dev deployments and diagnostics run in this release. The agent drafts requirements and implements changes in its own worktree; you review, accept and merge them. ' + AGENT_NEW_NOTE,
   legacyDomainIds: ['software-engineering', 'web-app-dev', 'mobile-dev', 'game-dev', 'embedded-systems', 'robotics-iot', 'blockchain-web3', 'automation-rpa'],
   vocabulary: {
     requirement: { singular: 'Requirement', plural: 'Requirements' },
@@ -82,7 +84,7 @@ export const SDE: DomainSpec = {
       via: [{ userAction: 'sde.changeset.review' }, { userAction: 'sde.changeset.accept' }, { userAction: 'sde.repo.merge' }],
       doneWhen: { record: 'review' },
       status: 'REAL', subPhase: 'B2b', prerequisites: ['git'], e2eTestId: 'e2e.sde.review',
-      scopeNote: 'Accepting merges the change into a Nexus ref, never into your branch or files. Merging accepted work is a fast-forward you confirm.' },
+      scopeNote: 'Accepting merges the change into a Nexus ref, never into your branch or files. Merging accepted work is a fast-forward you confirm. ' + AGENT_NEW_NOTE },
     { id: 'build', label: 'Build', consumes: ['repository'], produces: ['build'],
       via: [{ userAction: 'sde.build.run' }],
       doneWhen: { kind: 'build', statuses: ['candidate', 'active'],
@@ -104,7 +106,9 @@ export const SDE: DomainSpec = {
       status: 'REAL', subPhase: 'B2a', prerequisites: ['docker'], e2eTestId: 'e2e.sde.diagnostics' },
     { id: 'iteration', label: 'Iteration', consumes: ['change_set', 'diagnostic_report'], produces: ['change_set'],
       via: [{ userAction: 'sde.agent.turn' }, { skill: 'nexus-sde-change' }],
-      doneWhen: { kind: 'change_set', statuses: ['candidate', 'active'], validators: CHANGE_SET_VALIDATORS },
+      // A change revised at least once: a second version of a change set that passed every change-set check. One change set is the
+      // AI-assisted implementation step, never an iteration (the rail reads this record from the artifact summaries).
+      doneWhen: { record: 'iteration' },
       status: 'REAL', subPhase: 'B2b', prerequisites: [...AGENT_RUN], e2eTestId: 'e2e.sde.iteration',
       scopeNote: AGENT_SCOPE }
   ],

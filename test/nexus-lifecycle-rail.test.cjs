@@ -472,3 +472,32 @@ test('LR3 the Review step is Done exactly when a change set was reviewed AND acc
   // The Review step still names its actions and keeps the registry's scope note.
   assert.match(done.note, /Accepting merges the change into a Nexus ref, never into your branch or files/);
 });
+
+// ---------- B2b final review C2: Iteration needs a revision ----------
+
+test('LR4 Iteration is NOT Done after a single change set (even an accepted one); it is Done once a change set has a second version that passed its checks', () => {
+  const S = loadTs('src/renderer/src/nexus/project/spineModel.ts');
+  const ALL = Object.fromEntries(['git.diff_nonempty', 'git.paths_in_scope', 'sec.secret_scan', 'cs.tests_pass', 'git.applies_cleanly'].map((id) => [id, 'passed']));
+  const art = (id, no, status, current = null) => ({ artifact: { id: `a${id}`, kind: 'change_set', status: 'active', ownerWorkspaceId: 'sde', ownerScope: 'participation', createdAt: id, updatedAt: id },
+    versionCount: no, current, latest: { id: `v${id}.${no}`, versionNo: no, status } });
+  const records = (artifacts) => S.railRecordsFor({ workspaceId: 'sde', artifacts, checks: new Map(artifacts.map((a) => [a.latest.id, ALL])), liveActions: [], deploymentHealthy: false, participating: true });
+  const step = (artifacts, id) => stepOf('sde', id, records(artifacts));
+  const done = (artifacts) => step(artifacts, 'iteration').state === 'done';
+  // One change set, whatever its state: AI-assisted implementation may be done, Iteration never.
+  for (const status of ['draft', 'candidate', 'failed']) assert.equal(done([art(1, 1, status)]), false, `v1 ${status}`);
+  const accepted = art(2, 1, 'active', { id: 'v2.1', versionNo: 1 });
+  assert.equal(done([accepted]), false, 'one accepted change set');
+  assert.equal(step([accepted], 'ai-implementation').state, 'done');
+  assert.equal(step([accepted], 'review').state, 'done');
+  // A second version that is still a draft or failed its checks is not a revision yet.
+  assert.equal(done([art(3, 2, 'draft')]), false);
+  assert.equal(done([art(3, 2, 'failed')]), false);
+  // v2 candidate or active: iterated.
+  assert.equal(done([art(3, 2, 'candidate')]), true);
+  assert.equal(done([art(3, 2, 'active', { id: 'v3.2', versionNo: 2 })]), true);
+  assert.equal(done([accepted, art(4, 2, 'candidate')]), true, 'another change set revised');
+  assert.equal(L.railFor(view('sde'), rec({ versions: [], changeRevised: true })).steps.find((s) => s.id === 'iteration').state, 'done');
+  assert.notEqual(L.railFor(view('sde'), rec({ versions: [{ kind: 'change_set', status: 'candidate', validators: ALL }] })).steps.find((s) => s.id === 'iteration').state, 'done', 'no revision fact: never done');
+  // Another domain never claims it, and no domain is complete (HA1 keeps that pin).
+  assert.equal(L.railFor(view('qa'), rec({ changeRevised: true })).steps.every((s) => s.id !== 'iteration'), true);
+});

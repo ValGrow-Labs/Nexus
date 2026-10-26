@@ -73,7 +73,9 @@ test('UA1 every reason main words has one sentence in the renderer, word for wor
   for (const k of ['ref_moved', 'merge_conflict', 'accept_rolled_back', 'integration_unexpected', 'tree_dirty', 'branch_mismatch', 'not_fast_forward',
     'nothing_to_merge', 'cancelled', 'merge_pending', 'accept_pending']) {
     assert.ok(E.AGENT_REASON_TEXT[k] && E.AGENT_REASON_TEXT[k].length > 10, k);
-    assert.equal(A.agentFailText({ code: 'conflict', reason: k }), E.AGENT_REASON_TEXT[k]);
+    // Main's sentence, then (for the refusals that would leave the person stuck) one next step.
+    const next = A.NEXT_STEP[k] ? ` ${A.NEXT_STEP[k]}` : '';
+    assert.equal(A.agentFailText({ code: 'conflict', reason: k }), `${E.AGENT_REASON_TEXT[k]}${next}`);
   }
   // An unknown reason never shows its code; the owed undo is said after the sentence.
   const unknown = A.agentFailText({ code: 'conflict', reason: 'brand_new_reason_x' });
@@ -205,7 +207,9 @@ test('UA4 Merge appears only when accepted work is not on the branch, and is a s
   // The change view carries the merge only while there is something to merge.
   assert.equal(CS.changeSetModel({ version: cset('active'), validations: allPass(), review: 'approve', repo: repo() }).merge, null);
   assert.ok(CS.changeSetModel({ version: cset('active'), validations: allPass(), review: 'approve', repo: repo({ acceptedNotMerged: 1, canFastForward: true, reason: null }) }).merge.button);
-  assert.equal(CS.mergedText({ branch: 'main', before: SHA, after: 'b'.repeat(40) }), 'Merged: main moved from aaaaaaaa to bbbbbbbb.');
+  assert.equal(CS.mergedText({ branch: 'main', before: SHA, after: 'b'.repeat(40) }), 'Merged: main now holds the accepted work.');
+  assert.doesNotMatch(CS.mergedText({ branch: 'main' }), /[0-9a-f]{8}/, 'no commit id in the text');
+  assert.equal(CS.mergedTitle({ before: SHA, after: 'b'.repeat(40) }), 'The branch moved from aaaaaaaa to bbbbbbbb', 'the ids are for a hover only');
 });
 
 // ---------- UA5, UA12 ----------
@@ -300,7 +304,9 @@ test('UA7 every unmet prerequisite is a sentence, never a button that would be r
   assert.equal(A.CONSENT_MISSING_TEXT, 'Agent turns need your network permission. Open Setup to grant it.');
   const cases = [
     [{ state: 'not_installed' }, /not installed/], [{ state: 'not_signed_in', signedIn: 'no' }, /not signed in/], [{ state: 'version_unsupported' }, /not a version Nexus supports/],
-    [{ state: 'unavailable' }, /could not be checked/], [{ state: 'unknown', signedIn: 'unknown' }, /has not been checked/]
+    [{ state: 'unavailable' }, /could not be checked/],
+    // Never probed and no permission yet: nothing to ask with (a live permission with a stale check is askable, below).
+    [{ state: 'unknown', signedIn: 'unknown', consent: { live: false, caps: null, hostsCount: 0, grantedAt: null } }, /has not been checked/]
   ];
   for (const [o, re] of cases) {
     const p = panel(health({ agent: agentView(o) }));
@@ -343,8 +349,12 @@ test('UA7 every unmet prerequisite is a sentence, never a button that would be r
     assert.equal(all.split('keeps its own state files').length - 1, 1, 'disclosed exactly once');
     assert.match(all, /sign-in, settings and log files\) in your own user folder/);
     assert.match(all, /Nexus never reads, copies or stores the sign-in/);
-    assert.match(all, /only the destination you grant here/);
+    // Round 4 (final review C3): the agent program runs on the host as the user; its own network is steered by a proxy setting, not enforced.
+    assert.match(all, /The agent program runs on this computer as you/);
+    assert.match(all, /sent through Nexus’s proxy, which allows only the destination you grant \(this is a setting the program follows, not a firewall\)/);
+    assert.match(all, /Every command it runs goes into a sandbox with no network/);
     assert.match(all, /rule of the agent program, not an operating-system wall/);
+    assert.doesNotMatch(all, /runs in a sandbox with no other network|and nothing else/, 'the old, untrue claims are gone');
   }
   const grant = X.agentSetupRows(agentView({ consent: { live: false, caps: null, hostsCount: 1, grantedAt: null } }), { hosts: ['api.example.test:443'] });
   assert.deepEqual(grant.find((r) => r.id === 'agent-consent').consent, { op: 'grant', label: 'Grant permission' });
@@ -503,7 +513,7 @@ test('source pins: the merge asks only the channel (the dialog is main\'s), Acce
 
 test('F1 the intent line says the legacy reply hint only in legacy mode; in agent mode each send starts a new conversation (UA8 pin)', () => {
   const il = src('intent/IntentLine.tsx');
-  assert.match(il, /mode === 'agent' \? 'Each message starts a new conversation;[^']*' : port\.replyHint/);
+  assert.match(il, /mode === 'agent' \? 'A message continues this project’s open conversation, or starts one when there is none;[^']*' : port\.replyHint/);
   assert.equal((il.match(/port\.replyHint/g) || []).length, 1, 'the lead-agent terminal hint is rendered only through the legacy branch');
 });
 
@@ -538,7 +548,7 @@ test('F3 #51 get never waits: an answer with no destination yet is asked again (
   assert.equal(X.consentRereadDelay(null, 0), null);
   // Not granted: the D-B4 ceilings are shown on the row before the user grants.
   const text = X.agentSetupRows(landed, { hosts: X.consentHostsOf(landed) }).find((r) => r.id === 'agent-consent').text;
-  assert.match(text, /Limits if you grant it: up to \$2\.00 per turn and \$10\.00 per day, 6 turns an hour, 1 at a time, 200 tool calls per turn/);
+  assert.match(text, /Limits if you grant it: up to \$2\.00 per turn and \$10\.00 per day, 6 turns an hour, 1 at a time, 400k tokens, 200 tool calls, 30 minutes and 20 child jobs per turn/, 'all eight D-B4 caps');
   // Source pins: the hook looks again by that policy; the sheet takes only the destinations from #51 and reads it after the health re-read.
   const hooks = src('data/useAgents.ts');
   assert.match(hooks, /consentRereadDelay\(r\.data, tries\)/);
@@ -567,4 +577,148 @@ test('F5 a no-change turn that main headlines `checks_could_not_run` reads "The 
   assert.equal(log.turns[0].headline, 'The agent made no change');
   // The runs list does not even read a check reason for an agent turn.
   assert.match(src('runs/ProjectRuns.tsx'), /explain && job\.kind !== 'agent\.run' && \(job\.headline === 'checks_failed'/);
+});
+
+// ---------- fix round 4 (final honesty review) ----------
+
+test('R4-C1 a session main keeps `running` with no live turn reads "Ready for your next message" and is continued, never "Working" forever', () => {
+  const panel = (sessions, jobs) => A.agentPanelModel({ health: health(), availability: READY, sessions, sessionsFail: null, jobs });
+  const idle = panel([session({ id: 'S1', status: 'running', liveJobId: null })]);
+  assert.equal(idle.working, null, 'no live turn: not working');
+  assert.deepEqual(idle.sessions.map((r) => [r.word, r.live, r.canSend, r.canEnd, r.canStop]), [['Ready for your next message', false, true, true, false]]);
+  // With a live turn it is working; Stop is offered, Send and End are not.
+  const live = panel([session({ id: 'S1', status: 'running', liveJobId: 'J1' })], new Map([['J1', job({ state: 'running', headline: 'running' })]]));
+  assert.equal(live.working, 'Working');
+  assert.deepEqual(live.sessions.map((r) => [r.word, r.live, r.canSend, r.canEnd, r.canStop]), [['Working', true, false, false, true]]);
+  // Several finished conversations never pile up as "Working".
+  const many = panel([session({ id: 'A', status: 'running', liveJobId: null, updatedAt: 3 }), session({ id: 'B', status: 'running', liveJobId: null, updatedAt: 2 }), session({ id: 'C', status: 'open', updatedAt: 1 })]);
+  assert.equal(many.working, null);
+  assert.ok(many.sessions.every((r) => r.word === 'Ready for your next message'));
+  // The intent line continues the newest such conversation instead of starting another.
+  assert.equal(A.continuableSession([session({ id: 'A', status: 'running', liveJobId: null, updatedAt: 3 }), session({ id: 'B', status: 'open', updatedAt: 5 })]).id, 'B');
+  assert.equal(A.continuableSession([session({ id: 'A', status: 'running', liveJobId: 'J1' }), session({ id: 'Z', status: 'completed' })]), null, 'a live turn or an ended one is not continued');
+  assert.equal(A.continuableSession(null), null);
+  assert.match(src('intent/IntentLine.tsx'), /continuableSession\(list\.data\)/);
+  assert.match(src('intent/IntentLine.tsx'), /nexusClient\.sessionsList\(\{ projectId \}\)/);
+  // The panel opens itself only for a live turn.
+  assert.match(src('agent/AgentPanel.tsx'), /if \(panel\.working\) setOpen\(true\)/);
+});
+
+test('R4-I1 the program is "signed in" only when the view says so; an unreadable sign-in is said so', () => {
+  for (const signedIn of ['unknown', 'no']) {
+    const r = X.agentSetupRows(agentView({ signedIn })).find((x) => x.id === 'agent');
+    assert.match(r.text, /Nexus could not confirm that the agent program is signed in\./, signedIn);
+    assert.doesNotMatch(r.text, /installed and signed in/);
+    assert.notEqual(r.state, 'ok');
+  }
+  assert.match(X.agentSetupRows(agentView({ signedIn: 'yes' })).find((x) => x.id === 'agent').text, /installed and signed in/);
+  const p = A.agentPanelModel({ health: health({ agent: agentView({ signedIn: 'unknown' }) }), availability: READY, sessions: [], sessionsFail: null });
+  assert.equal(p.note, 'Nexus could not confirm that the agent program is signed in.');
+});
+
+test('R4-I2 agent work off is its own state: one sentence, no check-again advice, no Grant row; flow actions use the same sentence', () => {
+  const off = agentView({ state: 'off', label: null, version: null, consent: { live: false, caps: null, hostsCount: 0, grantedAt: null } });
+  const rows = X.setupSheet(health({ agent: off }));
+  const agentRows = rows.filter((r) => r.id.startsWith('agent'));
+  assert.deepEqual(agentRows.map((r) => r.id), ['agent']);
+  assert.equal(agentRows[0].text, E.AGENT_OFF_TEXT);
+  assert.equal(E.AGENT_OFF_TEXT, 'Agent work is not available because it is not turned on in this build.');
+  assert.equal(agentRows[0].word, 'Not available');
+  assert.equal(agentRows[0].consent, undefined);
+  assert.doesNotMatch(`${agentRows[0].text} ${agentRows[0].action ?? ''}`, /check again|Check again|Not granted/);
+  const p = A.agentPanelModel({ health: health({ agent: off }), availability: READY, sessions: null, sessionsFail: null });
+  assert.deepEqual([p.kind, p.canAsk, p.setup, p.lead], ['off', false, false, E.AGENT_OFF_TEXT]);
+  const flow = AM.reasonSentence({ label: 'Ask the agent', reason: 'agents_unavailable' }, 'sde');
+  assert.equal(flow, `Ask the agent: ${E.AGENT_OFF_TEXT}`);
+  assert.equal(AM.reasonSentence({ label: 'X', reason: 'weird' }, 'sde'), 'X: not available right now.');
+  // main's #23 says `off` when the agents part is not in place.
+  assert.match(fs.readFileSync(path.join(ROOT, 'src/main/nexusIpc/agentSetup.ts'), 'utf8'), /state: 'off'/);
+  assert.match(fs.readFileSync(path.join(ROOT, 'src/shared/nexus/ipc.ts'), 'utf8'), /'unavailable' \| 'unknown' \| 'off';/);
+});
+
+test('R4-I3 a stale check with a live permission is askable (the send checks again); it never blocks the panel or silently falls back to the lead agent', () => {
+  const stale = health({ agent: agentView({ state: 'unknown', signedIn: 'unknown', label: null, version: null }) });
+  const p = A.agentPanelModel({ health: stale, availability: READY, sessions: [], sessionsFail: null });
+  assert.equal(p.canAsk, true);
+  assert.equal(p.kind, 'ready');
+  assert.equal(p.note, 'Nexus will check the agent again when you send.');
+  assert.deepEqual(p.blockers, []);
+  assert.doesNotMatch(JSON.stringify(p), /has not been checked/);
+  assert.equal(A.intentRoute({ routeName: 'project', primaryWorkspaceId: 'sde', canAsk: p.canAsk }), 'agent', 'the intent line sends to the agent');
+  // Without a live permission the unknown check still blocks (nothing can be granted before the program is known).
+  const none = A.agentPanelModel({ health: health({ agent: agentView({ state: 'unknown', consent: { live: false, caps: null, hostsCount: 0, grantedAt: null } }) }), availability: READY, sessions: [], sessionsFail: null });
+  assert.equal(none.canAsk, false);
+  // A program known to be missing is never askable, whatever the permission.
+  assert.equal(A.agentPanelModel({ health: health({ agent: agentView({ state: 'not_installed' }) }), availability: READY, sessions: [], sessionsFail: null }).canAsk, false);
+});
+
+test('R4-I4 failed-turn outcomes each read their own sentence', () => {
+  const f = (outcome) => R.jobRun(job({ state: 'failed', outcome, headline: 'failed', error: { code: outcome, message: 'raw runtime text' } })).headline;
+  assert.equal(f('worktree_guard'), 'The agent was stopped: it changed something outside its working copy; nothing was collected');
+  assert.equal(f('consent_mismatch'), E.AGENT_REASON_TEXT.consent_mismatch.replace(/\.$/, ''));
+  assert.match(f('consent_mismatch'), /Revoke it and grant it again in Setup/);
+  assert.equal(f('proxy_failed'), 'The agent’s network proxy could not start; check again in Setup');
+  assert.equal(f('runtime_unknown'), E.AGENT_REASON_TEXT.runtime_unknown.replace(/\.$/, ''));
+  assert.equal(f('some_new_word'), 'The agent’s turn failed');
+  for (const o of ['worktree_guard', 'consent_mismatch', 'proxy_failed']) assert.doesNotMatch(f(o), /_|raw runtime text/);
+});
+
+test('R4-I5 the intent chip makes no promise the code does not keep in agent mode', () => {
+  const il = src('intent/IntentLine.tsx');
+  assert.match(il, /mode === 'agent' \? `You are looking at: \$\{chip\}\. The agent is told your message and which project this is, not this selection\.` : `Sent with context: \$\{chip\}`/);
+  const built = A.startArgs({ projectId: 'P', workspaceId: 'sde', sessionId: null, message: 'x', intentId: 'I' });
+  assert.deepEqual(built.args.focusVersionIds, [], 'agent mode sends no focus, so it never says "sent with context"');
+});
+
+test('R4-minors copy and hygiene: merge copy, no raw ids, hashed intent keys, plain tool labels, refusal next steps, repo.write_refs', () => {
+  const rv = src('project/ChangeSetReview.tsx');
+  assert.match(rv, /Your branch and the files git tracks move to the accepted work only if you confirm; untracked files and other branches are not touched\./);
+  assert.match(rv, /Nothing here touches your files until you merge accepted work\./);
+  assert.doesNotMatch(rv, /Nothing here has touched your files|nothing else in your folder changes/);
+  assert.doesNotMatch(rv, /Head of the change: <span/, 'no raw sha as visible text');
+  assert.equal(CS.headTitle('aaaaaaaa'), 'Head commit aaaaaaaa');
+  assert.equal(CS.changeSetRows([{ artifact: { id: 'a', kind: 'change_set', status: 'active', name: 'n', createdAt: 1 }, latest: { id: 'v', versionNo: 1, status: 'candidate' }, current: null }])[0].word, 'Ready for review');
+  // The merge dialog's sentence (main).
+  assert.match(fs.readFileSync(path.join(ROOT, 'src/main/nexusExec/mergeDialog.ts'), 'utf8'), /Your branch and the files git tracks move to the accepted work; untracked files and other branches are not touched\./);
+  // Intent keys: a hash of the message, not its first characters.
+  assert.equal(A.messageKey('hello world'), A.messageKey('hello world'));
+  assert.notEqual(A.messageKey('hello world'), A.messageKey('hello worle'));
+  assert.doesNotMatch(A.messageKey('my secret message'), /secret|message/);
+  assert.doesNotMatch(src('agent/AgentPanel.tsx') + src('intent/IntentLine.tsx'), /message\.slice\(0, 64\)|text\.slice\(0, 64\)/);
+  // Tool ids in plain words.
+  assert.equal(A.toolLabel('mcp__nexus__changeset_register'), 'Register the change');
+  assert.equal(A.toolLabel('sandbox_exec'), 'Run a command in the sandbox');
+  assert.equal(A.toolLabel('mcp__other__weird_tool'), 'a tool');
+  assert.equal(A.toolLabel('Read'), 'Read');
+  assert.doesNotMatch(src('agent/SessionLog.tsx'), /className="nx-id">\{c\.tool\}/);
+  // Refusals with a next step each.
+  for (const k of ['not_fast_forward', 'integration_unexpected', 'merge_conflict', 'branch_mismatch']) {
+    assert.ok(A.NEXT_STEP[k] && A.NEXT_STEP[k].length > 20, k);
+    assert.ok(A.agentFailText({ code: 'conflict', reason: k }).endsWith(A.NEXT_STEP[k]), k);
+  }
+  // "Look again in a moment" only when the status simply was not read; a git or runner problem says its own sentence.
+  const unread = (reason) => CS.changeSetModel({ version: cset('candidate'), validations: allPass(), review: 'approve', repo: repo({ acceptedHead: null, reason }) }).sentences.join(' ');
+  assert.equal(unread('git_missing'), E.AGENT_REASON_TEXT.git_missing);
+  assert.equal(unread('branch_unknown'), E.AGENT_REASON_TEXT.branch_unknown);
+  assert.match(unread(null), /Look again in a moment/);
+  // The secret scan is not over-claimed; the caps row lists all eight.
+  const EV = loadTs('src/renderer/src/nexus/project/evidenceModel.ts');
+  assert.doesNotMatch(EV.validatorLabel('sec.secret_scan'), /holds no key or secret/);
+  assert.match(EV.validatorLabel('sec.secret_scan'), /known key and private-key patterns/);
+  const live = X.agentSetupRows(agentView(), { hosts: ['api.example.test:443'] }).find((r) => r.id === 'agent-consent').text;
+  assert.match(live, /400k tokens, 200 tool calls, 30 minutes and 20 child jobs per turn/);
+  assert.doesNotMatch(live, /and nothing else/);
+  // The once-per-project approval and its activity row.
+  const row = AM.approvalRow({ id: 'a', projectId: 'p', jobId: null, reason: 'repo.write_refs', summary: 's', status: 'pending', request: {}, requestedAt: NOW, expiresAt: NOW + 60000, decidedAt: null, decision: null, consumedAt: null, imageBuild: null }, NOW);
+  assert.equal(row.title, 'Let Nexus write hidden refs in this repository');
+  const ctx = { names: new Map(), versionNos: new Map(), workspaceLabel: (x) => x, now: NOW };
+  const act = (action, details) => ACT.activityText({ seq: 1, ts: NOW, action, status: 'succeeded', actorKind: 'user', onBehalfOfUser: false, entityType: 'x', entityId: null, projectId: 'p', workspaceId: null, artifactId: null, versionId: null, details }, ctx);
+  assert.equal(act('approval.request', { reason: 'repo.write_refs' }), 'Approval asked: let Nexus write hidden refs in this repository');
+  assert.equal(act('approval.respond', { reason: 'repo.write_refs', decision: 'once' }), 'Nexus was allowed to write hidden refs in this repository');
+  // A failed read of the conversations (not "agent work is off") is a sentence; the toggles say whether they are expanded.
+  const failed = A.agentPanelModel({ health: health(), availability: READY, sessions: null, sessionsFail: { code: 'internal' } });
+  assert.match(failed.readError, /could not be completed/);
+  const panelSrc = src('agent/AgentPanel.tsx') + src('project/ChangeSetReview.tsx');
+  assert.ok((panelSrc.match(/ariaExpanded=/g) || []).length >= 3);
+  assert.match(src('project/ChangeSetReview.tsx'), /commentBox\.current\?\.focus\(\)/);
 });

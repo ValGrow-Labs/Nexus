@@ -33,7 +33,7 @@ export function agentConsentView(nx: NexusPlatform): AgentConsentView {
 
 export function agentSetupView(nx: NexusPlatform): AgentSetupView {
   if (!nx.agentsAvailable || !nx.budget) {
-    return { ...UNKNOWN_AGENT, state: 'unavailable', consent: { live: false, caps: null, hostsCount: 0, grantedAt: null }, usageToday: { usdCents: 0, turns: 0, estimated: false } };
+    return { ...UNKNOWN_AGENT, state: 'off', consent: { live: false, caps: null, hostsCount: 0, grantedAt: null }, usageToday: { usdCents: 0, turns: 0, estimated: false } };
   }
   const entry = nx.agentProbe?.cache.fresh() ?? null;
   const live = nx.budget.live();

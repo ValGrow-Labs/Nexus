@@ -9,6 +9,7 @@ import { DOMAINS } from '@shared/nexus/domains';
 import { blockingValidatorsFor } from '@shared/nexus/validators';
 import { waitsOnUserAction } from '@shared/nexus/stepState';
 import { plainSentence } from '../project/evidenceModel';
+import { AGENT_REASON_TEXT } from '../data/errorCopy';
 
 export type JobStageId = 'queued' | 'provisioning' | 'running' | 'collecting' | 'validating' | 'result';
 export type JobStageState = 'done' | 'active' | 'waiting' | 'pending' | 'stopped';
@@ -206,7 +207,12 @@ const AGENT_FAIL_TEXT: Readonly<Record<string, string>> = Object.freeze({
   runtime_auth: 'The agent could not sign in. Open Setup to check it',
   limit: 'The agent stopped at one of its limits (time, tokens, tool calls or budget)',
   runtime_protocol: 'The agent stopped after an answer Nexus could not read',
-  runtime_error: 'The agent ended without a result'
+  runtime_error: 'The agent ended without a result',
+  worktree_guard: 'The agent was stopped: it changed something outside its working copy; nothing was collected',
+  // The same sentence the envelope gives a refused start with this reason (the user's next step is in it).
+  consent_mismatch: AGENT_REASON_TEXT.consent_mismatch.replace(/\.$/, ''),
+  proxy_failed: 'The agent’s network proxy could not start; check again in Setup',
+  runtime_unknown: AGENT_REASON_TEXT.runtime_unknown.replace(/\.$/, '')
 });
 export function agentTurnHeadline(j: Pick<JobView, 'state' | 'outcome' | 'phase' | 'headline' | 'cancelRequested'>): string {
   switch (j.state) {

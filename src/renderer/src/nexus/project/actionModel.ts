@@ -8,7 +8,7 @@ import type { DeploymentStatus } from '@shared/nexus/platform';
 import { USER_ACTIONS, getUserAction } from '@shared/nexus/actions';
 import { getDomain } from '@shared/nexus/domains';
 import { isAtOrBefore } from '@shared/nexus/domainSpec';
-import { setupText } from '../data/errorCopy';
+import { AGENT_OFF_TEXT, setupText } from '../data/errorCopy';
 import { gb, type ExecAvailability } from '../data/executionModel';
 import { livePreviewsOf, type PreviewSubject } from '../runs/jobRunModel';
 
@@ -54,6 +54,8 @@ export function reasonSentence(a: Pick<ActionAvailabilityView, 'label' | 'reason
   if (r === 'future' || r === 'planned') return null;
   if (r.startsWith('setup:')) return `${a.label}: ${setupText(r)}`;
   if (r.startsWith('blocked_by_step:')) return `${a.label}: needs a ready version from the ${stepLabel(workspaceId, r.slice(16))} step first.`;
+  // B2b: an agent flow while agent work is off says why in the one agent-off sentence (not "not available right now").
+  if (r === 'agents_unavailable') return `${a.label}: ${AGENT_OFF_TEXT}`;
   if (r === 'permission') return `${a.label}: you do not have permission to do that here.`;
   if (r === 'withdrawn' || r === 'complete') return `${a.label}: this project no longer takes part in this workspace.`;
   if (r === 'not_applicable') return null;
@@ -179,7 +181,8 @@ export function approvalRow(a: ApprovalView, now: number, fmt: (t: number) => st
   if (r.baseDigest) facts.push({ label: 'Pinned base', value: `sha256:${r.baseDigest.replace(/^sha256:/, '').slice(0, 12)}` });
   if (r.profile) facts.push({ label: 'Sandbox', value: r.profile });
   const title = a.reason === 'egress.deps' ? 'Download dependencies'
-    : a.reason === 'image.prepare' ? `Prepare the ${r.profile ?? 'sandbox'} image` : 'Approval';
+    : a.reason === 'image.prepare' ? `Prepare the ${r.profile ?? 'sandbox'} image`
+      : a.reason === 'repo.write_refs' ? 'Let Nexus write hidden refs in this repository' : 'Approval';
   const pending = a.status === 'pending' && a.expiresAt > now;
   const mins = Math.max(0, Math.ceil((a.expiresAt - now) / 60_000));
   const expires = a.status !== 'pending' ? (a.decidedAt ? `Answered at ${fmt(a.decidedAt)}` : `Requested at ${fmt(a.requestedAt)}`)

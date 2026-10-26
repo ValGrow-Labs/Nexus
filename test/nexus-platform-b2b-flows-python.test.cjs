@@ -104,6 +104,7 @@ test('E2E-B2b-1 python: requirement -> turn -> change set -> cs.tests_pass -> re
   const bld = await runBuild(w, snap2.versionId, 'dist');
   assert.equal(w.versionRow(bld.build).status, 'candidate');
 
+  assert.notEqual(await w.railStep('iteration'), 'done', 'a single change set never makes Iteration done (final review C2)');
   // ----- the iteration on the same worktree
   implementing(w, PY.pageV1, { title: 'Paginate the ledger', summary: 'A page helper.', clientKey: 'cs-b1' }, { execArgv: PYTEST, tokens });
   const c = await w.turn('Add pagination to the ledger export', { sessionId: a.sessionId });
@@ -121,6 +122,7 @@ test('E2E-B2b-1 python: requirement -> turn -> change set -> cs.tests_pass -> re
   assert.equal(w.jobRow(decided.job.id).session_id, a.sessionId, 'the same conversation');
   const [csB2] = w.changeSetsOf(decided.job.id);
   assert.equal(await w.until_candidate(csB2), 'candidate');
+  assert.equal(await w.railStep('iteration'), 'done', 'Iteration is done only now that v2 exists and passed its checks');
   const headB2 = storageOf(w, csB2).commit;
   assert.equal(w.git('rev-parse', `${headB2}^`), headB1, 'v2 continues on the same worktree');
   assert.equal(metaOf(w, csB2).base, w.git('merge-base', accept.mergeCommit, headB2), 'v2\'s base is the merge-base with the accepted work');
@@ -135,7 +137,7 @@ test('E2E-B2b-1 python: requirement -> turn -> change set -> cs.tests_pass -> re
   assert.equal(w.versionRow(csB1).status, 'candidate', 'the superseded v1 is never accepted');
 
   // ----- evidence-based completion, the store
-  for (const id of DONE_STEPS) assert.equal(id === 'review' ? await w.railStep('review') : w.stepOf(id), 'done', id);
+  for (const id of DONE_STEPS) assert.equal(id === 'review' || id === 'iteration' ? await w.railStep(id) : w.stepOf(id), 'done', id);
   for (const id of NEEDS_MANIFEST) assert.notEqual(w.stepOf(id), 'done', `${id} needs a nexus.app.json: a Python library does not claim it`);
   for (const cs of [csA, csB2]) assert.deepEqual(CS_VALIDATORS.filter((v) => w.checks(cs)[v] !== 'passed'), []);
   assert.equal(isExecutableEndToEnd(getDomain('sde'), 'B2b'), true);

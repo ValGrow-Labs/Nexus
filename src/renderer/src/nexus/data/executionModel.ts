@@ -5,7 +5,7 @@
 import type { AgentConsentView, AgentSetupView, EventView, HealthView, NexusResult } from '@shared/nexus/ipc';
 import { GIB, MIN_DOCKER_CPUS, MIN_DOCKER_MEMORY } from '@shared/nexus/resourceGate';
 import { AGENT_DEFAULTS } from '@shared/nexus/agentPolicy';
-import { errorCopy, executionNotice, unavailableNotice } from './errorCopy';
+import { agentsNotice, errorCopy, executionNotice, unavailableNotice } from './errorCopy';
 
 /**
  * Sizes in GB as Windows Explorer shows them (binary: 1 GB = 2^30 bytes), which is also how the resource gate
@@ -147,7 +147,7 @@ export function noticeFor(a: ExecAvailability): { text: string; setup: boolean }
 
 // ---------- the setup sheet ----------
 
-export type SetupState = 'ok' | 'problem' | 'advisory' | 'unknown';
+export type SetupState = 'ok' | 'problem' | 'advisory' | 'unknown' | 'off';
 /** One row: a label, a status word (never colour alone), the facts, and what to do. */
 export interface SetupRow {
   id: string; label: string; state: SetupState; word: string; text: string; action: string | null;
@@ -157,7 +157,7 @@ export interface SetupRow {
   consent?: { op: 'grant' | 'revoke'; label: string };
 }
 
-const WORD: Record<SetupState, string> = { ok: 'Ready', problem: 'Needs attention', advisory: 'Works, below the recommendation', unknown: 'Not checked' };
+const WORD: Record<SetupState, string> = { ok: 'Ready', problem: 'Needs attention', advisory: 'Works, below the recommendation', unknown: 'Not checked', off: 'Not available' };
 const row = (id: string, label: string, state: SetupState, text: string, action: string | null = null,
   prepare: SetupRow['prepare'] = null): SetupRow => ({ id, label, state, word: WORD[state], text, action, prepare });
 
@@ -250,7 +250,7 @@ export function setupSheet(h: HealthView, ctx: { estimates?: ReadonlyMap<string,
   rows.push(h.runner.attached
     ? row('runner', 'Execution runner', 'ok', h.runner.restarts > 0 ? `Running (restarted ${h.runner.restarts} times).` : 'Running.')
     : row('runner', 'Execution runner', 'problem', 'Not running.', 'Restart the app; the runner starts with it.'));
-  if (h.agent) rows.push(...agentSetupRows(h.agent, { hosts: ctx.hosts ?? null }));
+  if (h.agent) rows.push(...agentSetupRows(h.agent, { hosts: ctx.hosts ?? null, offText: agentsNotice(h.db.execution ? 'not_enabled' : h.db.subReason) }));
   rows.push(row('gpu', 'GPU', 'ok', gpuLine(h.gpu)));
   // The GPU line is a fact, not a requirement: it is never a problem and never offered.
   rows[rows.length - 1].word = h.gpu.detected ? 'Not used' : 'Not needed';
@@ -262,9 +262,11 @@ export function setupSheet(h: HealthView, ctx: { estimates?: ReadonlyMap<string,
 // agent view says "the agent" and "your network permission".
 
 /** Said once, on the permission row: what the installed agent program keeps, what Nexus never touches, and what is policy. */
-export const AGENT_STATE_DISCLOSURE = 'The installed agent program keeps its own state files (its sign-in, settings and log files) in your own user folder. '
-  + 'Nexus never reads, copies or stores the sign-in, and the agent can reach only the destination you grant here. '
-  + 'The agent runs in a sandbox with no other network; which files it may touch is a rule of the agent program, not an operating-system wall.';
+export const AGENT_STATE_DISCLOSURE = 'The installed agent program keeps its own state files (its sign-in, settings and log files) in your own user folder, '
+  + 'and Nexus never reads, copies or stores the sign-in. '
+  + 'The agent program runs on this computer as you. Its own network traffic is sent through Nexus’s proxy, which allows only the destination you grant '
+  + '(this is a setting the program follows, not a firewall). Every command it runs goes into a sandbox with no network. '
+  + 'Which files it may touch is a rule of the agent program, not an operating-system wall.';
 
 const HOST_RE = /^[a-z0-9]([a-z0-9.-]{0,120}[a-z0-9])?:[0-9]{1,5}$/i;
 /** The destinations of a #51 answer (`consent.hosts`), kept only when they read as host:port; null when none do. */
@@ -288,24 +290,33 @@ export function consentRereadDelay(view: Pick<AgentConsentView, 'state' | 'conse
   return CONSENT_REREAD_BASE_MS * (attempt + 1);
 }
 
-const capsText = (c: { turnUsdCents: number; dayUsdCents: number; turnsPerHour: number; concurrentTurns: number; toolCalls: number }): string =>
-  `up to ${dollars(c.turnUsdCents)} per turn and ${dollars(c.dayUsdCents)} per day, ${c.turnsPerHour} turns an hour, ${c.concurrentTurns} at a time, ${c.toolCalls} tool calls per turn`;
+const capsText = (c: { turnUsdCents: number; dayUsdCents: number; turnsPerHour: number; concurrentTurns: number; turnTokens: number; toolCalls: number;
+  wallClockMs: number; childJobs: number }): string =>
+  `up to ${dollars(c.turnUsdCents)} per turn and ${dollars(c.dayUsdCents)} per day, ${c.turnsPerHour} turns an hour, ${c.concurrentTurns} at a time, `
+  + `${Math.round(c.turnTokens / 1000)}k tokens, ${c.toolCalls} tool calls, ${Math.max(1, Math.round(c.wallClockMs / 60_000))} minutes and ${c.childJobs} child jobs per turn`;
 const dollars = (cents: number): string => `$${Math.floor(cents / 100)}.${String(Math.round(cents) % 100).padStart(2, '0')}`;
 
 /** The agent's setup rows: the program (its label from the adapter), the network permission, and today's usage. */
-export function agentSetupRows(a: AgentSetupView, o: { hosts?: readonly string[] | null; fmt?: (t: number) => string } = {}): SetupRow[] {
+export function agentSetupRows(a: AgentSetupView, o: { hosts?: readonly string[] | null; fmt?: (t: number) => string; offText?: string } = {}): SetupRow[] {
   const fmt = o.fmt ?? ((t: number) => new Date(t).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }));
+  // Agent work is not in place: one row, one sentence. Nothing to check, nothing to grant, no "check again".
+  if (a.state === 'off') return [row('agent', 'Agent', 'off', o.offText ?? agentsNotice('not_enabled'))];
   const rows: SetupRow[] = [];
   const label = a.label ?? 'Agent';
+  const version = a.version ? ` (version ${a.version})` : '';
   switch (a.state) {
     case 'ready':
-      rows.push(row('agent', label, 'ok', `The agent program is installed and signed in${a.version ? ` (version ${a.version})` : ''}.`)); break;
+      // `ready` only means the program answered and did not say it is signed out: a sign-in that could not be read is said so.
+      if (a.signedIn === 'yes') rows.push(row('agent', label, 'ok', `The agent program is installed and signed in${version}.`));
+      else rows.push(row('agent', label, 'unknown', `The agent program is installed${version}. Nexus could not confirm that the agent program is signed in.`,
+        'Check again in a moment. Nexus never signs in for you.'));
+      break;
     case 'not_installed':
       rows.push(row('agent', label, 'problem', 'The agent program is not installed on this computer.', 'Install it, then check again.')); break;
     case 'not_signed_in':
       rows.push(row('agent', label, 'problem', 'The agent program is not signed in. Sign in with it, then check again in Setup.', 'Nexus never signs in for you.')); break;
     case 'version_unsupported':
-      rows.push(row('agent', label, 'problem', `The installed agent program is not a version Nexus supports${a.version ? ` (version ${a.version})` : ''}.`,
+      rows.push(row('agent', label, 'problem', `The installed agent program is not a version Nexus supports${version}.`,
         'Install a supported version, then check again.')); break;
     case 'unavailable':
       rows.push(row('agent', label, 'unknown', 'The agent could not be checked. Open Setup and check again.', 'Check again in a moment.')); break;
@@ -313,15 +324,15 @@ export function agentSetupRows(a: AgentSetupView, o: { hosts?: readonly string[]
       rows.push(row('agent', label, 'unknown', 'The agent has not been checked on this computer yet.', 'Check again in a moment.'));
   }
   const hosts = o.hosts && o.hosts.length > 0 ? o.hosts : null;
-  const dest = hosts ? `only ${hosts.join(', ')}` : a.consent.hostsCount === 1 ? 'one network destination' : `${a.consent.hostsCount} network destinations`;
+  const dest = hosts ? hosts.join(', ') : a.consent.hostsCount === 1 ? 'one network destination' : `${a.consent.hostsCount} network destinations`;
   if (a.consent.live) {
     const c = a.consent.caps;
     const caps = c ? ` Limits: ${capsText(c)}.` : '';
     const when = a.consent.grantedAt !== null ? ` at ${fmt(a.consent.grantedAt)}` : '';
-    rows.push({ ...row('agent-consent', 'Agent network permission', 'ok', `Granted${when}. The agent may reach ${dest}, and nothing else.${caps}`, AGENT_STATE_DISCLOSURE),
+    rows.push({ ...row('agent-consent', 'Agent network permission', 'ok', `Granted${when}. Nexus’s proxy allows the agent only ${dest}.${caps}`, AGENT_STATE_DISCLOSURE),
       consent: { op: 'revoke', label: 'Revoke permission' } });
   } else if (a.state === 'ready' && hosts) {
-    rows.push({ ...row('agent-consent', 'Agent network permission', 'problem', `Not granted. Granting lets the agent reach ${dest}, and nothing else. Agent turns need it. Limits if you grant it: ${capsText(AGENT_DEFAULTS)}.`, AGENT_STATE_DISCLOSURE),
+    rows.push({ ...row('agent-consent', 'Agent network permission', 'problem', `Not granted. Granting lets Nexus’s proxy allow the agent only ${dest}. Agent turns need it. Limits if you grant it: ${capsText(AGENT_DEFAULTS)}.`, AGENT_STATE_DISCLOSURE),
       consent: { op: 'grant', label: 'Grant permission' } });
   } else if (a.state === 'ready') {
     rows.push(row('agent-consent', 'Agent network permission', 'problem', 'Not granted. The destination to grant is shown here once Nexus has read it from the agent program.',

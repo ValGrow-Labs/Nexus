@@ -68,6 +68,11 @@ export interface RailRecords {
    * project's. Undefined: not read, and the project's count stands.
    */
   draftPreviews?: readonly string[];
+  /**
+   * B2b: a change set was revised at least once (the `iteration` record): some change-set artifact has a second or later version
+   * that passed every change-set check (candidate or active). Undefined: not read, so the step claims no iteration.
+   */
+  changeRevised?: boolean;
 }
 
 export interface RailStep {
@@ -139,7 +144,7 @@ export function railFor(view: DomainSpecView, records: RailRecords | null = null
           : 'kind' in done && records.draftPreviews !== undefined ? records.draftPreviews.length
             : records.liveDeployments + records.liveActions.filter((a) => deploymentActions.includes(a)).length,
         recordPresent: 'record' in done ? (done.record === 'participation' ? records.participation : done.record === 'deployment_healthy' ? records.deploymentHealthy
-          : done.record === 'review' ? reviewRecorded(records) : false) : undefined
+          : done.record === 'review' ? reviewRecorded(records) : done.record === 'iteration' ? records.changeRevised === true : false) : undefined
       }, view.currentSubPhase);
     }
     return {

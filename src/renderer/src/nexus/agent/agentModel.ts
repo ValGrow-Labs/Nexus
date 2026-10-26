@@ -7,7 +7,7 @@
 import type {
   AgentSetupView, AgentStartArgs, AgentUsageView, HealthView, JobView, SessionDetailView, SessionView
 } from '@shared/nexus/ipc';
-import { AGENT_REASON_TEXT, ROLLBACK_OWED_TEXT, errorCopy } from '../data/errorCopy';
+import { AGENT_OFF_TEXT, AGENT_REASON_TEXT, ROLLBACK_OWED_TEXT, errorCopy } from '../data/errorCopy';
 import { noticeFor, sizeLabel, type ExecAvailability } from '../data/executionModel';
 import { agentTurnHeadline, waitPhaseText } from '../runs/jobRunModel';
 import { kindLabel, statusLabel } from '../project/artifactModel';
@@ -19,6 +19,16 @@ export const USAGE_ESTIMATED_LABEL = 'estimated by Nexus: the runtime did not re
 export const DISPLAY_ONLY_NOTE = 'What the agent wrote is shown for reading only. It is not evidence: only the checks and records are.';
 export const ISOLATION_NOTE = 'The agent works in its own copy of the repository. Your files change only when you accept a change and merge it.';
 export const MAX_MESSAGE_CHARS = 8000;
+/** Said under the panel when the cached check of the agent program is older than main keeps it: the send itself checks again. */
+export const SIGNIN_UNCONFIRMED_TEXT = 'Nexus could not confirm that the agent program is signed in.';
+export const RECHECK_ON_SEND_TEXT = 'Nexus will check the agent again when you send.';
+
+/** A short stable key for a message (FNV-1a): the pending-intent key never stores the message text itself. */
+export function messageKey(text: string): string {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < text.length; i++) { h ^= text.charCodeAt(i); h = Math.imul(h, 0x01000193) >>> 0; }
+  return `${text.length}.${h.toString(36)}`;
+}
 
 /** Whole US dollars and cents from a cent count ("$0.42"). Not a number the records do not hold: callers pass stored cents. */
 export function money(cents: number): string {
@@ -76,6 +86,10 @@ export interface AgentPanelView {
   setup: boolean;
   /** "Working" while a turn runs, "Waiting for you" while one asks for an approval; null otherwise. */
   working: 'Working' | 'Waiting for you' | null;
+  /** A line under the panel that is not a blocker (the check is stale and the send will redo it). */
+  note: string | null;
+  /** The sentence for a failed read of the conversations that is not "agent work is off" (a busy database, an unexpected failure). */
+  readError: string | null;
   sessions: SessionRowView[];
   usageToday: string | null;
 }
@@ -102,23 +116,39 @@ function runtimeBlocker(a: AgentSetupView): string | null {
   }
 }
 
+/** A conversation a new message may continue: `open`, or `running` with no live turn (main keeps it `running` after a turn ends). */
+export function continuable(s: Pick<SessionView, 'status' | 'liveJobId'>): boolean {
+  return s.status === 'open' || (s.status === 'running' && s.liveJobId === null);
+}
+/** The newest conversation a message continues, or null (start a new one). */
+export function continuableSession(sessions: readonly SessionView[] | null | undefined): SessionView | null {
+  return [...(sessions ?? [])].filter(continuable).sort((x, y) => y.updatedAt - x.updatedAt)[0] ?? null;
+}
+
 export function agentPanelModel(i: AgentPanelInput): AgentPanelView {
-  const empty: Omit<AgentPanelView, 'kind' | 'lead' | 'blockers' | 'canAsk' | 'setup'> = { working: null, sessions: [], usageToday: null };
+  const empty: Omit<AgentPanelView, 'kind' | 'lead' | 'blockers' | 'canAsk' | 'setup'> = { working: null, sessions: [], usageToday: null, note: null, readError: null };
   // Agent work off (the part is not in place): one sentence, no setup to offer.
   if (i.sessionsFail) {
     const c = errorCopy(i.sessionsFail.code, i.sessionsFail.reason, i.sessionsFail.subReason);
     if (c.kind === 'execution_unavailable' || c.kind === 'unavailable') return { kind: 'off', lead: c.text, blockers: [], canAsk: false, setup: false, ...empty };
   }
+  let readError: string | null = null;
+  if (i.sessionsFail) readError = errorCopy(i.sessionsFail.code, i.sessionsFail.reason, i.sessionsFail.subReason).text;
   if (i.availability.kind === 'platform_off' || i.availability.kind === 'execution_off') {
     return { kind: 'off', lead: i.availability.text, blockers: [], canAsk: false, setup: false, ...empty };
   }
+  // Agent work is not in place in this build or on this database: one sentence, nothing to check and nothing to grant.
+  if (i.health?.agent?.state === 'off') return { kind: 'off', lead: AGENT_OFF_TEXT, blockers: [], canAsk: false, setup: false, ...empty };
   const blockers: string[] = [];
   const exec = noticeFor(i.availability);
   if (i.availability.kind !== 'ready' && exec) blockers.push(exec.text);
   const a = i.health?.agent ?? null;
+  // The cached check of the program is older than main keeps it (state `unknown`) while a permission is live: the program was
+  // checked before, and #42 checks it again by itself when you send, so the panel asks rather than blocks.
+  const staleButAskable = a !== null && a.state === 'unknown' && a.consent.live;
   if (!a) blockers.push(AGENT_REASON_TEXT.runtime_unknown);
   else {
-    const rt = runtimeBlocker(a);
+    const rt = staleButAskable ? null : runtimeBlocker(a);
     if (rt) blockers.push(rt);
     else if (!a.consent.live) blockers.push(CONSENT_MISSING_TEXT);
     else if (a.consent.caps && a.consent.caps.dayUsdCents > 0 && a.usageToday.usdCents >= a.consent.caps.dayUsdCents) blockers.push(AGENT_REASON_TEXT.budget_exhausted);
@@ -126,23 +156,27 @@ export function agentPanelModel(i: AgentPanelInput): AgentPanelView {
   const rows: SessionRowView[] = [...(i.sessions ?? [])].sort((x, y) => y.updatedAt - x.updatedAt).map((s) => {
     const job = s.liveJobId ? i.jobs?.get(s.liveJobId) ?? null : null;
     const turn = job ? agentTurnHeadline(job) : s.liveJobId ? 'The agent is working' : null;
-    const live = s.status === 'running' || s.status === 'awaiting_approval';
+    // Main never moves a session from `running` back to `open`: after a turn ends it stays `running` with no live turn. Whether it is
+    // working is whether a turn is live; a session with none is ready for the next message (a new turn on it is allowed).
+    const idle = continuable(s);
+    const live = (s.status === 'running' && s.liveJobId !== null) || s.status === 'awaiting_approval';
     // A turn the guards hold is waiting, not working.
     const waiting = job && (job.state === 'queued' || job.state === 'retry_scheduled' || job.state === 'leased') && waitPhaseText(job.phase) !== null;
     return {
-      id: s.id, word: waiting ? 'Waiting' : SESSION_WORD[s.status] ?? 'Status unknown', turn,
-      turns: count(s.turns, 'turn', 'turns'), live, canSend: s.status === 'open', canStop: live, canEnd: s.status === 'open'
+      id: s.id, word: waiting ? 'Waiting' : idle ? SESSION_WORD.open : SESSION_WORD[s.status] ?? 'Status unknown', turn,
+      turns: count(s.turns, 'turn', 'turns'), live, canSend: idle, canStop: live, canEnd: idle
     };
   });
   const ss = i.sessions ?? [];
-  const working = ss.some((s) => s.status === 'running') && rows.some((r) => r.word === 'Working') ? 'Working'
+  const working = rows.some((r) => r.live && r.word === 'Working') ? 'Working'
     : ss.some((s) => s.status === 'awaiting_approval') ? 'Waiting for you' : null;
   const canAsk = blockers.length === 0;
   return {
     kind: canAsk ? 'ready' : 'setup',
     lead: canAsk ? ISOLATION_NOTE : blockers[0],
     blockers, canAsk, setup: !canAsk, working, sessions: rows,
-    usageToday: a && a.consent.live ? usageTodayLine(a.usageToday) : null
+    usageToday: a && a.consent.live ? usageTodayLine(a.usageToday) : null,
+    note: canAsk && staleButAskable ? RECHECK_ON_SEND_TEXT : canAsk && a !== null && a.state === 'ready' && a.signedIn !== 'yes' ? SIGNIN_UNCONFIRMED_TEXT : null, readError
   };
 }
 
@@ -170,10 +204,19 @@ export interface AgentFailure {
   detail?: Partial<Record<string, string | number | boolean | null>>;
 }
 
-/** The sentence for a refused agent, review, accept or merge call. A refusal that left an undo owed says so after its sentence. */
+/** One next step after a refusal that would otherwise leave the person stuck (main's sentence says what happened, this says what to do). */
+export const NEXT_STEP: Readonly<Record<string, string>> = Object.freeze({
+  not_fast_forward: 'Bring your branch and the accepted work together yourself with git, or ask the agent to redo the change on your current branch.',
+  integration_unexpected: 'Check what changed in the repository outside Nexus; Nexus will not accept or merge until the accepted work is what it recorded.',
+  merge_conflict: 'Use Request changes so the agent revises the change on top of the accepted work.',
+  branch_mismatch: 'Check out the branch the accepted work is for, then try again.'
+});
+
+/** The sentence for a refused agent, review, accept or merge call, with its next step where there is one. A refusal that left an undo owed says so after. */
 export function agentFailText(r: AgentFailure): string {
   const base = errorCopy(r.code, r.reason, r.subReason).text;
-  return r.detail && r.detail.rollbackOwed === true ? `${base} ${ROLLBACK_OWED_TEXT}` : base;
+  const step = r.reason && Object.prototype.hasOwnProperty.call(NEXT_STEP, r.reason) ? ` ${NEXT_STEP[r.reason]}` : '';
+  return r.detail && r.detail.rollbackOwed === true ? `${base}${step} ${ROLLBACK_OWED_TEXT}` : `${base}${step}`;
 }
 
 // ---------- the session log ----------
@@ -188,6 +231,18 @@ export interface SessionLogView {
 }
 
 const TOOL_NAME = /^[A-Za-z][A-Za-z0-9_.:-]{0,63}$/;
+/** Plain words for the tools Nexus serves to the agent (a raw tool id is never shown). */
+const NEXUS_TOOL_LABEL: Readonly<Record<string, string>> = Object.freeze({
+  context_get: 'Read this turn’s context', artifact_list: 'List the project’s artifacts', artifact_read: 'Read an artifact', validations_get: 'Read check results',
+  job_status: 'Read a job’s status', job_logs: 'Read a job’s log', sandbox_exec: 'Run a command in the sandbox', job_request: 'Ask Nexus to run a job',
+  changeset_register: 'Register the change', requirement_draft: 'Draft a requirement', review_request: 'Ask for a review'
+});
+/** A tool as the log shows it: a Nexus tool in plain words (any `mcp__<server>__` prefix removed), another plain tool name as is, else "a tool". */
+export function toolLabel(tool: string): string {
+  const bare = tool.replace(/^mcp__[A-Za-z0-9-]+__/, '');
+  if (Object.prototype.hasOwnProperty.call(NEXUS_TOOL_LABEL, bare)) return NEXUS_TOOL_LABEL[bare];
+  return TOOL_NAME.test(tool) && !/^mcp__/.test(tool) ? tool : 'a tool';
+}
 const clock = (t: number): string => (Number.isFinite(t) ? new Date(t).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '');
 
 /** The log of one conversation. Agent text is labelled display only; a tool call shows its name and result size, never its arguments. */
@@ -201,7 +256,7 @@ export function sessionLogModel(d: SessionDetailView): SessionLogView {
       usage: usageLine(t.usage), when: clock(t.createdAt)
     })),
     toolCalls: d.toolCalls.map((c) => ({
-      key: String(c.seq), tool: TOOL_NAME.test(c.tool) ? c.tool : 'a tool',
+      key: String(c.seq), tool: toolLabel(c.tool),
       outcome: c.ok === null ? 'result not recorded' : c.ok ? 'answered' : 'refused or failed',
       size: c.resultBytes === null ? 'size not recorded' : sizeLabel(c.resultBytes)
     })),

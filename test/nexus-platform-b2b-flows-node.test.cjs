@@ -162,6 +162,9 @@ test('E2E-B2b-1 node: requirement -> turn -> change set -> cs.tests_pass -> revi
   assert.equal(w.versionRow(dep.report).status, 'candidate');
   assert.equal(w.stepOf('dev-deployment'), 'done');
 
+  // Round 4 (final review C2): one reviewed, accepted and merged change set is NOT an iteration.
+  assert.notEqual(await w.railStep('iteration', { deploymentHealthy: true }), 'done', 'a single change set never makes Iteration done');
+  assert.equal(await w.railStep('review', { deploymentHealthy: true }), 'done');
   // ----- the iteration: a change set on top of the merged work, the diagnostic as input; request_changes; v2 on the same worktree
   implementing(w, NODE.pageV1, { title: 'Paginate the ledger', summary: 'A page helper.', clientKey: 'cs-b1' }, { say: 'Adding pagination.', tokens: ctx.tokens });
   const c = await w.turn('Add pagination to the ledger export; the diagnostic report is attached', { sessionId: a.sessionId, focus: [dep.report] });
@@ -198,6 +201,7 @@ test('E2E-B2b-1 node: requirement -> turn -> change set -> cs.tests_pass -> revi
   assert.equal(metaOf(w, csB2).base, w.git('merge-base', mergeA, headB2), 'v2\'s base is the merge-base with the accepted work');
   assert.ok(w.db.prepare("SELECT 1 FROM artifact_edges WHERE from_version_id = ? AND to_version_id = ? AND relation = 'derived_from'").get(csB2, csB1), 'v2 derived_from v1');
   for (const v of CS_VALIDATORS) assert.equal(w.checks(csB2)[v], 'passed', `v2 ${v}`);
+  assert.equal(await w.railStep('iteration', { deploymentHealthy: true }), 'done', 'Iteration is done only now that v2 exists and passed its checks');
   assert.equal(w.db.prepare('SELECT COUNT(*) n FROM session_worktrees WHERE session_id = ?').get(a.sessionId).n, 1, 'one worktree for the conversation');
   const ctxText = fs.readFileSync(path.join(w.dataHome.root, 'jobs', decided.job.id, 'agent', 'context.md'), 'utf8');
   assert.match(ctxText, /short last page/, 'the reviewer\'s comment reached the agent through its context file');
@@ -218,10 +222,10 @@ test('E2E-B2b-1 node: requirement -> turn -> change set -> cs.tests_pass -> revi
 
   // ----- evidence-based completion, the orphan queries, the store
   // Every step from the records: `review` through the product own rail reader, the rest by stepStateFrom over the database. The
-  // `iteration` step's proof is the explicit v1 / v2 assertions above (same session and worktree, derived_from, base = merge-base);
-  // the rail's iteration step reads the same change-set records as ai-implementation and adds nothing to them.
+  // `iteration` step is read through the product's own rail too (a second version that passed its checks); its proof is also the
+  // explicit v1 / v2 assertions above (same session and worktree, derived_from, base = merge-base).
   const stepStates = {};
-  for (const id of SDE_STEPS) stepStates[id] = id === 'review' ? await w.railStep('review', { deploymentHealthy: true }) : w.stepOf(id);
+  for (const id of SDE_STEPS) stepStates[id] = id === 'review' || id === 'iteration' ? await w.railStep(id, { deploymentHealthy: true }) : w.stepOf(id);
   assert.deepEqual(stepStates, Object.fromEntries(SDE_STEPS.map((id) => [id, 'done'])), 'every SDE step is done, from the records');
   // Each change-set step is done because of validation rows, not because a job exited 0:
   for (const cs of [csA, csB2]) assert.deepEqual(CS_VALIDATORS.filter((v) => w.checks(cs)[v] !== 'passed'), []);

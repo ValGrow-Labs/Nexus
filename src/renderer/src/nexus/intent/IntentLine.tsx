@@ -15,7 +15,7 @@ import { nexusClient } from '../data/nexusClient';
 import { usePlatform } from '../data/platformStore';
 import { availabilityFrom } from '../data/executionModel';
 import { useExecStore, withIntent } from '../data/useExecution';
-import { agentFailText, agentPanelModel, intentRoute, startArgs } from '../agent/agentModel';
+import { agentFailText, agentPanelModel, continuableSession, intentRoute, messageKey, startArgs } from '../agent/agentModel';
 
 const TOOL_PAGE: Record<ProjectTool, string> = { bench: 'Bench', changes: 'Changes', completion: 'Completion', runs: 'Runs' };
 
@@ -82,8 +82,12 @@ export function IntentLine({ summoned = false, onClose }: { summoned?: boolean; 
   // route, workspace and state keeps the legacy lead-agent behaviour. Reads only what the bench already loaded: no request of its own.
   const execHealth = useExecStore((st) => st.health);
   const platformOff = usePlatform((st) => st.unavailable);
-  const canAsk = useMemo(() => agentPanelModel({ health: execHealth && execHealth.ok ? execHealth.data : null,
-    availability: availabilityFrom({ unavailable: platformOff }, execHealth), sessions: [], sessionsFail: null }).canAsk, [execHealth, platformOff]);
+  const askable = useMemo(() => {
+    const p = agentPanelModel({ health: execHealth && execHealth.ok ? execHealth.data : null,
+      availability: availabilityFrom({ unavailable: platformOff }, execHealth), sessions: [], sessionsFail: null });
+    return { canAsk: p.canAsk, note: p.note };
+  }, [execHealth, platformOff]);
+  const canAsk = askable.canAsk;
   const mode = intentRoute({ routeName: route.name, primaryWorkspaceId: ctx.project ? ctx.ws?.id ?? null : null, canAsk });
 
   const chip = ctx.selection ?? ctx.project?.name ?? ctx.ws?.label ?? null;
@@ -95,7 +99,7 @@ export function IntentLine({ summoned = false, onClose }: { summoned?: boolean; 
   });
 
   const s = port.status;
-  const statusText = mode === 'agent' ? 'Sends to this project’s agent. It works in its own copy of the repository; your files change only when you accept and merge.'
+  const statusText = mode === 'agent' ? `Sends to this project’s agent. It works in its own copy of the repository; your files change only when you accept and merge.${askable.note ? ` ${askable.note}` : ''}`
     : s.state === 'unavailable' ? s.reason
     : s.state === 'starting' ? 'Lead agent starting. Requests are queued until it is ready.'
     : s.deliveryPaused ? 'Lead agent ready. Delivery is paused in Agents.'
@@ -103,15 +107,19 @@ export function IntentLine({ summoned = false, onClose }: { summoned?: boolean; 
 
   const sendToAgent = async (text: string, projectId: string) => {
     if (sending) return;
-    const built = startArgs({ projectId, workspaceId: 'sde', sessionId: null, message: text, intentId: 'pending' });
-    if ('problem' in built) { setError(built.problem); setSent(null); return; }
     setSending(true);
-    const r = await withIntent(`intent:agent:${projectId}:${text.length}:${text.slice(0, 64)}`, (intentId) => nexusClient.agentStart({ ...built.args, intentId }));
+    // Continue the project's newest conversation that has no live turn; start one only when there is none (or it cannot be read).
+    const list = await nexusClient.sessionsList({ projectId });
+    const sessionId = list.ok ? continuableSession(list.data)?.id ?? null : null;
+    const built = startArgs({ projectId, workspaceId: 'sde', sessionId, message: text, intentId: 'pending' });
+    if ('problem' in built) { setSending(false); setError(built.problem); setSent(null); return; }
+    // The pending-intent key holds a hash of the message, never the message itself.
+    const r = await withIntent(`intent:agent:${projectId}:${sessionId ?? 'new'}:${messageKey(text)}`, (intentId) => nexusClient.agentStart({ ...built.args, intentId }));
     setSending(false);
     if (!r.ok) { setError(agentFailText(r)); setSent(null); return; }
     usePlatform.getState().bumpRev();
     setDraft(''); setError(null);
-    setSent({ href: formatRoute({ name: 'project', id: projectId, tool: 'bench' }), label: 'Follow it in the agent panel', lead: 'Sent to the agent.' });
+    setSent({ href: formatRoute({ name: 'project', id: projectId, tool: 'bench' }), label: 'Follow it in the agent panel', lead: sessionId ? 'Sent to the agent in your open conversation.' : 'Sent to the agent in a new conversation.' });
   };
 
   const send = () => {
@@ -143,8 +151,8 @@ export function IntentLine({ summoned = false, onClose }: { summoned?: boolean; 
     <form className="nx-intent" aria-label={mode === 'agent' ? 'Ask the project’s agent' : 'Ask the lead agent'} onSubmit={(e) => { e.preventDefault(); send(); }}>
       <div className="nx-intent__row">
         {chip && (
-          <span className="nx-intent__chip" title={`Sent with context: ${chip}`}>
-            <span className="nx-visually-hidden">Context: </span>{chip}
+          <span className="nx-intent__chip" title={mode === 'agent' ? `You are looking at: ${chip}. The agent is told your message and which project this is, not this selection.` : `Sent with context: ${chip}`}>
+            <span className="nx-visually-hidden">{mode === 'agent' ? 'Looking at: ' : 'Context: '}</span>{chip}
           </span>
         )}
         <label className="nx-visually-hidden" htmlFor={ids.field}>{mode === 'agent' ? 'Ask the project’s agent' : 'Ask the lead agent'}</label>
@@ -190,7 +198,7 @@ export function IntentLine({ summoned = false, onClose }: { summoned?: boolean; 
       </div>
       {error && <p id={ids.error} className="nx-intent__error" role="alert">{error}</p>}
       <p id={ids.status} className="nx-intent__status">
-        <span>{statusText}</span> <span>{mode === 'agent' ? 'Each message starts a new conversation; follow it in the agent panel on the bench.' : port.replyHint}</span>
+        <span>{statusText}</span> <span>{mode === 'agent' ? 'A message continues this project’s open conversation, or starts one when there is none; follow it in the agent panel on the bench.' : port.replyHint}</span>
         <span role="status">
           {sent && <> {sent.lead} <a href={sent.href}>{sent.label}</a></>}
         </span>
