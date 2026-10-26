@@ -88,14 +88,16 @@ function JobRow({ job, explain, jobs, deployments }: { job: JobView; explain: bo
         <h3 id={titleId} className="nx-run__title">{run.title}</h3>
         <span className="nx-run__headline" aria-live="polite" title={run.codes.length ? run.codes.join(', ') : undefined}>{run.headline}</span>
       </header>
-      <ol className="nx-run__stages" aria-label="Stages">
-        {run.stages.map((s) => (
-          <li key={s.id} data-state={s.state === 'stopped' ? 'unreported' : s.state === 'waiting' ? 'waiting' : s.state}>
-            <span>{s.label}</span>
-            <span className="nx-visually-hidden">: {STAGE_STATE_TEXT[s.state]}</span>
-          </li>
-        ))}
-      </ol>
+      {run.stages.length > 0 && (
+        <ol className="nx-run__stages" aria-label="Stages">
+          {run.stages.map((s) => (
+            <li key={s.id} data-state={s.state === 'stopped' ? 'unreported' : s.state === 'waiting' ? 'waiting' : s.state}>
+              <span>{s.label}</span>
+              <span className="nx-visually-hidden">: {STAGE_STATE_TEXT[s.state]}</span>
+            </li>
+          ))}
+        </ol>
+      )}
       <p className="nx-run__note">{run.word} · {new Date(job.createdAt).toLocaleString()}{job.attempts > 1 ? ` · ${job.attempts} attempts` : ''}</p>
       <div className="nx-run__actions">
         {run.canCancel && <Button disabled={busy !== null} onClick={() => { void act('cancel'); }}>{busy === 'cancel' ? 'Cancelling…' : 'Cancel'}</Button>}

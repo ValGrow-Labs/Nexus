@@ -1,4 +1,4 @@
-import { useEffect, useId, useMemo, useState } from 'react';
+import { useEffect, useId, useMemo, useRef, useState } from 'react';
 import type { PreviewView, ReviewDecision } from '@shared/nexus/ipc';
 import type { VersionStatus } from '@shared/nexus/platform';
 import { nexusClient } from '../data/nexusClient';
@@ -11,7 +11,7 @@ import { Button } from '../ui/Button';
 import { EvidenceSection } from './EvidenceSection';
 import { useExecutionUi } from './execContext';
 import {
-  BUTTON_LABEL, acceptedText, changeSetModel, changeSetRows, diffLineKind, mergeModel, mergedText, type ChangeSetButton, type MergeModel
+  BUTTON_LABEL, acceptedText, changeSetModel, changeSetRows, diffLineKind, mergeModel, mergedText, type ChangeSetButton, type ChangeSetRow, type MergeModel
 } from './changeSetModel';
 
 const PAGE_BYTES = 64 * 1024;
@@ -41,7 +41,10 @@ function useDiff(versionId: string): { text: string | null; error: string | null
     return () => { alive = false; };
   }, [versionId]);
   const last = pages[pages.length - 1] ?? null;
-  return { text: pages.length ? pages.map((p) => p.text ?? '').join('') : null, error, loaded, more: last && last.nextPage !== null ? () => { void read(last, () => true); } : null };
+  // "Show more" ends with the view: a page that arrives after the change was left is dropped.
+  const mounted = useRef(true);
+  useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, [versionId]);
+  return { text: pages.length ? pages.map((p) => p.text ?? '').join('') : null, error, loaded, more: last && last.nextPage !== null ? () => { const v = versionId; void read(last, () => mounted.current && v === versionId); } : null };
 }
 
 function Diff({ versionId }: { versionId: string }) {
@@ -190,16 +193,22 @@ export function ChangeSetReview({ versionId, projectId, status, name, withEviden
   );
 }
 
-/** The Changes tool's section: accepted work to merge, then each change the agent made (the first one waiting for you is open). */
+/** The Changes tool's section: accepted work to merge, then each change the agent made (the first one waiting for you is open).
+ *  With no change set it renders nothing and reads nothing from the repository. */
 export function ChangeSets() {
   const ui = useExecutionUi();
   const projectId = ui?.projectId ?? null;
   const artifacts = useProjectArtifacts(projectId ?? '');
-  const repo = useRepoStatus(projectId);
   const rows = useMemo(() => (projectId ? changeSetRows(artifacts.artifacts) : []), [projectId, artifacts.artifacts]);
+  if (!projectId || rows.length === 0) return null;
+  return <ChangeSetList projectId={projectId} rows={rows} />;
+}
+
+function ChangeSetList({ projectId, rows }: { projectId: string; rows: ChangeSetRow[] }) {
+  // The repository status (a git read through the runner) is asked only once there is a change to show.
+  const repo = useRepoStatus(projectId);
   const firstWaiting = rows.find((r) => r.reviewable)?.versionId ?? null;
   const [open, setOpen] = useState<Record<string, boolean>>({});
-  if (!projectId || rows.length === 0) return null;
   const merge = mergeModel(repo.data);
   return (
     <section className="nx-cs__list" aria-labelledby="nx-cs-title">

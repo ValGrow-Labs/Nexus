@@ -93,11 +93,12 @@ test('UA1 every reason main words has one sentence in the renderer, word for wor
 // ---------- UA2, UA11 ----------
 
 const agentFiles = () => walk(path.join(NEXUS, 'agent')).filter((f) => /\.(ts|tsx)$/.test(f));
-const VIEW_FILES = ['project/changeSetModel.ts', 'project/ChangeSetReview.tsx'];
+// The change-set views, and the shared files this task's copy lives in (copy outside the setup row names no engine or host).
+const VIEW_FILES = ['project/changeSetModel.ts', 'project/ChangeSetReview.tsx', 'data/errorCopy.ts', 'runs/jobRunModel.ts', 'intent/IntentLine.tsx', 'data/useAgents.ts'];
 
 test('UA2 no engine or vendor name in agent/** or the change-set views (code or comments)', () => {
   const files = [...agentFiles(), ...VIEW_FILES.map((f) => path.join(NEXUS, f))];
-  assert.ok(files.length >= 5, 'the scan sees the agent files and the change-set views');
+  assert.ok(files.length >= 9, 'the scan sees the agent files and the change-set views');
   for (const f of files) {
     fs.readFileSync(f, 'utf8').split(/\r?\n/).forEach((l, i) => assert.doesNotMatch(l, VENDOR, `${path.relative(ROOT, f)}:${i + 1}`));
   }
@@ -228,12 +229,22 @@ test('UA12 a partial turn with no change reads "The agent made no change", never
   assert.equal(v.word, 'No change');
   assert.equal(R.agentTurnHeadline(noChange), 'The agent made no change');
   assert.doesNotMatch(`${v.headline} ${v.word} ${v.title}`, /done|complete|finished|passed/i);
+  // Only the recorded outcome `no_change` justifies that sentence: a partial turn with no or an unknown outcome says only that it ended in part.
+  for (const outcome of [null, 'surprise', 'completed']) {
+    const p = R.jobRun(job({ state: 'partial', outcome, headline: 'checks_could_not_run', startedAt: NOW }));
+    assert.equal(p.headline, 'The agent’s turn ended in part; what it changed is not recorded', String(outcome));
+    assert.equal(p.word, 'Ended in part');
+  }
+  // A turn has no sandbox / collecting / checking ladder: no stage of an agent.run job reads done (it has none at all).
+  assert.deepEqual(v.stages, []);
   const NEVER = /\bcomplete(d)?\b|finished|end to end|\bdone\b/i;
   const states = ['queued', 'leased', 'running', 'awaiting_approval', 'retry_scheduled', 'completed', 'partial', 'failed', 'cancelled', 'timed_out', 'interrupted'];
   const outcomes = [null, 'completed', 'no_change', 'runtime_auth', 'limit', 'runtime_protocol', 'runtime_error', 'interrupted', 'surprise'];
   let n = 0;
   for (const state of states) for (const outcome of outcomes) for (const headline of ['queued', 'checks_failed', 'checks_passed', 'running', 'waiting_for_approval']) {
     const r = R.jobRun(job({ state, outcome, headline, startedAt: NOW, error: { code: 'x', message: 'raw runtime text' } }));
+    assert.ok(r.stages.every((s) => s.state !== 'done'), `${state}/${outcome}: no stage reads done`);
+    assert.deepEqual(r.stages, []);
     for (const t of [r.headline, r.word, r.title, ...r.stages.map((s) => s.label)]) { n++; assert.doesNotMatch(t, NEVER, `${state}/${outcome}: ${t}`); }
     assert.doesNotMatch(r.headline, /raw runtime text/, 'the runtime text is never shown');
     if (state === 'completed') assert.doesNotMatch(r.headline, /checks passed|checks could not run/);
@@ -460,7 +471,7 @@ test('source pins: the merge asks only the channel (the dialog is main\'s), Acce
   assert.match(rv, /nexusClient\.changeSetAccept\(/);
   assert.match(rv, /nexusClient\.reviewDecide\(/);
   assert.doesNotMatch(rv, /confirm\(|window\.confirm|showMessageBox/, 'the confirmation is main\'s native dialog, never a renderer one');
-  assert.doesNotMatch(rv + src('agent/AgentPanel.tsx') + src('data/useAgents.ts').replace(/setInterval\(read, CONSENT_REASK_MS\)/, ''), /setInterval/, 'no background polling');
+  assert.doesNotMatch(rv + src('agent/AgentPanel.tsx') + src('data/useAgents.ts').replace(/setInterval\(\(\) => read\(0\), CONSENT_REASK_MS\)/, ''), /setInterval/, 'no background polling');
   const hooks = src('data/useAgents.ts');
   assert.equal((hooks.match(/setInterval\(/g) || []).length, 1, 'only the open setup sheet re-asks');
   assert.match(hooks, /if \(!open\) return;/);
@@ -473,4 +484,61 @@ test('source pins: the merge asks only the channel (the dialog is main\'s), Acce
   assert.match(src('project/ProjectBench.tsx'), /<AgentPanel /);
   assert.match(src('review/ReviewSurface.tsx'), /<ChangeSets /);
   assert.match(src('project/kindViewers.tsx'), /case 'change_set'/);
+});
+
+// ---------- fix round 1 ----------
+
+test('F1 the intent line says the legacy reply hint only in legacy mode; in agent mode each send starts a new conversation (UA8 pin)', () => {
+  const il = src('intent/IntentLine.tsx');
+  assert.match(il, /mode === 'agent' \? 'Each message starts a new conversation;[^']*' : port\.replyHint/);
+  assert.equal((il.match(/port\.replyHint/g) || []).length, 1, 'the lead-agent terminal hint is rendered only through the legacy branch');
+});
+
+test('F2 the change view is keyed by version (no asking, comment, note or busy state leaks across versions); ActionArtifact.kind is required', () => {
+  assert.match(src('project/kindViewers.tsx'), /<ChangeSetReview key=\{version\.id\}/);
+  assert.match(src('project/ArtifactPassport.tsx'), /<KindViewer key=\{shownVersion\.id\}/);
+  assert.match(src('project/artifactModel.ts'), /type ActionArtifact = Pick<ArtifactView, 'status' \| 'ownerScope' \| 'currentVersionId' \| 'kind'>;/);
+  // The Changes tool reads the repository status only once a change exists: the hook lives in the list, below the early return.
+  const rv = src('project/ChangeSetReview.tsx');
+  const top = rv.slice(rv.indexOf('export function ChangeSets()'), rv.indexOf('function ChangeSetList'));
+  assert.doesNotMatch(top, /useRepoStatus\(/);
+  assert.match(top, /rows\.length === 0\) return null/);
+  assert.match(rv.slice(rv.indexOf('function ChangeSetList')), /useRepoStatus\(projectId\)/);
+});
+
+test('F3 #51 get never waits: an answer with no destination yet is asked again (bounded), a settled one is not; the sheet reads #51 after the health re-read', () => {
+  const view = (o = {}, c = {}) => ({ ...agentView(), state: 'unknown', consent: { live: false, caps: null, hostsCount: 0, grantedAt: null, hosts: [], ...c }, ...o });
+  // First open with a stale cache: no destination, state unknown -> look again soon, then later, then stop.
+  assert.equal(X.consentRereadDelay(view(), 0), 1500);
+  assert.equal(X.consentRereadDelay(view(), 1), 3000);
+  assert.equal(X.consentRereadDelay(view(), X.CONSENT_REREAD_LIMIT), null, 'bounded');
+  assert.equal(X.consentRereadDelay(view({ state: 'ready' }), 0), 1500, 'ready but no destination yet');
+  // Once the probe landed (ready, with the destination) the Grant button can show and nothing is asked again.
+  const landed = view({ state: 'ready' }, { hosts: ['api.example.test:443'], hostsCount: 1 });
+  assert.equal(X.consentRereadDelay(landed, 0), null);
+  assert.deepEqual(X.consentHostsOf(landed), ['api.example.test:443']);
+  assert.deepEqual(X.agentSetupRows(landed, { hosts: X.consentHostsOf(landed) }).find((r) => r.id === 'agent-consent').consent, { op: 'grant', label: 'Grant permission' });
+  assert.equal(X.agentSetupRows(view({ state: 'ready' })).find((r) => r.id === 'agent-consent').consent, undefined, 'before the destination is known there is no Grant');
+  // Settled "cannot be granted" and a live permission are not asked again.
+  for (const state of ['not_installed', 'not_signed_in', 'version_unsupported']) assert.equal(X.consentRereadDelay(view({ state }), 0), null, state);
+  assert.equal(X.consentRereadDelay(view({ state: 'ready' }, { live: true }), 0), null);
+  assert.equal(X.consentRereadDelay(null, 0), null);
+  // Not granted: the D-B4 ceilings are shown on the row before the user grants.
+  const text = X.agentSetupRows(landed, { hosts: X.consentHostsOf(landed) }).find((r) => r.id === 'agent-consent').text;
+  assert.match(text, /Limits if you grant it: up to \$2\.00 per turn and \$10\.00 per day, 6 turns an hour, 1 at a time, 200 tool calls per turn/);
+  // Source pins: the hook looks again by that policy; the sheet takes only the destinations from #51 and reads it after the health re-read.
+  const hooks = src('data/useAgents.ts');
+  assert.match(hooks, /consentRereadDelay\(r\.data, tries\)/);
+  assert.match(hooks, /view: AgentConsentView \| null/);
+  const sheet = src('components/ExecutionSetupSheet.tsx');
+  assert.match(sheet, /consent\.reloadAfter\(CHECK_AGAIN_REREAD_MS \+ 500\)/);
+  assert.doesNotMatch(sheet, /agent: consent\.view/, 'the health row is not replaced by the #51 answer');
+  assert.match(sheet, /hosts: consentHostsOf\(consent\.view\)/);
+  assert.match(src('data/nexusClient.ts'), /agentConsent: \(args: AgentConsentArgs\): Promise<NexusResult<AgentConsentView>>/);
+});
+
+test('F4 a SessionLog heading sits one level under the panel heading', () => {
+  const log = src('agent/SessionLog.tsx');
+  assert.doesNotMatch(log, /<h4/);
+  assert.match(log, /<h3 /);
 });

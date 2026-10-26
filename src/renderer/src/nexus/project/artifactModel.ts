@@ -57,7 +57,8 @@ export type VersionAction =
   | { kind: 'handoff'; versionId: string };
 
 type ActionVersion = Pick<VersionView, 'id' | 'status' | 'producedByEngine' | 'promotedAt'>;
-type ActionArtifact = Pick<ArtifactView, 'status' | 'ownerScope' | 'currentVersionId'> & Partial<Pick<ArtifactView, 'kind'>>;
+/** `kind` is required: an omitted one must never silently offer "Make current" on a change set. */
+type ActionArtifact = Pick<ArtifactView, 'status' | 'ownerScope' | 'currentVersionId' | 'kind'>;
 
 /**
  * Only the actions the platform would allow on this version. A frozen owner (its

@@ -351,7 +351,7 @@ export function ArtifactPassport({ project, node, artifacts, onSpine = true, onH
           })}
         </ol>
       </section>
-      {shownVersion && <KindViewer kind={artifact.kind} version={shownVersion} />}
+      {shownVersion && <KindViewer key={shownVersion.id} kind={artifact.kind} version={shownVersion} />}
       {shownVersion && !isApp && <EvidenceSection key={shownVersion.id} version={shownVersion} kind={artifact.kind} checked={kindIsChecked(artifact.kind)} />}
       {shownVersion && isApp && <EvidenceSection key={shownVersion.id} version={shownVersion} kind={artifact.kind} checked preview={{ deployments: deploymentsOf(shownVersion.id) }} />}
       {shownVersion && artifact.ownerWorkspaceId && ownerActive && artifact.status === 'active' && (

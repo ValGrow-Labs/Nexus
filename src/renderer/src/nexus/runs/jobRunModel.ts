@@ -215,7 +215,8 @@ export function agentTurnHeadline(j: Pick<JobView, 'state' | 'outcome' | 'phase'
     case 'awaiting_approval': return 'Waiting for your approval';
     case 'running': return j.headline === 'waiting_for_approval' ? 'Waiting for your approval' : j.cancelRequested ? 'Stopping: cancel requested' : 'The agent is working';
     case 'completed': return j.outcome === 'no_change' ? AGENT_NO_CHANGE : 'The agent ended its turn and registered its work';
-    case 'partial': return j.outcome === 'no_change' || j.outcome === null ? AGENT_NO_CHANGE : 'The agent’s turn ended in part';
+    // Only the recorded outcome `no_change` says the agent changed nothing; a partial turn without it says only that it ended in part.
+    case 'partial': return j.outcome === 'no_change' ? AGENT_NO_CHANGE : 'The agent’s turn ended in part; what it changed is not recorded';
     case 'failed': return (j.outcome && AGENT_FAIL_TEXT[j.outcome]) || 'The agent’s turn failed';
     case 'cancelled': return 'The agent’s turn was cancelled';
     case 'timed_out': return 'The agent ran past its time limit';
@@ -225,15 +226,15 @@ export function agentTurnHeadline(j: Pick<JobView, 'state' | 'outcome' | 'phase'
 }
 
 function agentTurnRun(j: JobView): JobRunView {
-  const ended = j.state === 'completed' || j.state === 'partial';
-  const base = ended ? { stages: STAGES.map((s) => ({ ...s, state: 'done' as JobStageState })), result: null as JobResult } : stagesFor(j.headline, j.startedAt !== null);
   const live = LIVE_STATES.includes(j.state);
-  const word = j.state === 'completed' ? 'Turn ended' : j.state === 'partial' ? (j.outcome === 'no_change' || j.outcome === null ? 'No change' : 'Ended in part')
+  const word = j.state === 'completed' ? 'Turn ended' : j.state === 'partial' ? (j.outcome === 'no_change' ? 'No change' : 'Ended in part')
     : j.state === 'failed' ? 'Failed' : j.state === 'cancelled' ? 'Cancelled' : j.state === 'timed_out' ? 'Timed out' : j.state === 'interrupted' ? 'Interrupted'
       : j.state === 'awaiting_approval' || j.headline === 'waiting_for_approval' ? 'Waiting for you' : j.state === 'running' ? 'Working'
         : j.state === 'leased' ? 'In progress' : 'Waiting';
-  const result: JobResult = j.state === 'failed' ? 'failed_run' : j.state === 'cancelled' ? 'cancelled' : j.state === 'timed_out' ? 'timed_out' : j.state === 'interrupted' ? 'interrupted' : base.result;
-  return { id: j.id, title: jobTitle(j), headline: agentTurnHeadline(j), word, stages: base.stages, result, live, canCancel: canCancelJob(j), canRetry: false,
+  const result: JobResult = j.state === 'failed' ? 'failed_run' : j.state === 'cancelled' ? 'cancelled' : j.state === 'timed_out' ? 'timed_out' : j.state === 'interrupted' ? 'interrupted' : null;
+  return { id: j.id, title: jobTitle(j), headline: agentTurnHeadline(j), word,
+    // A turn is not a run of checks: it has no sandbox, collecting and checking ladder to show, so no stage is claimed.
+    stages: [], result, live, canCancel: canCancelJob(j), canRetry: false,
     needsYou: j.state === 'awaiting_approval' || j.headline === 'waiting_for_approval', codes: [] };
 }
 

@@ -179,7 +179,7 @@ export function KindViewer({ kind, version }: { kind: string; version: VersionVi
     case 'requirement': case 'problem_statement': return <Structured version={version} kind={kind} />;
     case 'repository': return <Repository version={version} />;
     // B2b: a change made by the agent: the read-only diff, your decision, Accept and Merge (its checks are the Folio's evidence section).
-    case 'change_set': return <ChangeSetReview versionId={version.id} projectId={version.projectId} status={version.status} />;
+    case 'change_set': return <ChangeSetReview key={version.id} versionId={version.id} projectId={version.projectId} status={version.status} />;
     default: return null;
   }
 }

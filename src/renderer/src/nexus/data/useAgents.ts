@@ -1,13 +1,14 @@
 // The renderer's agent data (B2b channels #43, #44, #47-#49, #51) as hooks, on the same read pattern as useExecution: stale answers
 // are dropped, lists are read again on the jobs tick (agent turns are jobs), the validations tick and the platform revision.
 // Nothing here polls in the background. The setup sheet alone re-asks while it is open.
-import { useCallback, useEffect, useMemo, useState } from 'react';
-import type { AgentSetupView, JobView, NexusResult, RepoStatusView, SessionDetailView, SessionView, ValidationResultView } from '@shared/nexus/ipc';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import type { AgentConsentView, JobView, NexusResult, RepoStatusView, SessionDetailView, SessionView, ValidationResultView } from '@shared/nexus/ipc';
 import type { ReviewDecision } from '@shared/nexus/ipc';
 import { nexusClient } from './nexusClient';
 import { usePlatform } from './platformStore';
 import { useExecStore, useHints, useRead, useJobs, type Read } from './useExecution';
 import { latestReviews } from '../project/changeSetModel';
+import { consentRereadDelay } from './executionModel';
 
 /** The project's agent conversations (#43), newest first. */
 export function useSessions(projectId: string | null): Read<SessionView[]> {
@@ -63,26 +64,37 @@ export const CONSENT_REASK_MS = 45_000;
 
 /**
  * The agent's permission row for the setup sheet (#51 get): read once when the sheet opens and again every CONSENT_REASK_MS
- * only while it stays open (no background timer). `act` grants or revokes and answers the new row (or the failure).
+ * only while it stays open (no background timer). #51 never waits, so an answer that has no destination yet is read again a
+ * bounded number of times (consentRereadDelay) after the probe had time to land. `act` grants or revokes and answers the new row
+ * (or the failure); the shared health is read again after it. Only the destinations are taken from this answer.
  */
 export function useAgentConsent(open: boolean): {
-  view: AgentSetupView | null; fail: Extract<NexusResult<AgentSetupView>, { ok: false }> | null; loaded: boolean;
-  act: (op: 'grant' | 'revoke') => Promise<NexusResult<AgentSetupView>>; reload: () => void;
+  view: AgentConsentView | null; fail: Extract<NexusResult<AgentConsentView>, { ok: false }> | null; loaded: boolean;
+  act: (op: 'grant' | 'revoke') => Promise<NexusResult<AgentConsentView>>; reload: () => void; reloadAfter: (ms: number) => void;
 } {
-  const [state, setState] = useState<{ view: AgentSetupView | null; fail: Extract<NexusResult<AgentSetupView>, { ok: false }> | null; loaded: boolean }>(
+  const [state, setState] = useState<{ view: AgentConsentView | null; fail: Extract<NexusResult<AgentConsentView>, { ok: false }> | null; loaded: boolean }>(
     { view: null, fail: null, loaded: false });
   const [attempt, setAttempt] = useState(0);
   const reload = useCallback(() => setAttempt((n) => n + 1), []);
+  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => () => { if (timer.current) clearTimeout(timer.current); }, []);
+  const reloadAfter = useCallback((ms: number) => {
+    if (timer.current) clearTimeout(timer.current);
+    timer.current = setTimeout(() => { timer.current = null; setAttempt((n) => n + 1); }, ms);
+  }, []);
   useEffect(() => {
     if (!open) return;
     let alive = true;
-    const read = () => { void nexusClient.agentConsent({ op: 'get' }).then((r) => {
+    let again: ReturnType<typeof setTimeout> | null = null;
+    const read = (tries: number) => { void nexusClient.agentConsent({ op: 'get' }).then((r) => {
       if (!alive) return;
       setState((prev) => (r.ok ? { view: r.data, fail: null, loaded: true } : { view: prev.view, fail: r, loaded: true }));
+      const delay = r.ok ? consentRereadDelay(r.data, tries) : null;
+      if (delay !== null) again = setTimeout(() => { if (alive) read(tries + 1); }, delay);
     }); };
-    read();
-    const t = setInterval(read, CONSENT_REASK_MS);
-    return () => { alive = false; clearInterval(t); };
+    read(0);
+    const t = setInterval(() => read(0), CONSENT_REASK_MS);
+    return () => { alive = false; clearInterval(t); if (again) clearTimeout(again); };
   }, [open, attempt]);
   const act = useCallback(async (op: 'grant' | 'revoke') => {
     const r = await nexusClient.agentConsent({ op });
@@ -91,5 +103,5 @@ export function useAgentConsent(open: boolean): {
     useExecStore.getState().bump(['health', 'jobs']);
     return r;
   }, []);
-  return { view: state.view, fail: state.fail, loaded: state.loaded, act, reload };
+  return { view: state.view, fail: state.fail, loaded: state.loaded, act, reload, reloadAfter };
 }

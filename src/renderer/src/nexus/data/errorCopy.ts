@@ -157,6 +157,7 @@ export const AGENT_REASON_TEXT: Readonly<Record<string, string>> = Object.freeze
   not_a_change_set: 'Only a change made by the agent can be reviewed or accepted.',
   not_candidate: 'This change is no longer waiting for a decision.',
   not_approved: 'This change has no approving review yet.',
+  change_set_not_promotable: 'A change set is accepted through review, not made current directly.',
   ref_moved: 'The accepted branch moved while you were deciding, so nothing was accepted. Look at the change again.',
   merge_conflict: 'The change does not merge cleanly onto the accepted work, so it was not accepted.',
   accept_rolled_back: 'The accept could not be recorded, so the accepted branch was put back as it was. The change is still waiting for you.',

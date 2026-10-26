@@ -190,7 +190,7 @@ export function IntentLine({ summoned = false, onClose }: { summoned?: boolean; 
       </div>
       {error && <p id={ids.error} className="nx-intent__error" role="alert">{error}</p>}
       <p id={ids.status} className="nx-intent__status">
-        <span>{statusText}</span> <span>{port.replyHint}</span>
+        <span>{statusText}</span> <span>{mode === 'agent' ? 'Each message starts a new conversation; follow it in the agent panel on the bench.' : port.replyHint}</span>
         <span role="status">
           {sent && <> {sent.lead} <a href={sent.href}>{sent.label}</a></>}
         </span>

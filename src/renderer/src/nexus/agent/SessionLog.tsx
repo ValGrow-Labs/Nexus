@@ -16,7 +16,7 @@ export function SessionLog({ sessionId }: { sessionId: string }) {
       <p className="nx-muted">{view.note}</p>
       {view.turns.length > 0 && (
         <>
-          <h4 className="nx-ag__sub">Turns</h4>
+          <h3 className="nx-ag__sub">Turns</h3>
           <ol className="nx-ag__list" aria-label="Turns">
             {view.turns.map((t) => (
               <li key={t.key}><span>{t.headline}</span> {t.when && <span className="nx-muted">at {t.when}</span>}{t.usage && <span className="nx-muted"> · {t.usage}</span>}</li>
@@ -24,7 +24,7 @@ export function SessionLog({ sessionId }: { sessionId: string }) {
           </ol>
         </>
       )}
-      <h4 className="nx-ag__sub">Messages (display only)</h4>
+      <h3 className="nx-ag__sub">Messages (display only)</h3>
       {view.messages.length === 0 ? <p className="nx-muted">No message is recorded yet.</p> : (
         <ol className="nx-ag__list" aria-label="Messages, display only">
           {view.messages.map((m) => (
@@ -37,7 +37,7 @@ export function SessionLog({ sessionId }: { sessionId: string }) {
       )}
       {view.toolCalls.length > 0 && (
         <>
-          <h4 className="nx-ag__sub">Tool calls</h4>
+          <h3 className="nx-ag__sub">Tool calls</h3>
           <ul className="nx-ag__list" aria-label="Tool calls">
             {view.toolCalls.map((c) => <li key={c.key}><span className="nx-id">{c.tool}</span> <span className="nx-muted">{c.outcome}; result {c.size}</span></li>)}
           </ul>
@@ -45,7 +45,7 @@ export function SessionLog({ sessionId }: { sessionId: string }) {
       )}
       {view.versions.length > 0 && (
         <>
-          <h4 className="nx-ag__sub">Registered by the agent</h4>
+          <h3 className="nx-ag__sub">Registered by the agent</h3>
           <ul className="nx-ag__list" aria-label="Registered versions">
             {view.versions.map((v) => <li key={v.key}>{v.kind}, {v.status}</li>)}
           </ul>

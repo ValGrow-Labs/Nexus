@@ -2,8 +2,9 @@
 // what main last observed (HealthView, #23) and from how the execution channels
 // answered. No React, so tests load it directly. Every number shown here comes
 // from the HealthView or an approval; nothing is estimated in the renderer.
-import type { AgentSetupView, EventView, HealthView, NexusResult } from '@shared/nexus/ipc';
+import type { AgentConsentView, AgentSetupView, EventView, HealthView, NexusResult } from '@shared/nexus/ipc';
 import { GIB, MIN_DOCKER_CPUS, MIN_DOCKER_MEMORY } from '@shared/nexus/resourceGate';
+import { AGENT_DEFAULTS } from '@shared/nexus/agentPolicy';
 import { errorCopy, executionNotice, unavailableNotice } from './errorCopy';
 
 /**
@@ -266,14 +267,29 @@ export const AGENT_STATE_DISCLOSURE = 'The installed agent program keeps its own
   + 'The agent runs in a sandbox with no other network; which files it may touch is a rule of the agent program, not an operating-system wall.';
 
 const HOST_RE = /^[a-z0-9]([a-z0-9.-]{0,120}[a-z0-9])?:[0-9]{1,5}$/i;
-/** The destinations of a #51 answer as host:port strings; anything else is dropped (null when none are valid). */
-export function consentHostsOf(view: unknown): string[] | null {
-  const c = view && typeof view === 'object' ? (view as { consent?: { hosts?: unknown } }).consent : undefined;
-  if (!c || !Array.isArray(c.hosts)) return null;
-  const hosts = c.hosts.filter((x): x is string => typeof x === 'string' && HOST_RE.test(x)).slice(0, 8);
+/** The destinations of a #51 answer (`consent.hosts`), kept only when they read as host:port; null when none do. */
+export function consentHostsOf(view: Pick<AgentConsentView, 'consent'> | null | undefined): string[] | null {
+  const hosts = view && Array.isArray(view.consent?.hosts) ? view.consent.hosts.filter((x) => typeof x === 'string' && HOST_RE.test(x)).slice(0, 8) : [];
   return hosts.length > 0 ? hosts : null;
 }
 
+/** The longest the sheet keeps looking for the destination after an answer that has none yet (each look comes after the probe had time to land). */
+export const CONSENT_REREAD_LIMIT = 3;
+const CONSENT_REREAD_BASE_MS = 1_500;
+/**
+ * #51 `get` never waits: with a stale cache it answers at once with no destination while the probe runs. So an answer that is not
+ * granted, has no destination and is not a settled "cannot be granted" (no program, not signed in, unsupported) is asked again, a
+ * bounded number of times, each a little later. Null: nothing more to wait for.
+ */
+export function consentRereadDelay(view: Pick<AgentConsentView, 'state' | 'consent'> | null, attempt: number): number | null {
+  if (!view || attempt >= CONSENT_REREAD_LIMIT) return null;
+  if (view.consent.live || consentHostsOf(view) !== null) return null;
+  if (view.state === 'not_installed' || view.state === 'not_signed_in' || view.state === 'version_unsupported') return null;
+  return CONSENT_REREAD_BASE_MS * (attempt + 1);
+}
+
+const capsText = (c: { turnUsdCents: number; dayUsdCents: number; turnsPerHour: number; concurrentTurns: number; toolCalls: number }): string =>
+  `up to ${dollars(c.turnUsdCents)} per turn and ${dollars(c.dayUsdCents)} per day, ${c.turnsPerHour} turns an hour, ${c.concurrentTurns} at a time, ${c.toolCalls} tool calls per turn`;
 const dollars = (cents: number): string => `$${Math.floor(cents / 100)}.${String(Math.round(cents) % 100).padStart(2, '0')}`;
 
 /** The agent's setup rows: the program (its label from the adapter), the network permission, and today's usage. */
@@ -300,13 +316,12 @@ export function agentSetupRows(a: AgentSetupView, o: { hosts?: readonly string[]
   const dest = hosts ? `only ${hosts.join(', ')}` : a.consent.hostsCount === 1 ? 'one network destination' : `${a.consent.hostsCount} network destinations`;
   if (a.consent.live) {
     const c = a.consent.caps;
-    const caps = c ? ` Limits: up to ${dollars(c.turnUsdCents)} per turn and ${dollars(c.dayUsdCents)} per day, ${c.turnsPerHour} turns an hour, `
-      + `${c.concurrentTurns} at a time, ${c.toolCalls} tool calls per turn.` : '';
+    const caps = c ? ` Limits: ${capsText(c)}.` : '';
     const when = a.consent.grantedAt !== null ? ` at ${fmt(a.consent.grantedAt)}` : '';
     rows.push({ ...row('agent-consent', 'Agent network permission', 'ok', `Granted${when}. The agent may reach ${dest}, and nothing else.${caps}`, AGENT_STATE_DISCLOSURE),
       consent: { op: 'revoke', label: 'Revoke permission' } });
   } else if (a.state === 'ready' && hosts) {
-    rows.push({ ...row('agent-consent', 'Agent network permission', 'problem', `Not granted. Granting lets the agent reach ${dest}, and nothing else. Agent turns need it.`, AGENT_STATE_DISCLOSURE),
+    rows.push({ ...row('agent-consent', 'Agent network permission', 'problem', `Not granted. Granting lets the agent reach ${dest}, and nothing else. Agent turns need it. Limits if you grant it: ${capsText(AGENT_DEFAULTS)}.`, AGENT_STATE_DISCLOSURE),
       consent: { op: 'grant', label: 'Grant permission' } });
   } else if (a.state === 'ready') {
     rows.push(row('agent-consent', 'Agent network permission', 'problem', 'Not granted. The destination to grant is shown here once Nexus has read it from the agent program.',

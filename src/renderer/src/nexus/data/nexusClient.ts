@@ -8,7 +8,7 @@ import type {
   ActivityPage, ActivityView, ArtifactDetail, ArtifactSummaryView, ArtifactsListFilter, HandoffDetailView, HandoffSummaryView,
   HandoffsListFilter, LineageQuery, LineageView, LinkSourcesView, NexusFail, NexusResult, ParticipationView, SaveCommitArgs,
   SaveResultView, SaveTextFileArgs, SendHandoffArgs, SendHandoffView, VersionDetail, VersionView,
-  AcceptResultView, AgentConsentArgs, AgentSetupView, AgentStartArgs, AgentStartResultView, MergeView, RepoMergeArgs, RepoStatusView,
+  AcceptResultView, AgentConsentArgs, AgentConsentView, AgentStartArgs, AgentStartResultView, MergeView, RepoMergeArgs, RepoStatusView,
   ReviewDecideArgs, ReviewResultView, SessionDetailView, SessionView, SessionsListFilter
 } from '@shared/nexus/ipc';
 
@@ -139,7 +139,7 @@ export const nexusClient = {
   /** #50: main shows the real confirmation dialog; this only asks. The answer is the result sentence's source. */
   repoMergeAccepted: (projectId: string, args: RepoMergeArgs): Promise<NexusResult<MergeView>> =>
     execCall(() => window.cth.nexusRepoMergeAccepted(projectId, args)),
-  agentConsent: (args: AgentConsentArgs): Promise<NexusResult<AgentSetupView>> => execCall(() => window.cth.nexusAgentConsent(args)),
+  agentConsent: (args: AgentConsentArgs): Promise<NexusResult<AgentConsentView>> => execCall(() => window.cth.nexusAgentConsent(args)),
   /** The nexus:hint push (the newest event seq only). Returns an unsubscribe; a no-op when the preload has none. */
   onHint: (cb: (hint: NexusHint) => void): (() => void) => {
     try {

@@ -3,7 +3,7 @@ import type { ImageProfileArg } from '@shared/nexus/ipc';
 import { nexusClient } from '../data/nexusClient';
 import { execFailText } from '../data/errorCopy';
 import { checkedLine, consentHostsOf, noticeFor, setupLead, setupSheet } from '../data/executionModel';
-import { useApprovals, useHealth, useHealthPoll, withIntent } from '../data/useExecution';
+import { CHECK_AGAIN_REREAD_MS, useApprovals, useHealth, useHealthPoll, withIntent } from '../data/useExecution';
 import { useAgentConsent } from '../data/useAgents';
 import { agentFailText } from '../agent/agentModel';
 import { ApprovalList } from '../project/ApprovalsSection';
@@ -37,9 +37,10 @@ function SetupBody({ onClose }: { onClose: () => void }) {
   // B2b: the agent's permission row reads #51 when the sheet opens (and again every 45 s while it stays open). Its destinations are
   // shown on that row and nowhere else.
   const consent = useAgentConsent(true);
-  const checkAgain = () => { askAgain(); consent.reload(); };
-  const shown = health && consent.view ? { ...health, agent: consent.view } : health;
-  const rows = shown ? setupSheet(shown, { estimates, pending: pendingProfiles, hosts: consentHostsOf(consent.view) }) : [];
+  // Everything but the destinations comes from the shared health (the one fresh probe); #51 supplies only the destinations.
+  const rows = health ? setupSheet(health, { estimates, pending: pendingProfiles, hosts: consentHostsOf(consent.view) }) : [];
+  // "Check again" refreshes health first; #51 is read again once that re-read has had its time (the probe lands before the next look).
+  const checkAgain = () => { askAgain(); consent.reloadAfter(CHECK_AGAIN_REREAD_MS + 500); };
   const [busy, setBusy] = useState<string | null>(null);
   const [note, setNote] = useState<{ text: string; alert: boolean } | null>(null);
   const notice = noticeFor(availability);
