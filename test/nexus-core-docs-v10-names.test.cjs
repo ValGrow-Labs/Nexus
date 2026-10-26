@@ -210,7 +210,7 @@ test('DOC10-11 section 59 numbers its limits 48 on, one after the other, and sta
   assert.deepEqual(nums, nums.map((_, i) => 48 + i), 'consecutive from 48');
   const need = [
     [/file boundary is policy only, not an OS sandbox/i, 'the file boundary is policy only'],
-    [/host proxy routes traffic; it is not an OS-level enforcement/i, 'the proxy routes, no OS enforcement'],
+    [/host proxy routes and records traffic; it is not an OS-level enforcement/i, 'the proxy routes, no OS enforcement'],
     [/Admin-managed CLI settings still apply/i, 'admin-managed settings'],
     [/writes its own files into the user's real home/i, 'the CLI store writes'],
     [/Nexus itself never reads, copies or stores the login/i, 'the login is never read'],
@@ -229,7 +229,7 @@ test('DOC10-11 section 59 numbers its limits 48 on, one after the other, and sta
     [/`yes`, `no` or `unknown`/, 'auth status becomes yes, no or unknown'],
     [/ScriptedRuntime[^.]*proves the platform wiring/i, 'the scripted runtime proves wiring, not a model'],
     [/real-login smoke test/i, 'the real-login smoke test is not yet run'],
-    [/B2b is \*\*built, not verified\*\*/, 'built, not verified']
+    [/not verified with a real model/, 'built, wiring proven by ScriptedRuntime, not verified with a real model']
   ];
   for (const [re, what] of need) assert.match(s59, re, what);
 });
@@ -244,7 +244,34 @@ test('DOC10-12 section 49 says what is and is not proven, and the wiring default
   assert.match(db, /export const V10_ENABLED_BY_DEFAULT = false;/, 'the code default is false, as the doc says');
   assert.match(db, /export const V9_ENABLED_BY_DEFAULT = false;/);
   assert.match(s49, /`NEXUS_ENABLE_V10=1`/);
-  assert.match(s49, /`DELIVERED_SUB_PHASE`[\s\S]*It stays `'B2a'`/);
+  assert.match(s49, /`DELIVERED_SUB_PHASE`[\s\S]*`B2B_E2E_STUB`/);
+  assert.match(s49, /No real model has been run/);
+  assert.match(s49, /XA1 to XA7 and XA6b[\s\S]{0,200}has not been run/);
   const spec = fs.readFileSync(path.join(ROOT, 'src/shared/nexus/domainSpec.ts'), 'utf8');
   assert.match(spec, /export const CURRENT_SUB_PHASE: SubPhase = 'B2b';/);
+});
+
+test('DOC10-13 the proxy records its decisions, a change set is not promotable, and the O-id facts, as the code has them', () => {
+  const { EGRESS_EVENT_MAX } = loadTs('src/shared/nexus/runnerProtocol.ts');
+  const s54 = section(54);
+  assert.equal(EGRESS_EVENT_MAX, 200);
+  assert.match(s54, /Every decision is recorded/);
+  assert.ok(s54.includes(`At most ${EGRESS_EVENT_MAX} are reported`));
+  assert.ok(s54.includes('`egress.truncated { count, at }`'));
+  assert.doesNotMatch(s54, /discards them/);
+  const s59 = section(59);
+  assert.match(s59, /routes and records traffic; it is not an OS-level enforcement/);
+  assert.doesNotMatch(s59, /It also does not record/);
+  // The code: the runner reports decisions as progress events, and the service refuses a change set.
+  assert.doesNotMatch(fs.readFileSync(path.join(ROOT, 'src/runner/agentAttempt.ts'), 'utf8'), /onDecision: \(\) => \{/);
+  assert.match(fs.readFileSync(path.join(ROOT, 'src/main/nexus/artifact/artifactService.ts'), 'utf8'), /change_set_not_promotable/);
+  assert.match(s59, /change_set_not_promotable/);
+  assert.match(s59, /There is no database trigger/);
+  assert.ok(section(58).includes('latestReview { decision, decidedAt } | null'));
+  assert.doesNotMatch(s59, /in progress and not committed|was in progress/);
+  // O-ids: O23 and O24 are defined nowhere in the helper that holds the orphan queries.
+  const orphans = fs.readFileSync(path.join(ROOT, 'test/helpers/orphans.cjs'), 'utf8');
+  assert.doesNotMatch(orphans, /\bO2[34]\s*:/);
+  assert.match(s59, /O23 and O24 are not defined anywhere/);
+  assert.match(s59, /about 91 s/);
 });
