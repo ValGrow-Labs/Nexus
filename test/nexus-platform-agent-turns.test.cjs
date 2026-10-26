@@ -1390,6 +1390,20 @@ test('a turn ended by a cap cancels what it asked for (job_request children) and
   assert.equal(w.job(collect.childJobId).state, 'queued', 'the system collect keeps its place');
 });
 
+test('a turn that ends NATURALLY leaves what it asked for running; only a cap cancels it', async () => {
+  const w = await turnWorld();
+  const r = await w.running();
+  const asked = await w.nx.mcpGateway.call({ op: 'mcp.call', callId: 'jr2', bearer: r.plan.runtime.token, tool: 'job_request', args: { recipeId: 'sde.test.discover', inputs: [w.repoVersion] } });
+  assert.equal(asked.ok, true, JSON.stringify(asked));
+  const collect = w.registerVersion(r.job.id, r.session.id);
+  w.ev(r.attempt.id, { t: 'run.completed', at: w.clock.t, stopReason: 'end_turn' });
+  w.exit(r.attempt.id, 0);
+  assert.equal(w.job(r.job.id).state, 'completed');
+  assert.equal(w.job(asked.value.jobId).state, 'queued', 'a natural end does not cancel what the turn asked for');
+  assert.equal(w.job(collect.childJobId).state, 'queued');
+  assert.equal(w.runner.sentOf('attempt.cancel').filter((m) => m.attemptId === r.attempt.id).length, 0);
+});
+
 test('a bare capability token in a tool argument is not kept in the call record', async () => {
   const w = await turnWorld();
   const r = await w.running();

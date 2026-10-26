@@ -2090,6 +2090,7 @@ export class ExecutionService {
   private agentLimit(attemptId: string, why: string, now: number): void {
     const error = { code: 'limit', message: `the turn reached its ${why} limit and was stopped` };
     let ended = false;
+    const children: { attemptId: string; reason: CancelReason }[] = [];
     immediateTx(this.db, () => {
       const cur = attemptRow(this.db, attemptId);
       if (!cur || cur.state !== 'running') return;
@@ -2098,7 +2099,15 @@ export class ExecutionService {
       if (j.state === 'running') this.moveJobTx(j.id, 'failed', now, { outcome: 'limit', error });
       this.setPhaseTx(j.id, null, now);
       ended = true;
+      // What the turn asked for with `job_request` (its test and install jobs) stops with it: nothing keeps running for a turn
+      // that was cut off at a cap. The system's own children (a change-set collect, its checks, an accept) are the user's evidence
+      // and finish by themselves.
+      const sys = this.system();
+      const open = this.db.prepare(`SELECT id FROM jobs WHERE parent_job_id = ? AND requested_by <> ? AND state IN (${LIVE_JOB_STATES.map(() => '?').join(', ')})
+        ORDER BY created_at DESC, rowid DESC`).all(j.id, sys.id, ...LIVE_JOB_STATES) as { id: string }[];
+      for (const c of open) this.cancelOneTx(sys, c.id, 'parent', now, children);
     });
+    for (const c of children) this.send({ op: 'attempt.cancel', attemptId: c.attemptId, graceMs: CANCEL_GRACE_MS, reason: c.reason });
     this.agentTerminal.delete(attemptId);
     // The protocol's CancelReason has no `limit` value (a shared contract this round does not change): `timeout` is the
     // reason of a resource limit reached; the runner treats every reason alike for an agent turn (it aborts the turn).
@@ -2130,7 +2139,6 @@ export class ExecutionService {
       s = { attempt: 'failed', job: 'failed', outcome: 'agents_unavailable', error: { code: 'agents_unavailable', message: 'agent turns are not available in this build' } };
     }
     immediateTx(this.db, () => {
-    const children: { attemptId: string; reason: CancelReason }[] = [];
       const cur = attemptRow(this.db, a.id)!;
       if (cur.state !== 'running') return;
       const change = { exit, outcome: s.outcome, logBytes: m.logBytes, ...(s.error ? { error: s.error } : {}) };
@@ -2139,15 +2147,7 @@ export class ExecutionService {
       if (nowJob.state === 'running') {
         const after = this.moveJobTx(j.id, s.job, now, { outcome: s.outcome, ...(s.error ? { error: s.error } : {}) }, 'running');
         if (s.sessionFailed && s.error) agents?.sessionFailedTx(after, s.error);
-      // What the turn asked for with `job_request` (its test and install jobs) stops with it: nothing keeps running for a turn
-      // that was cut off at a cap. The system's own children (a change-set collect, its checks, an accept) are the user's evidence
-      // and finish by themselves.
-      const sys = this.system();
-      const open = this.db.prepare(`SELECT id FROM jobs WHERE parent_job_id = ? AND requested_by <> ? AND state IN (${LIVE_JOB_STATES.map(() => '?').join(', ')})
-        ORDER BY created_at DESC, rowid DESC`).all(j.id, sys.id, ...LIVE_JOB_STATES) as { id: string }[];
-      for (const c of open) this.cancelOneTx(sys, c.id, 'parent', now, children);
       }
-    for (const c of children) this.send({ op: 'attempt.cancel', attemptId: c.attemptId, graceMs: CANCEL_GRACE_MS, reason: c.reason });
       this.setPhaseTx(j.id, null, now);
     });
     this.agentTerminal.delete(a.id);
