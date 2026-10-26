@@ -18,7 +18,7 @@ import type { JobService } from '../jobs/jobService';
 
 const COMMIT_RE = /^[0-9a-f]{40}$/;
 /** Failures where git itself refused before moving the ref (or its CAS missed): there is nothing to roll back. */
-const GIT_REFUSALS: readonly string[] = ['ref_moved', 'merge_conflict', 'bad_task', 'unknown_commit', 'git_missing', 'branch_missing'];
+const GIT_REFUSALS: readonly string[] = ['ref_moved', 'merge_conflict', 'bad_task', 'unknown_commit', 'git_missing', 'branch_missing', 'base_moved'];
 const ENDED_STATES = ['interrupted', 'failed', 'timed_out', 'cancelled'];
 
 interface AcceptJobRow { id: string; project_id: string; workspace_id: string; state: string; params_json: string; error_json: string | null }

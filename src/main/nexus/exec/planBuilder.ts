@@ -632,7 +632,9 @@ function buildGitEnginePlan(ctx: PlanContext, base: Omit<EnginePlan, 'kind' | 't
     case 'changeset.accept': {
       const message = `${oneLine(p.title, 'Accept the agent\'s change')}\n\nNexus-Accepted-By: user:local\n`;
       return plan({ engine: 'changeset.accept', repoPath, integrationRef: integrationRefOf(p.branch), expectedOld: commitParam(p, 'expectedOld'),
-        head: commitParam(p, 'head'), message });
+        head: commitParam(p, 'head'), message,
+        // The commit the reviewed change was made on (main's recorded metadata.base): the runner refuses `base_moved` unless it is an ancestor of expectedOld.
+        base: commitParam(p, 'base') });
     }
     case 'changeset.accept_rollback':
       return plan({ engine: 'changeset.accept_rollback', repoPath, integrationRef: integrationRefOf(p.branch), from: commitParam(p, 'from'), to: commitParam(p, 'to') });

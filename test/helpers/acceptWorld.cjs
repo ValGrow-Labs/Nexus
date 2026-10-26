@@ -119,7 +119,7 @@ async function runEngine(w, world, jobId, o = {}) {
     let facts;
     if (job.recipe_id === 'changeset.accept') {
       facts = await gitAccept(world.g, { repoPath: world.repo, integrationRef, expectedOld: params.expectedOld, head: params.head,
-        message: `${params.title}\n\nNexus-Accepted-By: user:local\n` }, { onPrepared: (p) => {
+        message: `${params.title}\n\nNexus-Accepted-By: user:local\n`, base: params.base }, { onPrepared: (p) => {
         world.turn.runner.report({ op: 'attempt.event', attemptId, seq: ++n, event: { t: 'accept.prepared', old: p.old, new: p.new, at: Date.now() } });
       } });
     } else if (job.recipe_id === 'changeset.accept_rollback') {
@@ -303,7 +303,7 @@ async function secondSession(world, o = {}) {
       const f = await ensureWorktree(g, { repoPath: world.repo, worktreePath: wt2, ref: `refs/nexus/job/${name2}`, integrationRef: REF, branch: 'main',
         expectedIntegrationHead: JSON.parse(jobRow(w, res.job.id).params_json).integrationBaseline,
         allowRewrite: o.runnerAllows !== undefined ? o.runnerAllows : JSON.parse(jobRow(w, res.job.id).params_json).allowRewrite === true }, { dataRoot: world.home });
-      if (o.crash) return { facts: f, crashed: true };
+      if (o.crash) return { facts: f, crashed: true, attempt };
       finish(turn2, attempt, { parsed: [gitFacts(f)] });
       return { facts: f };
     } catch (e) {

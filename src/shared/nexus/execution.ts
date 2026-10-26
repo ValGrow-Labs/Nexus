@@ -286,7 +286,8 @@ export type EngineTask =
    * Merges `head` into the integration ref with a compare-and-swap `update-ref` from `expectedOld`. Before the
    * `update-ref` it reports a durable `accept.prepared { old, new }` progress event.
    */
-  | { engine: 'changeset.accept'; repoPath: string; integrationRef: string; expectedOld: string; head: string; message: string }
+  /** `base`: the commit the change was made on (main's recorded `metadata.base`); the accept refuses (`base_moved`) unless it is an ancestor of `expectedOld`. */
+  | { engine: 'changeset.accept'; repoPath: string; integrationRef: string; expectedOld: string; head: string; message: string; base?: string }
   /** Moves the integration ref back from `from` to `to` (compare-and-swap): an accept whose database part failed. */
   | { engine: 'changeset.accept_rollback'; repoPath: string; integrationRef: string; from: string; to: string }
   /** `merge --ff-only <sha>` on the user's checked-out `branch`; refuses a dirty tree or a non-fast-forward. */

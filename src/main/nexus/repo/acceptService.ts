@@ -245,11 +245,14 @@ export class AcceptService {
         throw conflict('integration_unexpected', 'The accepted branch is not where Nexus recorded it (an earlier accept did not finish, or it was changed outside Nexus), so nothing was accepted.');
       }
       const title = isObj(meta) && typeof meta.title === 'string' ? meta.title : 'Agent change';
+      // What the user reviewed is `base..head`; the accept refuses (`base_moved`) if base is no longer under the integration head.
+      const base = isObj(meta) && typeof meta.base === 'string' && COMMIT_RE.test(meta.base) ? meta.base : null;
+      if (!base) throw new PlatformError('invalid', 'the change set records no base commit', { reason: 'no_commit' });
       const seq = (this.db.prepare("SELECT COUNT(*) AS n FROM jobs WHERE recipe_id = 'changeset.accept' AND json_extract(params_json, '$.versionId') = ?").get(v.id) as { n: number }).n + 1;
       const workspaceId = cur.owner_workspace_id;
       if (!workspaceId) throw new PlatformError('invalid', 'the change set has no workspace', { reason: 'no_workspace' });
       return this.createGitJob('changeset.accept', cur.project_id, workspaceId, `changeset.accept:${v.id}:${seq}`,
-        { versionId: v.id, branch, expectedOld: expectedIntegrationHead, head, title, acceptedBy: user.id }, now);
+        { versionId: v.id, branch, expectedOld: expectedIntegrationHead, head, base, title, acceptedBy: user.id }, now);
     });
     this.deps.onQueued?.();
     const ended = await this.untilEnded(jobId, 'accept_pending');
@@ -278,6 +281,7 @@ export class AcceptService {
       try { this.recordAcceptTimeConflict(v, jobId, expected); } catch (e) { this.note(`the accept-time check row was not written (${(e as { code?: string })?.code ?? (e as Error)?.name ?? 'error'})`); }
       throw conflict('merge_conflict', GIT_FAILURE_TEXT.merge_conflict, info);
     }
+    if (code === 'base_moved') throw conflict('base_moved', GIT_FAILURE_TEXT.base_moved, info);
     if (code === 'accept_rolled_back') {
       throw conflict('accept_rolled_back', 'The accept could not be recorded, so the accepted branch was put back as it was. The change is still waiting for you.', info);
     }

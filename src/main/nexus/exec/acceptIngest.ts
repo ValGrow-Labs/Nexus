@@ -142,7 +142,7 @@ export function resyncRecordTx(d: AcceptIngestDeps, ctx: IngestContext, f: Recor
     // this job AND, in this transaction, nothing was accepted after the recorded head, no accept is in flight and no rollback is
     // owed: anything else would lose accepted work. It must also be exactly the branch head.
     const p = parse(ctx.job.params_json);
-    if (!isObj(p) || p.allowRewrite !== true || after !== branchHead || base.endKind === 'accept' || !rewriteAllowed(d.db, ctx.job.project_id, ref)) {
+    if (!isObj(p) || p.allowRewrite !== true || after !== branchHead || (base.endKind === 'accept' && !base.endMerged) || !rewriteAllowed(d.db, ctx.job.project_id, ref)) {
       return refuse('invalid_output', 'rewrite_refused', 'the integration branch was rewritten while accepted work exists, so it was not taken as the new baseline');
     }
   }

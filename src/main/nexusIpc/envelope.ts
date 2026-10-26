@@ -120,6 +120,7 @@ export const AGENT_REASON_MESSAGES: Readonly<Record<string, string>> = Object.fr
   branch_mismatch: 'Another branch is checked out than the one the accepted work is for, so nothing was merged.',
   not_fast_forward: 'Your branch has moved on, so the accepted work is no longer a fast-forward. Nothing was merged.',
   nothing_to_merge: 'Your branch already has all the accepted work.',
+  base_moved: 'The ground this change was made on has moved; ask the agent to redo it on your current code.',
   integration_diverged: 'Your branch and the accepted work have both moved on, so Nexus cannot start from your latest code. Merge the accepted work in your own tools, then ask again.',
   preview_incomplete: "Part of this change is hidden or too large to show here, so it can't be approved from Nexus. Review it in your own tools, or ask the agent to rewrite it.",
   not_cancellable: 'Nexus is recording this step, so it cannot be stopped from here. It finishes on its own.',

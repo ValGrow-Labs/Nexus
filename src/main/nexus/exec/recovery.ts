@@ -342,6 +342,7 @@ export const GIT_FAILURE_TEXT: Readonly<Record<string, string>> = Object.freeze(
   tree_dirty: 'Your working tree has uncommitted changes or an operation in progress, so nothing was merged.',
   branch_mismatch: 'Another branch is checked out than the one the accepted work is for, so nothing was merged.',
   not_fast_forward: 'Your branch has moved on, so the accepted work is no longer a fast-forward. Nothing was merged.',
+  base_moved: 'The ground this change was made on has moved; ask the agent to redo it on your current code.',
   integration_diverged: 'Your branch and the accepted work have both moved on, so Nexus cannot start from your latest code. Merge the accepted work in your own tools, then ask again.',
   git_failed: 'Git could not complete the work; nothing was changed.',
   symlink_in_worktree: 'The session worktree holds a symbolic link or junction, so Nexus stopped and committed nothing.',
