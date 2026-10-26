@@ -294,7 +294,13 @@ test('DOC10-14 the consent disclosure, the new-in-this-release note and the vend
   // The vendor-neutral allow-list: section 59 item 68 states every entry with its count.
   const v5 = /const V5_ALLOWED = \{([\s\S]*?)\};/.exec(read('test/nexus-core-vendor-neutral.test.cjs'));
   assert.ok(v5, 'V5_ALLOWED found');
-  const entries = [...v5[1].matchAll(/'([^']+)':\s*(\d+)/g)].map((x) => [x[1], Number(x[2])]);
+  // Either format of the allow-list: `'file': 3` (a line count) or `'file': ['hash', ...]` (one hash per allowed line).
+  const entries = v5[1].split(/^\s*'(?=src\/)/m).slice(1).map((chunk) => {
+    const file = chunk.slice(0, chunk.indexOf("'"));
+    const rest = chunk.slice(chunk.indexOf(':') + 1);
+    const num = /^\s*(\d+)/.exec(rest);
+    return [file, num ? Number(num[1]) : [...rest.matchAll(/^\s*'[0-9a-f]{16}'/gm)].length];
+  });
   assert.ok(entries.length >= 8);
   const item68 = section(59).split('\n').find((l) => l.startsWith('68. '));
   for (const [file, n] of entries) {
