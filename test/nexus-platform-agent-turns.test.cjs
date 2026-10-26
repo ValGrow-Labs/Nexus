@@ -1297,6 +1297,47 @@ test('B3 a turn held by waiting:runtime asks for a fresh probe once, at most eve
   off.nx.exec.tick(off.clock.t);
 });
 
+test('B3 the scheduler never turns a stuck runtime into a timer: no probe without a live consent, at most three in a row, a user trigger gives them back', async () => {
+  const w = await turnWorld();
+  const flagged = () => w.runner.sentOf('probe').filter((m) => m.runtimes === true).length;
+  const q = w.start();
+  // A CLI that is signed out: the runtime never turns ok, the turn stays queued for ever.
+  w.health.current = { kind: 'scripted', health: { ok: false, reason: 'not_authenticated', detail: 'x' } };
+  w.tick(); await sleep(15);
+  w.run(10 * 60_000);
+  assert.equal(w.job(q.job.id).phase, 'waiting:runtime');
+  assert.equal(flagged(), 3, 'three refreshes, then none: not one every 30 s');
+  // A user trigger (the setup sheet, Check again, a consent change, a start) gives the scheduler its refreshes back.
+  assert.equal(w.nx.agentProbe.refresh(), true);
+  assert.equal(flagged(), 4);
+  w.run(10 * 60_000);
+  assert.equal(flagged(), 7, 'the three it gets back, and no more');
+  // A new start is a trigger too.
+  const other = await turnWorld();
+  other.start();
+  other.health.current = null;
+  other.tick(); await sleep(15);
+  other.run(10 * 60_000);
+  const n = other.runner.sentOf('probe').filter((m) => m.runtimes === true).length;
+  assert.equal(n, 3);
+  other.health.current = HEALTH_OK;
+  other.start({ sessionId: null });
+  other.health.current = null;
+  other.run(10 * 60_000);
+  assert.ok(other.runner.sentOf('probe').filter((m) => m.runtimes === true).length > n, 'a start gave the refreshes back');
+  // No live consent: the turn waits for consent and the user's CLI is never asked for.
+  const nc = await turnWorld();
+  nc.start();
+  nc.nx.budget.revoke(nc.me);
+  nc.health.current = null;
+  nc.tick(); await sleep(15);
+  nc.run(10 * 60_000);
+  assert.equal(nc.runner.sentOf('probe').filter((m) => m.runtimes === true).length, 0);
+  // Agents off: nothing to ask.
+  const off = agentWorld({ agents: false });
+  assert.equal(off.nx.agentProbe, null);
+});
+
 test('B4 an attempt that never reached the runtime costs nothing and does not count toward the rate; one that started without a cost is charged the turn cap', async () => {
   const w = await turnWorld({ caps: { turnsPerHour: 3 } });
   // Seven turns each refused by the runner before anything ran: no spend, no rate.

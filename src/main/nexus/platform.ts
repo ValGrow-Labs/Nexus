@@ -355,11 +355,17 @@ export function createNexusPlatform(db: Database.Database, opts?: NexusPlatformO
       return hostsSha256(hosts) === c.hostsSha256 ? c.hostsSha256 : null;
     } catch { return null; }
   };
+  const sendRuntimeProbe = (): boolean => {
+    if (!probePort) return false;
+    try { probePort.send({ op: 'probe', runtimes: true }); return true; } catch { return false; }
+  };
   const agentProbe: AgentRuntimeProbe | null = runtimeCache ? {
     cache: runtimeCache,
+    // Every caller of the public refresh is a user-driven trigger (the setup sheet, "Check again", a consent change, a start):
+    // it gives the scheduler's own refreshes (below) their budget back.
     refresh(): boolean {
-      if (!probePort) return false;
-      try { probePort.send({ op: 'probe', runtimes: true }); return true; } catch { return false; }
+      agents?.resetRefreshBudget();
+      return sendRuntimeProbe();
     },
     async refreshAndWait(timeoutMs: number): Promise<boolean> {
       const since = now();
@@ -368,7 +374,7 @@ export function createNexusPlatform(db: Database.Database, opts?: NexusPlatformO
     }
   } : null;
   // A queued turn held by `waiting:runtime` asks for a fresh probe through this (rate limited in AgentService; never otherwise).
-  agents?.bindRuntimeRefresh(() => agentProbe?.refresh() ?? false);
+  agents?.bindRuntimeRefresh(() => (agentProbe ? sendRuntimeProbe() : false));
   if (tokens || gitRead || runtimeCache) {
     // Every runner `ready` is a new runner process (it answers the one `hello` of its port): its MCP server is new, and
     // no token of an earlier runner may reach it. The revocation runs before the execution core sees the message.

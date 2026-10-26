@@ -118,6 +118,8 @@ export interface AgentServiceDeps {
 
 /** A turn held by `waiting:runtime` asks for a fresh probe at most this often. */
 export const RUNTIME_REFRESH_MIN_MS = 30_000;
+/** After this many scheduler-driven refreshes in a row that did not turn the runtime ok, no more are asked until a user trigger. */
+export const MAX_AUTO_REFRESHES = 3;
 
 export interface StartInput {
   projectId: string; workspaceId: string; sessionId: string | null; skillId?: string;
@@ -182,8 +184,10 @@ export class AgentService implements AgentTurnPort {
       return { session: this.deps.sessions.get(user, prior.session_id), job: this.deps.jobs.get(user, prior.id) };
     }
 
-    // 1. Availability, 2. the runtime's cached health, 3. consent and budget.
+    // 1. Availability, 2. the runtime's cached health, 3. consent and budget. (A start is the user's own trigger: the scheduler
+    // gets its runtime refreshes back.)
     this.requireAvailable();
+    this.resetRefreshBudget();
     const consent = this.requireReady(pw.project_id);
     // 4. One turn per session; an interrupted session's worktree is continued by a new session.
     let reuseFrom: string | null = null;
@@ -506,25 +510,37 @@ export class AgentService implements AgentTurnPort {
       .get(j.id, ...HOLDING_STATES) as { n: number }).n;
     const wait = agentTurnGuard({ runnerReady: i.runnerReady, runtimeOk, guard, liveTurns: holding + i.preparing, concurrentTurns: this.deps.budget.caps().concurrentTurns },
       i.profile, i.probe, i.live, i.caps);
+    if (runtimeOk) this.autoRefreshes = 0;
     if (wait === 'waiting:runtime') this.requestRuntimeRefresh();
     return wait;
   }
 
   private lastRefreshAt: number | null = null;
+  /** Consecutive scheduler-driven refreshes that did not turn the runtime ok (a user trigger or a healthy runtime resets it). */
+  private autoRefreshes = 0;
   private refreshRuntime: (() => boolean) | null = null;
   /** B3: Task 14's probe trigger, bound once the platform has built it. */
   bindRuntimeRefresh(fn: (() => boolean) | null): void { this.refreshRuntime = fn; }
 
+  /** A user-driven trigger (the setup sheet opened, "Check again", a consent grant, a new start) gives the scheduler its refreshes back. */
+  resetRefreshBudget(): void { this.autoRefreshes = 0; }
+
   /**
-   * A queued turn is held by `waiting:runtime` (the cached health is stale, or says no): ask once for a fresh probe, at most once
-   * per RUNTIME_REFRESH_MIN_MS. Only from the scheduler's guard, so only when agents are on and a turn is queued and held.
+   * A queued turn is held by `waiting:runtime` (the cached health is stale, or says no): ask for a fresh probe, at most once per
+   * RUNTIME_REFRESH_MIN_MS, and ONLY while a consent is live (without one the turn waits for consent and the user's CLI is never
+   * run), and at most MAX_AUTO_REFRESHES times in a row without the runtime turning ok: a CLI that is signed out or not installed
+   * is not probed on a timer for as long as a turn stays queued. Only from the scheduler's guard, so only with agents on and a turn
+   * queued and held.
    */
   private requestRuntimeRefresh(): void {
     const fn = this.refreshRuntime ?? this.deps.refreshRuntime;
     if (!fn) return;
+    if (this.deps.budget.live() === null) return;
+    if (this.autoRefreshes >= MAX_AUTO_REFRESHES) return;
     const now = this.deps.now();
     if (this.lastRefreshAt !== null && now >= this.lastRefreshAt && now - this.lastRefreshAt < RUNTIME_REFRESH_MIN_MS) return;
     this.lastRefreshAt = now;
+    this.autoRefreshes++;
     try { fn(); } catch { /* the next guard pass asks again after the pause */ }
   }
 
