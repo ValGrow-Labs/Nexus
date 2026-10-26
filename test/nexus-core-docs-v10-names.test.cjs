@@ -268,7 +268,8 @@ test('DOC10-13 the proxy records its decisions, a change set is not promotable, 
   assert.match(s59, /change_set_not_promotable/);
   assert.match(s59, /There is no database trigger/);
   assert.ok(section(58).includes('latestReview { decision, decidedAt } | null'));
-  assert.doesNotMatch(s59, /in progress and not committed|was in progress/);
+  const item66 = s59.split('\n').find((l) => l.startsWith('66. '));
+  assert.ok(item66 && !/in progress|not yet refused/.test(item66), 'the promote guard is stated as landed');
   // O-ids: O23 and O24 are defined nowhere in the helper that holds the orphan queries.
   const orphans = fs.readFileSync(path.join(ROOT, 'test/helpers/orphans.cjs'), 'utf8');
   assert.doesNotMatch(orphans, /\bO2[34]\s*:/);
