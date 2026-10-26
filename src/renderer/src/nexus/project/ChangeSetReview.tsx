@@ -5,13 +5,13 @@ import { nexusClient } from '../data/nexusClient';
 import { agentFailText } from '../agent/agentModel';
 import { useProjectArtifacts } from '../data/useProjectArtifacts';
 import { usePlatform } from '../data/platformStore';
-import { useChangeChecks, useRepoStatus, useReviews } from '../data/useAgents';
+import { useChangeChecks, useRepoStatus } from '../data/useAgents';
 import { useExecStore, useRead, withIntent } from '../data/useExecution';
 import { Button } from '../ui/Button';
 import { EvidenceSection } from './EvidenceSection';
 import { useExecutionUi } from './execContext';
 import {
-  BUTTON_LABEL, acceptedText, changeSetModel, changeSetRows, diffLineKind, mergeModel, mergedText, type ChangeSetButton, type ChangeSetRow, type MergeModel
+  BUTTON_LABEL, acceptedText, changeSetModel, changeSetRows, diffLineKind, mergeModel, mergedText, reviewOf, type ChangeSetButton, type ChangeSetRow, type MergeModel
 } from './changeSetModel';
 
 const PAGE_BYTES = 64 * 1024;
@@ -108,7 +108,6 @@ export function ChangeSetReview({ versionId, projectId, status, name, withEviden
   const rev = usePlatform((s) => s.rev);
   const detail = useRead(versionId, () => nexusClient.versionGet(versionId), [rev]);
   const checks = useChangeChecks(versionId);
-  const reviews = useReviews(projectId);
   const repo = useRepoStatus(projectId);
   const [local, setLocal] = useState<ReviewDecision | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
@@ -116,12 +115,13 @@ export function ChangeSetReview({ versionId, projectId, status, name, withEviden
   const [comment, setComment] = useState('');
   const [note, setNote] = useState<{ text: string; alert: boolean } | null>(null);
   const commentId = useId();
-  useEffect(() => { setLocal(null); }, [reviews.decisions]);
+  // Your decision shows at once; the version's own newest review (latestReview) replaces it as soon as the version is read again.
+  useEffect(() => { setLocal(null); }, [detail.data]);
 
   const shown = detail.data?.status ?? status;
-  const review = local ?? reviews.decisions.get(versionId) ?? null;
+  const review: ReviewDecision | null | undefined = local ?? reviewOf(detail.data?.latestReview);
   const view = changeSetModel({ version: { status: shown, content: detail.data?.content }, validations: checks.data, review, repo: repo.data });
-  const refresh = () => { usePlatform.getState().bumpRev(); useExecStore.getState().bump(['jobs', 'validations']); repo.reload(); reviews.reload(); };
+  const refresh = () => { usePlatform.getState().bumpRev(); useExecStore.getState().bump(['jobs', 'validations']); repo.reload(); detail.reload(); };
 
   const decide = async (decision: ReviewDecision, text?: string) => {
     if (busy) return;

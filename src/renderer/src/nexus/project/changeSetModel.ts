@@ -6,27 +6,19 @@
 //   to TRACKED files (new, untracked files never block it);
 // - no host, model or engine name; the review and the merge are the person's, never the agent's.
 import type {
-  ActivityView, ArtifactSummaryView, MergeView, RepoStatusView, ReviewDecision, ValidationResultView, VersionContent, VersionView
+  ArtifactSummaryView, MergeView, RepoStatusView, ReviewDecision, ValidationResultView, VersionContent, VersionView
 } from '@shared/nexus/ipc';
 import { blockingValidatorsFor } from '@shared/nexus/validators';
 import { AGENT_REASON_TEXT } from '../data/errorCopy';
 import { statusWord, validatorLabel } from './evidenceModel';
 
 export const REVIEW_DECISION_WORDS = ['approve', 'request_changes', 'reject'] as const;
-const isDecision = (v: unknown): v is ReviewDecision => typeof v === 'string' && (REVIEW_DECISION_WORDS as readonly string[]).includes(v);
 
-/** A change's newest recorded review per version, from the project's activity (`review.decide` rows carry only the decision word). */
-export function latestReviews(rows: readonly ActivityView[]): Map<string, ReviewDecision> {
-  const best = new Map<string, { seq: number; decision: ReviewDecision }>();
-  for (const r of rows) {
-    if (r.action !== 'review.decide' || r.status !== 'succeeded' || !r.versionId) continue;
-    const d = r.details?.decision;
-    if (!isDecision(d)) continue;
-    const prev = best.get(r.versionId);
-    if (!prev || r.seq > prev.seq) best.set(r.versionId, { seq: r.seq, decision: d });
-  }
-  return new Map([...best].map(([k, v]) => [k, v.decision]));
+/** The newest review from a version view's `latestReview`: its decision, `null` when never reviewed, `undefined` when the field is absent (not read yet, or not a change set). */
+export function reviewOf(latest: { decision: ReviewDecision } | null | undefined): ReviewDecision | null | undefined {
+  return latest === undefined ? undefined : latest === null ? null : isDecision(latest.decision) ? latest.decision : null;
 }
+const isDecision = (v: unknown): v is ReviewDecision => typeof v === 'string' && (REVIEW_DECISION_WORDS as readonly string[]).includes(v);
 
 export type ChangeSetButton = 'approve' | 'request_changes' | 'reject' | 'accept';
 export const BUTTON_LABEL: Readonly<Record<ChangeSetButton, string>> = Object.freeze({
@@ -38,8 +30,11 @@ export interface ChangeSetInput {
   version: Pick<VersionView, 'status'> & { content?: VersionContent };
   /** #32 for the version; null while unread or when execution is off. */
   validations: readonly ValidationResultView[] | null;
-  /** The newest review on this version, if one is known. */
-  review: ReviewDecision | null;
+  /**
+   * The newest review of this change (the version's own `latestReview`): `null` when it was never reviewed, `undefined` when it
+   * is not known (the version is not read yet, or it is not a change set): no review UI is offered then.
+   */
+  review: ReviewDecision | null | undefined;
   /** #49; null while unread. */
   repo: RepoStatusView | null;
 }
@@ -98,6 +93,7 @@ export function changeSetModel(i: ChangeSetInput): ChangeSetView {
   if (i.validations !== null && blocking.length > 0) {
     return { ...base, headline: `Blocked: ${list(blocking)}`, sentences: ['It cannot be decided on while a check is blocking it.'] };
   }
+  if (i.review === undefined) return { ...base, headline: 'Reading the change’s review state…', sentences: [] };
   const buttons: ChangeSetButton[] = ['approve', 'request_changes', 'reject'];
   const sentences: string[] = [];
   let headline: string;

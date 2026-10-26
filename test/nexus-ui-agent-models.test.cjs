@@ -136,7 +136,7 @@ test('UA11 no host or model string in agent/** or the change-set views; only the
 test('UA3 Accept appears only on a candidate whose newest review approves (and only when the accepted branch head is known)', () => {
   let accepts = 0;
   for (const status of ['draft', 'candidate', 'active', 'failed', 'deprecated']) {
-    for (const review of [null, 'approve', 'request_changes', 'reject']) {
+    for (const review of [undefined, null, 'approve', 'request_changes', 'reject']) {
       for (const r of [null, repo(), repo({ acceptedHead: null })]) {
         for (const validations of [null, allPass(), [...allPass().slice(1), validation('git.diff_nonempty', 'failed')]]) {
           const v = CS.changeSetModel({ version: cset(status), validations, review, repo: r });
@@ -157,11 +157,24 @@ test('UA3 Accept appears only on a candidate whose newest review approves (and o
   // Approved but the branch head is unread: a sentence, not a button.
   const unread = CS.changeSetModel({ version: cset('candidate'), validations: allPass(), review: 'approve', repo: repo({ acceptedHead: null }) });
   assert.ok(!unread.buttons.includes('accept') && unread.sentences.some((s) => /accepted branch has not been read/.test(s)));
-  // The newest review is what counts: it is read from the activity rows (decision words only).
-  const row = (seq, decision, versionId = 'V1', status = 'succeeded') => ({ seq, ts: NOW, action: 'review.decide', status, actorKind: 'user', onBehalfOfUser: false, entityType: 'review',
-    entityId: null, projectId: 'p', workspaceId: 'sde', artifactId: null, versionId, details: { decision } });
-  const m = CS.latestReviews([row(3, 'reject'), row(5, 'approve'), row(4, 'request_changes'), row(9, 'approve', 'V2', 'denied'), row(6, 'bogus', 'V3')]);
-  assert.deepEqual([...m], [['V1', 'approve']]);
+  // The newest review is the version's own `latestReview` (null: never reviewed; undefined: not read yet or not a change set).
+  assert.equal(CS.reviewOf({ decision: 'approve', decidedAt: '2026-10-26T00:00:00.000Z' }), 'approve');
+  assert.equal(CS.reviewOf(null), null);
+  assert.equal(CS.reviewOf(undefined), undefined);
+  assert.equal(CS.reviewOf({ decision: 'bogus' }), null, 'an unknown decision word is never an approval');
+  const accepts2 = (latestReview) => CS.changeSetModel({ version: cset('candidate'), validations: allPass(), review: CS.reviewOf(latestReview), repo: repo() }).buttons.includes('accept');
+  assert.equal(accepts2({ decision: 'approve', decidedAt: 'x' }), true, 'Accept only on an approving latestReview');
+  for (const lr of [null, undefined, { decision: 'request_changes', decidedAt: 'x' }, { decision: 'reject', decidedAt: 'x' }]) assert.equal(accepts2(lr), false, JSON.stringify(lr));
+  // A version without latestReview (another kind, or not read yet) renders no review UI at all: no decision button, no Accept.
+  const unknown = CS.changeSetModel({ version: cset('candidate'), validations: allPass(), review: undefined, repo: repo() });
+  assert.deepEqual(unknown.buttons, []);
+  assert.deepEqual(unknown.sentences, []);
+  // The activity-row derivation and its 50-row read are gone.
+  assert.equal(CS.latestReviews, undefined);
+  assert.doesNotMatch(src('data/useAgents.ts'), /useReviews|activityByProject/);
+  const rvSrc = src('project/ChangeSetReview.tsx');
+  assert.match(rvSrc, /reviewOf\(detail\.data\?\.latestReview\)/);
+  assert.doesNotMatch(rvSrc, /useReviews|activityByProject/);
   // The Folio's generic version actions never make a change current by hand.
   const a = { status: 'active', ownerScope: 'participation', currentVersionId: null, kind: 'change_set' };
   assert.deepEqual(ART.actionsFor({ id: 'V1', status: 'candidate', producedByEngine: true, promotedAt: null }, a, true).map((x) => x.kind), ['discard']);

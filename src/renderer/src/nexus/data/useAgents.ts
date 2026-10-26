@@ -3,11 +3,9 @@
 // Nothing here polls in the background. The setup sheet alone re-asks while it is open.
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { AgentConsentView, JobView, NexusResult, RepoStatusView, SessionDetailView, SessionView, ValidationResultView } from '@shared/nexus/ipc';
-import type { ReviewDecision } from '@shared/nexus/ipc';
 import { nexusClient } from './nexusClient';
 import { usePlatform } from './platformStore';
 import { useExecStore, useHints, useRead, useJobs, type Read } from './useExecution';
-import { latestReviews } from '../project/changeSetModel';
 import { consentRereadDelay } from './executionModel';
 
 /** The project's agent conversations (#43), newest first. */
@@ -31,18 +29,6 @@ export function useRepoStatus(projectId: string | null): Read<RepoStatusView> {
   const jobs = useExecStore((s) => s.ticks.jobs);
   const rev = usePlatform((s) => s.rev);
   return useRead(projectId, () => nexusClient.repoStatus(projectId!), [jobs, rev]);
-}
-
-/** The newest review of each change, from the project's activity (there is no review list channel): versionId to decision.
- *  A change whose review row is older than the page read is treated as not reviewed; Accept is then not offered, and the
- *  person may approve again (main refuses an accept without an approving review in any case). */
-export function useReviews(projectId: string | null): { decisions: ReadonlyMap<string, ReviewDecision>; loaded: boolean; reload: () => void } {
-  useHints();
-  const jobs = useExecStore((s) => s.ticks.jobs);
-  const rev = usePlatform((s) => s.rev);
-  const read = useRead(projectId, () => nexusClient.activityByProject(projectId!, { limit: 50 }), [jobs, rev]);
-  const decisions = useMemo(() => (read.data ? latestReviews(read.data) : new Map<string, ReviewDecision>()), [read.data]);
-  return { decisions, loaded: read.loaded, reload: read.reload };
 }
 
 /** The checks of a change (#32). */
