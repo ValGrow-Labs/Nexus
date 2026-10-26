@@ -125,7 +125,19 @@ export class WorktreeService {
     const prev = this.db.prepare(`SELECT p.rel_path, p.ref, p.integration_ref, p.base_commit, p.project_id, st.status FROM session_worktrees p
       JOIN agent_sessions st ON st.id = p.session_id WHERE p.session_id = ? AND p.removed_at IS NULL`).get(from) as
       { rel_path: string; ref: string; integration_ref: string; base_commit: string; project_id: string; status: string } | undefined;
-    if (!prev || prev.project_id !== s.project_id || prev.status !== 'interrupted') return null;
+    // Whenever the continuation was asked for and did not happen, the session's record says so (`reused: false`): the work
+    // of the interrupted conversation was NOT carried over, and the agent's context file says it too (AgentService.prepare).
+    const notContinued = (why: string): null => {
+      try {
+        appendActivityRow(this.db, { actorKind: 'system', actorId: system.id, onBehalfOf: s.principal_id, sessionId: s.id, projectId: s.project_id,
+          workspaceId: s.workspace_id, entityType: 'worktree', entityId: s.id, action: 'repo.worktree', status: 'succeeded',
+          details: { reused: false, reuseRequested: true, reuseRefused: why } }, now);
+      } catch { /* the record is best effort; the context note is what the agent reads */ }
+      return null;
+    };
+    if (!prev) return notContinued('no_live_worktree');
+    if (prev.project_id !== s.project_id) return notContinued('other_project');
+    if (prev.status !== 'interrupted') return notContinued('not_interrupted');
     try {
       immediateTx(this.db, () => {
         this.db.prepare(`INSERT INTO session_worktrees (session_id, project_id, rel_path, ref, integration_ref, base_commit, locked, created_at, reused_from_session_id)
@@ -134,7 +146,7 @@ export class WorktreeService {
           workspaceId: s.workspace_id, entityType: 'worktree', entityId: s.id, action: 'repo.worktree', status: 'succeeded',
           details: { worktree: prev.rel_path, ref: prev.ref, integrationRef: prev.integration_ref, base: prev.base_commit, reused: true, locked: true } }, now);
       });
-    } catch { return null; }   // already reused by another session (reused_from is unique): this one gets its own
+    } catch { return notContinued('already_reused'); }   // reused_from is unique: this one gets its own
     return { rel_path: prev.rel_path, ref: prev.ref, base_commit: prev.base_commit };
   }
 

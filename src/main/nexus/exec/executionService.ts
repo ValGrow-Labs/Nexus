@@ -1929,6 +1929,11 @@ export class ExecutionService {
         return;
       }
       this.log(`[nexus] exec: agent turn lease not taken: ${e instanceof PlatformError ? e.code : (e as Error)?.name ?? 'error'}`);
+      // Not every tick: the turn waits a few seconds before it is tried again.
+      try {
+        const t = this.deps.now();
+        immediateTx(this.db, () => this.db.prepare("UPDATE jobs SET next_attempt_at = ? WHERE id = ? AND state = 'queued'").run(t + 5_000, jobId));
+      } catch { /* the next tick tries again */ }
     }
   }
 
@@ -2054,6 +2059,8 @@ export class ExecutionService {
       ended = true;
     });
     this.agentTerminal.delete(attemptId);
+    // The protocol's CancelReason has no `limit` value (a shared contract this round does not change): `timeout` is the
+    // reason of a resource limit reached; the runner treats every reason alike for an agent turn (it aborts the turn).
     if (ended) this.send({ op: 'attempt.cancel', attemptId, graceMs: CANCEL_GRACE_MS, reason: 'timeout' });
   }
 
@@ -2064,8 +2071,9 @@ export class ExecutionService {
    */
   private agentExited(a: AttemptRow, j: ExecJobRow, m: Extract<RunnerToMain, { op: 'attempt.exited' }>, now: number): void {
     const exit = { code: m.exit.code, signal: m.exit.signal, oomKilled: m.exit.oomKilled };
+    // Kept until the settlement has committed: a transaction that rolls back (a revocation that failed) is retried by the
+    // runner's next report of the exit, and that retry must still know how the turn ended.
     const terminal = this.agentTerminal.get(a.id) ?? null;
-    this.agentTerminal.delete(a.id);
     const agents = this.agents;
     let s: AgentSettlement;
     if (m.reason === 'timeout') {
@@ -2090,6 +2098,7 @@ export class ExecutionService {
       }
       this.setPhaseTx(j.id, null, now);
     });
+    this.agentTerminal.delete(a.id);
     this.send({ op: 'attempt.release', attemptId: a.id });
     // The checks of what the turn registered queued their own jobs; they run now.
     this.deps.validation?.runPending(now);

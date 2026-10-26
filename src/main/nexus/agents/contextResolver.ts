@@ -33,7 +33,11 @@ export interface AgentDataHome {
   confineToDataHome(rel: string): Promise<string | null>;
 }
 
-export interface ContextJob { id: string; projectId: string; workspaceId: string; sessionId: string | null }
+export interface ContextJob {
+  id: string; projectId: string; workspaceId: string; sessionId: string | null;
+  /** Main's own notes to the agent (for example that its working copy is fresh); secret-checked like every field. */
+  notes?: readonly string[];
+}
 export interface ContextResolverDeps { dataHome: AgentDataHome | null; now: () => number; system: Principal }
 export interface ContextResult { path: string; sha256: string; bytes: number }
 
@@ -61,6 +65,7 @@ export class ContextResolver {
       sections.push(`## ${label}\n\n${redactText(value).trim()}\n`);
     };
 
+    if (Array.isArray(job.notes) && job.notes.length > 0) field('Notes', job.notes.join('\n'));
     const domain = getDomain(job.workspaceId);
     field('Domain', domain ? `${domain.label} (${domain.id})` : job.workspaceId);
     if (domain) {

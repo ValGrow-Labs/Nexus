@@ -34,14 +34,14 @@ import type {
   AgentUsageView, SessionDetailView, SessionMessageView, SessionToolCallView, SessionTurnView, SessionView
 } from '../../../shared/nexus/ipc';
 import type { RuntimeEvent, RuntimeHealth } from '../../../shared/nexus/runtime';
-import { isMonotonicUsage, turnLimitReached } from '../../../shared/nexus/agentPolicy';
+import { turnLimitReached } from '../../../shared/nexus/agentPolicy';
 import { MCP_TOOLS } from '../../../shared/nexus/mcpTools';
 import { SKILLS } from '../../../shared/nexus/capabilities';
 import { isAtOrBefore } from '../../../shared/nexus/domainSpec';
 import { getDomain } from '../../../shared/nexus/domains/index';
 import type { TokenCapability } from '../../../shared/nexus/tokens';
 import type { SandboxProfileId } from '../../../shared/nexus/execution';
-import { containsSecret, redactText } from '../activity/redact';
+import { containsSecret, redactText, scrubHostPaths } from '../activity/redact';
 import { ensureAgentPrincipalTx, type AuthService } from '../auth/authService';
 import { requireStoredUser, type PrincipalResolver } from '../auth/principals';
 import { immediateTx } from '../db/tx';
@@ -55,7 +55,7 @@ import { type JobService, type JobRow, requireActiveParticipation } from '../job
 import { ProjectAccess } from '../project/projectAccess';
 import type { SessionService } from '../sessions/sessionService';
 import type { WorktreeService } from '../repo/worktreeService';
-import { hostsSha256, type BudgetService, type EgressHost, type LiveConsent } from './budgetService';
+import { canonicalHostsJson, hostsSha256, type BudgetService, type EgressHost, type LiveConsent } from './budgetService';
 import type { ContextResolver } from './contextResolver';
 import type { Skills } from './skills';
 import type { TokenService } from './tokenService';
@@ -79,6 +79,13 @@ export interface RuntimeHealthEntry {
   health: RuntimeHealth;
   /** The adapter's pinned flag set, hashed (recorded in `sandbox_json`); null when the cache does not know it. */
   flagsSha256?: string | null;
+  /**
+   * The destinations the adapter's own process needs (`AgentRuntime.describe().egressHosts`, e.g. the model service's
+   * host and port 443): the ONLY hosts a turn's egress allow-list may hold (D-B2). The live consent's hosts must equal
+   * them, and the plan's `egress.allow` is built from THESE, never from the consent row. An entry without them is
+   * treated as unknown (the runtime is not ready).
+   */
+  egressHosts?: { host: string; port: number }[];
 }
 export type RuntimeHealthProvider = () => RuntimeHealthEntry | null;
 
@@ -155,8 +162,16 @@ export class AgentService implements AgentTurnPort {
     const skillId = this.checkSkill(pw.workspace_id, i.skillId);
     const sessionId = i.sessionId === null || i.sessionId === undefined ? null : isStr(i.sessionId) ? i.sessionId : refuse('invalid', 'sessionId must be an id', 'bad_session');
     // A re-sent intent answers what it made (before any guard: the turn already exists).
-    const prior = this.db.prepare('SELECT id, session_id FROM jobs WHERE idempotency_key = ?').get(`agent.turn:${intent}`) as { id: string; session_id: string } | undefined;
-    if (prior) return { session: this.deps.sessions.get(user, prior.session_id), job: this.deps.jobs.get(user, prior.id) };
+    const prior = this.db.prepare('SELECT id, session_id, project_id, workspace_id, params_json FROM jobs WHERE idempotency_key = ?').get(`agent.turn:${user.id}:${intent}`) as
+      { id: string; session_id: string; project_id: string; workspace_id: string; params_json: string } | undefined;
+    if (prior) {
+      // The same intent names the same turn: a re-send for another project, message or conversation is refused, never answered with the old turn.
+      const pp = parseJson(prior.params_json);
+      const same = prior.project_id === pw.project_id && prior.workspace_id === pw.workspace_id && isObj(pp) && pp.message === message
+        && (sessionId === null || sessionId === prior.session_id);
+      if (!same) refuse('invalid', 'that intent already started a different turn', 'intent_mismatch');
+      return { session: this.deps.sessions.get(user, prior.session_id), job: this.deps.jobs.get(user, prior.id) };
+    }
 
     // 1. Availability, 2. the runtime's cached health, 3. consent and budget.
     this.requireAvailable();
@@ -344,6 +359,7 @@ export class AgentService implements AgentTurnPort {
     const p2 = this.runtimeProblem(consent.runtimeKind);
     if (p2 !== null) refuse('unavailable', RUNTIME_PROBLEMS[p2] ?? 'the agent runtime is not ready', p2);
     this.consentHostsOrThrow(consent);
+    this.adapterHostsOrThrow(consent);
     return consent;
   }
 
@@ -354,7 +370,34 @@ export class AgentService implements AgentTurnPort {
     if (!h) return 'runtime_unknown';
     if (!h.health.ok) return `runtime_${h.health.reason}`;
     if (kind !== null && h.kind !== kind) return 'runtime_mismatch';
+    // The adapter's own hosts are what a turn may reach: an entry that does not carry them is unknown, never trusted.
+    if (this.adapterHosts(h) === null) return 'runtime_unknown';
     return null;
+  }
+
+  /** The adapter's hosts from a health entry, canonicalised and bounded, or null when absent or unusable. */
+  private adapterHosts(h: RuntimeHealthEntry | null): EgressHost[] | null {
+    if (!h || !Array.isArray(h.egressHosts) || h.egressHosts.length === 0) return null;
+    try {
+      const json = canonicalHostsJson(h.egressHosts);
+      return (JSON.parse(json) as string[]).map((x) => { const m = /^(.+):(\d{1,5})$/.exec(x)!; return { host: m[1], port: Number(m[2]) }; });
+    } catch { return null; }
+  }
+
+  /**
+   * D-B2: the live consent's hosts must EQUAL the adapter's own (the only destinations); returns the adapter's hosts (what
+   * the plan's allow-list is built from). Anything else, in either direction, is `consent_mismatch`.
+   */
+  private adapterHostsOrThrow(c: LiveConsent): EgressHost[] {
+    let h: RuntimeHealthEntry | null = null;
+    try { h = this.runtimeHealth(); } catch { h = null; }
+    const hosts = this.adapterHosts(h);
+    if (!hosts) return refuse('unavailable', RUNTIME_PROBLEMS.runtime_unknown, 'runtime_unknown');
+    const mine = JSON.stringify([...c.hosts].sort());
+    let theirs = '';
+    try { theirs = canonicalHostsJson(hosts); } catch { theirs = ''; }
+    if (theirs === '' || mine !== theirs) refuse('conflict', 'the permission on record names other destinations than the agent runtime needs; nothing was started', 'consent_mismatch');
+    return hosts;
   }
 
   /** The live consent's hosts as `{host, port}`, after checking its recorded hash against the canonical hash of those hosts. */
@@ -378,11 +421,11 @@ export class AgentService implements AgentTurnPort {
   }): { session: AgentSession; job: Job } {
     const now = this.deps.now();
     const caps = this.deps.budget.caps();
-    const key = o.key ?? `agent.turn:${o.intent}`;
+    const key = o.key ?? `agent.turn:${user.id}:${o.intent}`;
     const created = immediateTx(this.db, (): { sessionId: string; jobId: string } => {
       let sessionId = o.session?.id ?? null;
       if (sessionId === null) {
-        const opened = this.deps.sessions.open(user, { projectId: o.pw.project_id, workspaceId: o.pw.workspace_id, idempotencyKey: `agent.session:${o.intent}`,
+        const opened = this.deps.sessions.open(user, { projectId: o.pw.project_id, workspaceId: o.pw.workspace_id, idempotencyKey: `agent.session:${user.id}:${o.intent}`,
           runtime: { kind: o.runtimeKind } });
         sessionId = opened.session.id;
         ensureAgentPrincipalTx(this.db, sessionId, now);
@@ -429,7 +472,7 @@ export class AgentService implements AgentTurnPort {
     } catch { guard = 'consent_missing'; }
     // A damaged consent record never lets a turn start (it would fail `consent_mismatch` at lease anyway).
     if (consent && guard === 'ok') {
-      try { this.consentHostsOrThrow(consent); } catch { guard = 'consent_missing'; }
+      try { this.consentHostsOrThrow(consent); this.adapterHostsOrThrow(consent); } catch { guard = 'consent_missing'; }
     }
     const holding = (this.db.prepare(`SELECT COUNT(*) AS n FROM jobs WHERE kind = 'agent.run' AND id <> ? AND state IN (${HOLDING_STATES.map(() => '?').join(', ')})`)
       .get(j.id, ...HOLDING_STATES) as { n: number }).n;
@@ -447,7 +490,14 @@ export class AgentService implements AgentTurnPort {
     if ('waiting' in ensured) return { wait: ensured.waiting === 'approval' ? 'waiting:approval' : 'waiting:worktree' };
     if ('failed' in ensured) return { failed: { code: ensured.failed.slice(0, 32), message: `the agent's working copy could not be prepared (${ensured.failed})`.slice(0, 200) } };
     const relPath = `wt/${path.basename(ensured.ready.path)}`;
-    const ctx = await this.deps.contextResolver.resolve({ id: j.id, projectId: j.project_id, workspaceId: j.workspace_id, sessionId: j.session_id });
+    // The user asked to continue an interrupted conversation's work: when this session did not get that worktree (it was
+    // reused by another session, or no longer live), the agent is told its working copy is fresh.
+    const notes: string[] = [];
+    if (reuseFrom) {
+      const row = this.db.prepare('SELECT reused_from_session_id AS r FROM session_worktrees WHERE session_id = ?').get(j.session_id) as { r: string | null } | undefined;
+      if (!row || row.r === null) notes.push('The interrupted earlier conversation\'s unfinished work was NOT carried over: this working copy is a fresh checkout. Check what is there before you assume anything.');
+    }
+    const ctx = await this.deps.contextResolver.resolve({ id: j.id, projectId: j.project_id, workspaceId: j.workspace_id, sessionId: j.session_id, notes });
     const domain = getDomain(j.workspace_id);
     const wanted = isObj(params) && typeof params.skillId === 'string' ? [params.skillId] : domain && domain.skills.length > 0 ? [domain.skills[0]] : [];
     let skills: AgentPrepared['skills'] = [];
@@ -464,8 +514,12 @@ export class AgentService implements AgentTurnPort {
   planTx(j: JobRow, attempt: { id: string; n: number }, p: AgentPrepared, c: AgentLeaseCtx): AgentLease {
     const consent = this.deps.budget.live();
     if (!consent) return { failed: { code: 'consent_missing', message: 'the agent has not been given permission' } };
+    // Before anything is minted: the consent's record is sound AND names exactly the adapter's own hosts (D-B2).
     let hosts: EgressHost[];
-    try { hosts = this.consentHostsOrThrow(consent); } catch { return { failed: { code: 'consent_mismatch', message: 'the permission on record does not match its hosts' } }; }
+    try { this.consentHostsOrThrow(consent); hosts = this.adapterHostsOrThrow(consent); } catch (e) {
+      const code = e instanceof PlatformError && e.detail?.reason === 'runtime_unknown' ? 'runtime_unknown' : 'consent_mismatch';
+      return { failed: { code, message: code === 'consent_mismatch' ? 'the permission on record does not match the destinations the agent runtime needs' : RUNTIME_PROBLEMS.runtime_unknown } };
+    }
     if (!j.session_id) return { failed: { code: 'session_missing', message: 'the turn has no session' } };
     const health = (() => { try { return this.runtimeHealth(); } catch { return null; } })();
     const domain = getDomain(j.workspace_id);
@@ -553,9 +607,19 @@ export class AgentService implements AgentTurnPort {
     const fresh = this.db.prepare('SELECT usage_json FROM job_attempts WHERE id = ?').get(a.id) as { usage_json: string | null } | undefined;
     const prevRaw = parseJson(fresh?.usage_json ?? null);
     const prev = isObj(prevRaw) && typeof prevRaw.inputTokens === 'number' ? prevRaw as unknown as typeof next : null;
-    // Monotonic: a report that lowers any counter, or drops a reported cost, is ignored (the stored usage stays the highest seen).
-    if (!isMonotonicUsage(prev, next)) return { limit: null };
-    const stored = { ...next, costUsdCents: next.costUsdCents === null ? null : Math.ceil(next.costUsdCents) };
+    // Monotonic per field: the stored usage is the highest value ever seen for each counter, and a reported cost never
+    // disappears. A report that raises one counter and lowers another still raises the first (a cap is never enforced late);
+    // nothing can lower what is stored.
+    const nextCost = next.costUsdCents === null ? null : Math.ceil(next.costUsdCents);
+    const prevCost = prev && typeof prev.costUsdCents === 'number' ? prev.costUsdCents : null;
+    const cost = nextCost === null ? prevCost : prevCost === null ? nextCost : Math.max(prevCost, nextCost);
+    const takeNext = nextCost !== null && (prevCost === null || nextCost >= prevCost);
+    const stored = {
+      inputTokens: Math.max(prev?.inputTokens ?? 0, next.inputTokens), outputTokens: Math.max(prev?.outputTokens ?? 0, next.outputTokens),
+      cacheCreationTokens: Math.max(prev?.cacheCreationTokens ?? 0, next.cacheCreationTokens), cacheReadTokens: Math.max(prev?.cacheReadTokens ?? 0, next.cacheReadTokens),
+      costUsdCents: cost, toolCalls: Math.max(prev?.toolCalls ?? 0, next.toolCalls),
+      estimated: takeNext ? next.estimated : prev ? prev.estimated === true : next.estimated
+    };
     this.db.prepare("UPDATE job_attempts SET usage_json = ? WHERE id = ? AND state = 'running'").run(JSON.stringify(stored), a.id);
     const turn = this.turnCapsOf(a);
     if (!turn) return { limit: null };
@@ -587,7 +651,7 @@ export class AgentService implements AgentTurnPort {
     if (terminal && terminal.t === 'run.failed') {
       const outcome = terminal.code === 'auth' ? 'runtime_auth' : terminal.code === 'limit' ? 'limit' : terminal.code === 'protocol' ? 'runtime_protocol' : failureWord(terminal.message);
       return { attempt: 'failed', job: 'failed', outcome, sessionFailed: outcome === 'runtime_auth',
-        error: { code: outcome, message: redactText(String(terminal.message ?? '')).slice(0, 300) || outcome } };
+        error: { code: outcome, message: scrubHostPaths(redactText(String(terminal.message ?? ''))).slice(0, 300) || outcome } };
     }
     if (terminal && terminal.t === 'run.cancelled') {
       return { attempt: 'cancelled', job: 'interrupted', outcome: 'interrupted', error: { code: 'interrupted', message: 'the agent was stopped before it finished' } };
@@ -634,9 +698,14 @@ export class AgentService implements AgentTurnPort {
       { id: string; kind: string; status: string }[]).map((r) => ({ versionId: r.id, kind: r.kind, status: r.status as SessionDetailView['versions'][number]['status'] }));
   }
 
-  /** How many versions the turn registered: its produced versions, plus the requirement drafts it saved through its token. */
+  /**
+   * How many versions the turn registered AS WORK (what completes it): the change sets its `changeset.collect` children
+   * produced, plus the requirement drafts it saved through its token. A version of any other kind (a discovery run's test
+   * suite, a build) and a child job of another recipe never count: a turn that only looked around changed nothing.
+   */
   registeredCount(jobId: string): number {
-    const produced = this.registeredVersions(jobId).length;
+    const produced = (this.db.prepare(`SELECT COUNT(*) AS n FROM artifact_versions v JOIN artifacts a ON a.id = v.artifact_id JOIN jobs c ON c.id = v.produced_by_job_id
+      WHERE c.parent_job_id = ? AND c.recipe_id = 'changeset.collect' AND a.kind = 'change_set'`).get(jobId) as { n: number }).n;
     const drafts = (this.db.prepare(`SELECT COUNT(*) AS n FROM activity WHERE job_id = ? AND action = 'mcp.call' AND status = 'succeeded'
       AND json_extract(details_json, '$.tool') = 'requirement_draft'`).get(jobId) as { n: number }).n;
     return produced + drafts;

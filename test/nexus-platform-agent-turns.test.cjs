@@ -36,7 +36,7 @@ const { getDomain } = loadTs('src/shared/nexus/domains/index.ts');
 const PROJECT = 'p-ledger';
 const WORKSPACE = 'sde';
 const HOSTS = [{ host: 'api.anthropic.com', port: 443 }];
-const HEALTH_OK = { kind: 'scripted', health: { ok: true, version: '1.0.0' }, flagsSha256: 'f'.repeat(64) };
+const HEALTH_OK = { kind: 'scripted', health: { ok: true, version: '1.0.0' }, flagsSha256: 'f'.repeat(64), egressHosts: HOSTS };
 const MCP_URL = 'http://127.0.0.1:43111/mcp';
 const IMAGE = 'sha256:' + '1'.repeat(64);
 const MESSAGE = 'Please add the pagination helper to the ledger report, zebra-quartz-77';
@@ -175,10 +175,10 @@ async function turnWorld(o = {}) {
       return report;
     },
     /** A version registered by the turn (produced by a child job of it), as a change-set collect would leave one. */
-    registerVersion(turnJobId, sessionId, name = 'change') {
+    registerVersion(turnJobId, sessionId, name = 'change', o = {}) {
       const created = w.db.transaction(() => w.nx.jobs.createTx(w.sys, { kind: 'tool.run', projectId: PROJECT, workspaceId: WORKSPACE, sessionId, parentJobId: turnJobId,
-        idempotencyKey: `child-${ulid()}`, recipeId: 'changeset.collect', params: {} })).immediate();
-      const a = w.nx.artifacts.create(w.me, { projectId: PROJECT, workspaceId: WORKSPACE, kind: 'change_set', name });
+        idempotencyKey: `child-${ulid()}`, recipeId: o.recipe ?? 'changeset.collect', params: {} })).immediate();
+      const a = w.nx.artifacts.create(w.me, { projectId: PROJECT, workspaceId: WORKSPACE, kind: o.kind ?? 'change_set', name });
       const v = w.nx.artifacts.registerVersion(w.me, { artifactId: a.id, storage: { kind: 'git', commit: 'd'.repeat(40) }, metadata: {}, producedByJobId: created.job.id });
       return { versionId: v.version.id, childJobId: created.job.id };
     }
@@ -468,8 +468,12 @@ test('AT18 a turn that registers nothing becomes partial: no_change, and the ste
   assert.equal(w.attemptOf(r.attempt.id).state, 'succeeded'); assert.equal(w.attemptOf(r.attempt.id).outcome, 'no_change');
   assert.equal(tokenCode(w, r.plan), 'revoked');
   assert.equal(w.db.prepare("SELECT COUNT(*) AS n FROM artifact_versions v JOIN artifacts a ON a.id = v.artifact_id WHERE a.kind = 'change_set'").get().n, 0);
-  const step = getDomain('sde').lifecycle.find((s) => s.id === 'ai-implementation');
-  assert.notEqual(stepStateFrom(step, { versions: [], liveJobs: 0, inputsAvailable: true }), 'done');
+  // The step's state from the records, exactly as the rail reads them: the change sets and their latest blocking results.
+  const step = getDomain('sde').lifecycle.find((x) => x.id === 'ai-implementation');
+  const versions = w.db.prepare(`SELECT v.id, v.status FROM artifact_versions v JOIN artifacts a ON a.id = v.artifact_id WHERE a.project_id = ? AND a.kind = ?`).all(PROJECT, step.doneWhen.kind)
+    .map((v) => ({ status: v.status, validators: Object.fromEntries(w.db.prepare('SELECT validator_id, status FROM validations WHERE version_id = ? AND blocking = 1').all(v.id).map((r) => [r.validator_id, r.status])) }));
+  assert.deepEqual(versions, []);
+  assert.notEqual(stepStateFrom(step, { versions, liveJobs: 0, inputsAvailable: true }), 'done');
   assert.notEqual(w.nx.exec.get(w.me, r.job.id).headline, 'completed');
   assert.equal(w.session(r.session.id).status, 'running', 'the conversation goes on');
 });
@@ -694,7 +698,7 @@ test('the guards: runtime health from the cache, consent, budget and rate, at st
   assert.throws(() => w.start(), (e) => e.code === 'unavailable' && e.detail.reason === 'runtime_not_installed');
   w.health.current = { kind: 'scripted', health: { ok: false, reason: 'not_authenticated', detail: 'x' } };
   assert.throws(() => w.start(), (e) => e.detail.reason === 'runtime_not_authenticated');
-  w.health.current = { kind: 'other', health: { ok: true, version: '1' } };
+  w.health.current = { kind: 'other', health: { ok: true, version: '1' }, egressHosts: HOSTS };
   assert.throws(() => w.start(), (e) => e.detail.reason === 'runtime_mismatch');
   w.health.current = HEALTH_OK;
   const q = w.start();
@@ -1021,4 +1025,148 @@ test('the plan main builds is accepted by the real runner core (labels, paths, m
   } finally {
     await core.shutdown(); port1.close();
   }
+});
+
+// ---------- fix round 1 ----------
+
+test('I1 only work completes a turn: a discovery child that produced a test suite is no_change; a registered change set is completed', async () => {
+  const w = await turnWorld();
+  const a = await w.running();
+  // The agent asked for a discovery run; its recipe produced a test_suite version. That is looking around, not work.
+  const found = w.registerVersion(a.job.id, a.session.id, 'suite', { kind: 'test_suite', recipe: 'sde.test.discover' });
+  assert.ok(found.versionId);
+  assert.equal(w.nx.agents.registeredVersions(a.job.id).length, 1, 'the session view still lists what the turn produced');
+  assert.equal(w.nx.agents.registeredCount(a.job.id), 0, 'but none of it is work');
+  w.ev(a.attempt.id, { t: 'run.completed', at: w.clock.t, stopReason: 'end_turn' });
+  w.exit(a.attempt.id, 0);
+  assert.equal(w.job(a.job.id).state, 'partial'); assert.equal(w.job(a.job.id).outcome, 'no_change');
+  // A change set from a collect child is work.
+  const b = await w.running({ sessionId: a.session.id });
+  w.registerVersion(b.job.id, b.session.id, 'real change');
+  w.ev(b.attempt.id, { t: 'run.completed', at: w.clock.t, stopReason: 'end_turn' });
+  w.exit(b.attempt.id, 0);
+  assert.equal(w.job(b.job.id).state, 'completed');
+  // A change-set-kind version produced by some OTHER recipe's child does not count either.
+  const c = await w.running({ sessionId: a.session.id });
+  w.registerVersion(c.job.id, c.session.id, 'odd', { recipe: 'sde.test.discover' });
+  w.ev(c.attempt.id, { t: 'run.completed', at: w.clock.t, stopReason: 'end_turn' });
+  w.exit(c.attempt.id, 0);
+  assert.equal(w.job(c.job.id).outcome, 'no_change');
+});
+
+test('I2 the egress allow-list is the adapter\'s own hosts; a consent that names any other destination is refused, held and fails a leased turn before a token is minted', async () => {
+  // The plan is built from the health entry (canonicalised), not from the consent row.
+  const w = await turnWorld({ health: { ...HEALTH_OK, egressHosts: [{ host: 'API.Anthropic.com', port: 443 }] } });
+  const r = await w.running();
+  assert.deepEqual(r.plan.egress.allow, [{ host: 'api.anthropic.com', port: 443 }]);
+  assert.equal(r.plan.egress.consentHostsSha256, w.consent.hostsSha256);
+  // A health entry that does not carry the adapter's hosts is unknown: start refused.
+  const noHosts = await turnWorld({ health: { kind: 'scripted', health: { ok: true, version: '1' } } });
+  assert.throws(() => noHosts.start(), (e) => e.code === 'unavailable' && e.detail.reason === 'runtime_unknown');
+  noHosts.health.current = { ...HEALTH_OK, egressHosts: [] };
+  assert.throws(() => noHosts.start(), (e) => e.detail.reason === 'runtime_unknown');
+  // A consent with an extra host, or a different one, is refused at start.
+  for (const hosts of [[...HOSTS, { host: 'other.example.com', port: 443 }], [{ host: 'other.example.com', port: 443 }], [{ host: 'api.anthropic.com', port: 8443 }]]) {
+    const x = await turnWorld({ noConsent: true });
+    x.nx.budget.grant(x.me, { runtimeKind: 'scripted', hosts });
+    assert.throws(() => x.start(), (e) => e.code === 'conflict' && e.detail.reason === 'consent_mismatch', JSON.stringify(hosts));
+    assert.equal(x.db.prepare("SELECT COUNT(*) AS n FROM jobs WHERE kind = 'agent.run'").get().n, 0);
+  }
+  // The adapter's hosts changed under a consent that matched: a queued turn is held, never leased.
+  const q = await turnWorld();
+  const queued = q.start();
+  q.health.current = { ...HEALTH_OK, egressHosts: [{ host: 'moved.example.com', port: 443 }] };
+  q.tick(); await sleep(15); q.tick();
+  assert.equal(q.job(queued.job.id).state, 'queued'); assert.equal(q.job(queued.job.id).phase, 'waiting:consent');
+  assert.equal(q.db.prepare('SELECT COUNT(*) AS n FROM job_attempts').get().n, 0);
+  // Past the guard (a race), the lease's own check fails before ANY token is minted.
+  const job = q.db.prepare('SELECT * FROM jobs WHERE id = ?').get(queued.job.id);
+  const lease = q.nx.agents.planTx(job, { id: ulid(), n: 1 }, { worktree: { relPath: `wt/${queued.session.id.toLowerCase()}`, gitDir: 'g', ref: 'refs/nexus/job/x', base: 'b'.repeat(40) }, contextSha256: 'c'.repeat(64), skills: [] },
+    { bootId: q.nx.bootId, dataHomeRoot: q.dataHome.root, workRel: 'work/j/1', logRel: 'logs/jobs/j/1.log', profile: PROFILES[0], imageId: IMAGE, mcpUrl: MCP_URL, dockerVersion: null, nexusVersion: null });
+  assert.equal(lease.failed.code, 'consent_mismatch');
+  assert.equal(q.db.prepare('SELECT COUNT(*) AS n FROM capability_tokens').get().n, 0, 'no token was minted');
+});
+
+test('I3 fail closed: a token revocation that fails leaves the job and attempt running; a later event or tick retries and ends them', async () => {
+  const w = await turnWorld();
+  const r = await w.running();
+  w.registerVersion(r.job.id, r.session.id);
+  const real = w.nx.tokens.revokeForJob;
+  w.nx.tokens.revokeForJob = () => { throw new Error('the revocation failed'); };
+  w.ev(r.attempt.id, { t: 'run.completed', at: w.clock.t, stopReason: 'end_turn' });
+  w.exit(r.attempt.id, 0);
+  assert.equal(w.job(r.job.id).state, 'running', 'the end transition rolled back');
+  assert.equal(w.attemptOf(r.attempt.id).state, 'running');
+  assert.equal(w.db.prepare('SELECT COUNT(*) AS n FROM capability_tokens WHERE job_id = ? AND revoked_at IS NULL').get(r.job.id).n, 1, 'the token is live and so is its job');
+  assert.equal(tokenCode(w, r.plan), 'ok');
+  assert.ok(w.logs.some((l) => /not applied/.test(l)), 'the failure was logged, not swallowed');
+  // The user cannot cancel it either while revocation fails: nothing half-ends.
+  assert.throws(() => w.nx.agents.cancel(w.me, r.session.id));
+  assert.equal(w.job(r.job.id).state, 'running'); assert.equal(w.attemptOf(r.attempt.id).state, 'running');
+  // The runner reports its exit again once revocation works: the turn still knows how it ended, and it ends.
+  w.nx.tokens.revokeForJob = real;
+  w.exit(r.attempt.id, 0);
+  assert.equal(w.job(r.job.id).state, 'completed'); assert.equal(tokenCode(w, r.plan), 'revoked');
+  // A tick retries too: the wall clock ends a turn whose revocation failed until it works.
+  const t = await w.running({ sessionId: r.session.id });
+  w.nx.tokens.revokeForJob = () => { throw new Error('the revocation failed'); };
+  w.run(31 * 60_000);
+  assert.equal(w.job(t.job.id).state, 'running', 'still running: it could not end');
+  w.nx.tokens.revokeForJob = real;
+  w.run(10_000);
+  assert.equal(w.job(t.job.id).state, 'timed_out'); assert.equal(tokenCode(w, t.plan), 'revoked');
+});
+
+test('I4 usage keeps the per-field maximum: an event that raises tokens and lowers tool calls still raises tokens, and a cap is enforced on the merged value', async () => {
+  const w = await turnWorld();
+  const r = await w.running();
+  w.usage(r.attempt.id, { inputTokens: 100, outputTokens: 50, costUsdCents: 20, toolCalls: 7 });
+  w.usage(r.attempt.id, { inputTokens: 300, outputTokens: 40, costUsdCents: null, toolCalls: 3, estimated: true });
+  let u = JSON.parse(w.attemptOf(r.attempt.id).usage_json);
+  assert.deepEqual([u.inputTokens, u.outputTokens, u.toolCalls, u.costUsdCents, u.estimated], [300, 50, 7, 20, false], 'tokens rose, the rest kept, a reported cost never goes null');
+  w.usage(r.attempt.id, { inputTokens: 250, outputTokens: 10, costUsdCents: 5, toolCalls: 1 });
+  u = JSON.parse(w.attemptOf(r.attempt.id).usage_json);
+  assert.deepEqual([u.inputTokens, u.outputTokens, u.toolCalls, u.costUsdCents], [300, 50, 7, 20], 'nothing is ever lowered');
+  assert.equal(w.job(r.job.id).state, 'running');
+  // The cap is crossed by an event that also lowers another counter: the turn is cancelled failed: limit.
+  w.usage(r.attempt.id, { inputTokens: 400_001, outputTokens: 0, costUsdCents: null, toolCalls: 1 });
+  assert.equal(w.job(r.job.id).state, 'failed'); assert.equal(w.job(r.job.id).outcome, 'limit');
+  assert.equal(JSON.parse(w.attemptOf(r.attempt.id).usage_json).toolCalls, 7);
+});
+
+test('a re-sent intent for another message, project or conversation is refused; the key belongs to its user', async () => {
+  const w = await turnWorld();
+  const intentId = ulid();
+  const one = w.nx.agents.start(w.me, { projectId: PROJECT, workspaceId: WORKSPACE, sessionId: null, focusVersionIds: [], message: 'the first message', intentId });
+  const same = w.nx.agents.start(w.me, { projectId: PROJECT, workspaceId: WORKSPACE, sessionId: null, focusVersionIds: [], message: 'the first message', intentId });
+  assert.equal(same.job.id, one.job.id);
+  assert.throws(() => w.nx.agents.start(w.me, { projectId: PROJECT, workspaceId: WORKSPACE, sessionId: null, focusVersionIds: [], message: 'a different message', intentId }),
+    (e) => e.code === 'invalid' && e.detail.reason === 'intent_mismatch');
+  assert.throws(() => w.nx.agents.start(w.me, { projectId: PROJECT, workspaceId: WORKSPACE, sessionId: ulid(), focusVersionIds: [], message: 'the first message', intentId }),
+    (e) => e.code === 'invalid' || e.code === 'not_found');
+  assert.equal(w.db.prepare("SELECT COUNT(*) AS n FROM jobs WHERE kind = 'agent.run'").get().n, 1);
+  assert.ok(w.db.prepare("SELECT 1 FROM jobs WHERE idempotency_key = ?").get(`agent.turn:user:local:${intentId}`), 'the key is namespaced by the user');
+});
+
+test('a worktree that could not be reused is recorded (reused: false) and the agent is told in its context file that the earlier work was not carried over', async () => {
+  const w = await turnWorld();
+  const first = await w.running();
+  w.reboot();
+  // The first continuation takes the worktree; a second one for the same interrupted session cannot.
+  const second = w.start({ sessionId: first.session.id, seed: false, message: 'carry on' });
+  await w.lease(second.job.id);
+  w.nx.exec.cancel(w.me, second.job.id);
+  const third = w.nx.agents.start(w.me, { projectId: PROJECT, workspaceId: WORKSPACE, sessionId: first.session.id, focusVersionIds: [], message: 'and again', intentId: ulid() });
+  const ensured = w.nx.worktrees.ensure(w.sys, third.session.id, third.job.id, { reuseFrom: first.session.id });
+  assert.ok('waiting' in ensured, 'it does not get the worktree: a fresh one is asked for (A3 first)');
+  const rows = w.db.prepare("SELECT details_json FROM activity WHERE action = 'repo.worktree' AND session_id = ?").all(third.session.id).map((x) => JSON.parse(x.details_json));
+  assert.ok(rows.some((d) => d.reused === false && d.reuseRequested === true && d.reuseRefused === 'already_reused'), JSON.stringify(rows));
+  // Its own fresh worktree arrives later; the turn's context says the earlier work was not carried over.
+  w.seedWorktree(third.session.id);
+  await w.lease(third.job.id);
+  const context = fs.readFileSync(path.join(w.dataHome.root, 'jobs', third.job.id, 'agent', 'context.md'), 'utf8');
+  assert.match(context, /NOT carried over/);
+  // A continued worktree carries no such note.
+  const okContext = fs.readFileSync(path.join(w.dataHome.root, 'jobs', second.job.id, 'agent', 'context.md'), 'utf8');
+  assert.doesNotMatch(okContext, /NOT carried over/);
 });
