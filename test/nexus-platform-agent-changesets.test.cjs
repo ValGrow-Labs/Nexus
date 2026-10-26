@@ -321,7 +321,8 @@ function latest(w, versionId, validatorId) {
 function version(w, id) { return w.db.prepare('SELECT * FROM artifact_versions WHERE id = ?').get(id); }
 const HEAD1 = 'b'.repeat(40);
 const factsFor = (turn, o = {}) => ({ changed: true, parent: COMMIT_BASE, head: HEAD1, tree: TREE, base: COMMIT_BASE, ref: jobRefFor(turn.session.id),
-  diffstat: { files: 1, insertions: 3, deletions: 0 }, paths: ['src/a.ts'], pathsTruncated: false, secretHits: [], entropyHits: [], scanTruncated: false, ...o });
+  diffstat: { files: 1, insertions: 3, deletions: 0 }, paths: ['src/a.ts'], pathsTruncated: false, secretHits: [], entropyHits: [], scanTruncated: false,
+  preview: { complete: true, hiddenLines: 0, patchBytes: 100 }, ...o });
 const newWorld = () => { const w = agentWorld({ platform: { ingest: undefined } }); addRepository(w); return w; };
 
 test('CS1: the happy path reaches candidate, with exact lineage', async () => {
@@ -510,6 +511,92 @@ test('a second revalidate while the suite derived from a change set is still run
   const b = w.nx.validation.revalidate(w.me, answer.versionId);
   assert.ok(a.jobs.includes(run.id) && b.jobs.includes(run.id), 'the live test run is the answer');
   assert.equal(w.db.prepare('SELECT COUNT(*) AS n FROM jobs WHERE idempotency_key LIKE ?').get(`cs.tests_pass:${answer.versionId}:discover:%`).n, 1, 'no second discovery');
+});
+
+test('git.diff_nonempty judges the base..head diffstat: no files fails; changed:false with files fails only when the head is already registered', () => {
+  const head = 'b'.repeat(40); const base = COMMIT_BASE; const files = { files: 1, insertions: 1, deletions: 0 };
+  assert.equal(diffNonempty.run({ base, head, changed: false, diffstat: { files: 0, insertions: 0, deletions: 0 } }).status, 'failed');
+  assert.equal(diffNonempty.run({ base, head, changed: false, headRegistered: false, diffstat: files }).status, 'passed', 'a collect whose ingest was lost');
+  const dup = diffNonempty.run({ base, head, changed: false, headRegistered: true, diffstat: files });
+  assert.equal(dup.status, 'failed'); assert.equal(dup.reason, 'no_new_change');
+  assert.equal(diffNonempty.run({ base, head, changed: true, headRegistered: true, diffstat: files }).status, 'passed');
+});
+
+test('B7: a collect committed but its ingest was lost; the next register, with no new edit, creates the change set', async () => {
+  const w = newWorld();
+  const turn = openRunningTurn(w.db, w.nx);
+  const service = css(w);
+  // The first register's collect job ends with no usable facts (the ingest is lost): no version.
+  const p1 = service.register(turn.claims, { title: 'Lost', summary: '', clientKey: nextKey() }).catch((e) => e);
+  const lost = findJob(w, turn.job.id, 'changeset.collect');
+  finish(turn, leaseAndRun(w, lost.id), { parsed: [] });
+  assert.ok((await p1) instanceof Error);
+  assert.equal(w.db.prepare("SELECT COUNT(*) AS n FROM artifacts WHERE kind = 'change_set'").get().n, 0);
+  // The runner already committed on the session ref: the next collect sees an unchanged tree, but base..head holds the work.
+  const answer = await collectWith(w, turn, service, { title: 'Lost', summary: '' }, factsFor(turn, { changed: false, parent: HEAD1 }));
+  assert.ok(answer.versionId, 'a change set was registered');
+  assert.equal(latest(w, answer.versionId, 'git.diff_nonempty').status, 'passed');
+  // Registering it AGAIN with nothing new fails (the head is already registered).
+  const again = await collectWith(w, turn, service, { title: 'Lost', summary: '' }, factsFor(turn, { changed: false, parent: HEAD1 }));
+  assert.equal(latest(w, again.versionId, 'git.diff_nonempty').status, 'failed');
+  assert.match(latest(w, again.versionId, 'git.diff_nonempty').summary, /no_new_change/);
+});
+
+test('B1: a session that continues an interrupted one registers on the recorded worktree ref; a ref that is not the recorded one is refused', async () => {
+  const w = newWorld();
+  const first = openRunningTurn(w.db, w.nx);
+  const s1 = first.session.id;
+  const name1 = s1.toLowerCase();
+  w.db.prepare(`INSERT INTO session_worktrees (session_id, project_id, rel_path, ref, integration_ref, base_commit, locked, created_at)
+    VALUES (?, ?, ?, ?, ?, ?, 1, ?)`).run(s1, PROJECT, `wt/${name1}`, `refs/nexus/job/${name1}`, 'refs/nexus/accepted/main', COMMIT_BASE, w.clock.t);
+  w.nx.sessions.transition(w.sys, s1, 'interrupted');
+  const second = openRunningTurn(w.db, w.nx);
+  const s2 = second.session.id;
+  assert.notEqual(s1, s2);
+  // What WorktreeService.reuseTx writes: the new session's row at the interrupted session's path and ref.
+  w.db.prepare(`INSERT INTO session_worktrees (session_id, project_id, rel_path, ref, integration_ref, base_commit, locked, created_at, reused_from_session_id)
+    VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?)`).run(s2, PROJECT, `wt/${name1}`, `refs/nexus/job/${name1}`, 'refs/nexus/accepted/main', COMMIT_BASE, w.clock.t, s1);
+  const service = css(w);
+  const answer = await collectWith(w, second, service, { title: 'Continued', summary: '' }, factsFor(second, { ref: `refs/nexus/job/${name1}` }));
+  assert.ok(answer.versionId, 'the change set exists');
+  const stored = JSON.parse(version(w, answer.versionId).storage_ref_json);
+  assert.equal(stored.ref, `refs/nexus/job/${name1}`);
+  assert.equal(stored.commit, HEAD1);
+  assert.equal(JSON.parse(version(w, answer.versionId).metadata_json).base, COMMIT_BASE);
+  // The session's OWN name is no longer the recorded ref, and an arbitrary ref never is.
+  for (const ref of [`refs/nexus/job/${s2.toLowerCase()}`, 'refs/nexus/job/' + 'z'.repeat(26), 'refs/heads/main', 'refs/nexus/accepted/main']) {
+    await assert.rejects(collectWith(w, second, service, { title: 'Wrong ref', summary: '' }, factsFor(second, { ref })), (e) => e.code === 'invalid', ref);
+  }
+});
+
+test('A1: the version records whether its preview is complete (counts and a closed code only); absent or malformed facts are NOT complete', async () => {
+  const meta = async (previewFacts) => {
+    const w = newWorld();
+    const turn = openRunningTurn(w.db, w.nx);
+    const facts = factsFor(turn);
+    if (previewFacts === undefined) delete facts.preview; else facts.preview = previewFacts;
+    const a = await collectWith(w, turn, css(w), { title: 'Preview', summary: '' }, facts);
+    return JSON.parse(version(w, a.versionId).metadata_json);
+  };
+  const ok = await meta({ complete: true, hiddenLines: 0, patchBytes: 120 });
+  assert.equal(ok.previewComplete, true); assert.equal(ok.previewReason, undefined); assert.equal(ok.previewHiddenLines, 0);
+  const hidden = await meta({ complete: false, reason: 'hidden_lines', hiddenLines: 3, patchBytes: 500 });
+  assert.deepEqual([hidden.previewComplete, hidden.previewReason, hidden.previewHiddenLines], [false, 'hidden_lines', 3]);
+  const big = await meta({ complete: false, reason: 'too_large', hiddenLines: 0, patchBytes: 3_000_000 });
+  assert.deepEqual([big.previewComplete, big.previewReason], [false, 'too_large']);
+  const old = await meta(undefined);
+  assert.deepEqual([old.previewComplete, old.previewReason, old.previewHiddenLines], [false, 'unknown', 0], 'old runner facts without a preview');
+  const junk = await meta({ complete: 'yes', hiddenLines: -1 });
+  assert.equal(junk.previewComplete, false);
+  const lying = await meta({ complete: true, reason: 'hidden_lines', hiddenLines: 0, patchBytes: 1 });
+  assert.equal(lying.previewComplete, false, 'a complete flag with a reason is not complete');
+  // A cut scan makes the preview incomplete whatever the preview facts say.
+  const w = newWorld();
+  const turn = openRunningTurn(w.db, w.nx);
+  const a = await collectWith(w, turn, css(w), { title: 'Cut', summary: '' }, factsFor(turn, { scanTruncated: true, preview: { complete: true, hiddenLines: 0, patchBytes: 1 } }));
+  const m = JSON.parse(version(w, a.versionId).metadata_json);
+  assert.deepEqual([m.previewComplete, m.previewReason], [false, 'truncated']);
+  assert.ok(!JSON.stringify(m).includes('authorization'), 'no line text in the metadata');
 });
 
 test('CS10: after these flows, no orphan (the existing invariant queries, O1-O22)', async () => {

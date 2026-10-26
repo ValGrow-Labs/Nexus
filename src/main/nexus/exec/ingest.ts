@@ -404,9 +404,28 @@ export class IngestService implements IngestPort {
     const secretHits = isObj(f) && Array.isArray(f.secretHits) ? (f.secretHits as unknown[]) : [];
     const entropyHits = isObj(f) && Array.isArray(f.entropyHits) ? (f.entropyHits as unknown[]) : [];
     if (!sessionId || !branch || !head || !COMMIT_RE.test(head) || !base || !COMMIT_RE.test(base) || !tree || !ref || !diffstat || !paths) {
+    // Preview completeness (A1), fail closed: absent or malformed facts are NOT complete. Only counts and a closed code.
+    const pv = isObj(f) && isObj(f.preview) ? f.preview : null;
+    const pvReasonOk = pv !== null && (pv.reason === undefined || pv.reason === 'hidden_lines' || pv.reason === 'too_large' || pv.reason === 'truncated');
+    const pvValid = pv !== null && typeof pv.complete === 'boolean' && pvReasonOk && Number.isSafeInteger(pv.hiddenLines) && (pv.hiddenLines as number) >= 0
+      && Number.isSafeInteger(pv.patchBytes) && (pv.patchBytes as number) >= 0;
+    const previewComplete = pvValid && pv!.complete === true && pv!.reason === undefined && !scanTruncated;
+    const previewReason: string | null = previewComplete ? null
+      : !pvValid ? 'unknown' : scanTruncated ? 'truncated' : typeof pv!.reason === 'string' ? pv!.reason : 'unknown';
+    const previewHiddenLines = pvValid ? (pv!.hiddenLines as number) : 0;
+    const previewPatchBytes = pvValid ? (pv!.patchBytes as number) : 0;
       return refuse('invalid_output', 'parser_contract', 'the collect facts were not usable');
     }
-    if (ref !== jobRefFor(sessionId)) return refuse('invalid_output', 'parser_contract', 'the collect facts do not match the session');
+    // The ref the runner reported must be the one the plan was built from: the session's RECORDED worktree ref (a session
+    // that continues an interrupted one commits on the earlier session's own ref, B1), else its own name. Always a
+    // `refs/nexus/job/<26 lowercase>` ref of THIS project's worktree row, never an arbitrary ref.
+    const wtRow = this.db.prepare('SELECT ref, project_id FROM session_worktrees WHERE session_id = ? AND removed_at IS NULL').get(sessionId) as
+      { ref: string; project_id: string } | undefined;
+    if (wtRow && wtRow.project_id !== job.project_id) return refuse('invalid_output', 'parser_contract', 'the collect facts do not match the session');
+    const wantRef = wtRow ? wtRow.ref : jobRefFor(sessionId);
+    if (!/^refs\/nexus\/job\/[0-9a-z]{26}$/.test(wantRef) || ref !== wantRef) {
+      return refuse('invalid_output', 'parser_contract', 'the collect facts do not match the session');
+    }
     if (job.participation_id === null) return refuse('invalid_output', 'bad_input', 'the collect job has no participation');
     const scope = isObj(params) && Array.isArray(params.scope) ? params.scope.filter((x): x is string => typeof x === 'string') : [];
     const title = isObj(params) && typeof params.title === 'string' ? params.title : 'Agent change';
@@ -414,7 +433,13 @@ export class IngestService implements IngestPort {
     const requirementIds = isObj(params) && Array.isArray(params.requirementVersionIds)
       ? params.requirementVersionIds.filter((x): x is string => typeof x === 'string') : [];
     const reviseArtifactId = isObj(params) && typeof params.reviseArtifactId === 'string' ? params.reviseArtifactId : null;
-    const diffFacts: diffNonempty.DiffNonemptyFacts = { base, head, changed, diffstat };
+    // A collect commits on the session ref BEFORE this ingest: if the ingest was lost (a restart, a timeout) the next
+    // collect sees an unchanged tree (changed:false) although base..head holds all the work. git.diff_nonempty therefore
+    // judges the base..head diffstat; `changed:false` fails only when a change set is already registered for this head.
+    const headRegistered = !!this.db.prepare(`SELECT 1 FROM artifact_versions v JOIN artifacts a ON a.id = v.artifact_id
+      WHERE a.kind = 'change_set' AND v.project_id = ? AND json_extract(v.storage_ref_json, '$.commit') = ?
+        AND v.produced_by_job_id IS NOT ? LIMIT 1`).get(job.project_id, head, job.id);
+    const diffFacts: diffNonempty.DiffNonemptyFacts = { base, head, changed, headRegistered, diffstat };
     const alreadyV = this.already(job.id, 'head');
     if (alreadyV) return this.dedupe(ctx, alreadyV, diffNonempty.ID, this.deps.validation.runPure(diffNonempty.ID, diffFacts));
     const repo = this.db.prepare("SELECT v.id FROM artifacts a JOIN artifact_versions v ON v.id = a.current_version_id "
@@ -434,7 +459,8 @@ export class IngestService implements IngestPort {
       ...(reviseArtifactId ? { artifactId: reviseArtifactId } : { newArtifact: { kind: 'change_set', name: title, participation: job.participation_id } }),
       storage: { kind: 'git', commit: head, ref },
       contentHash: `git:${tree}`,
-      metadata: { base, branch, scope, title, summary, diffstat, requirementVersionIds: requirementIds },
+      metadata: { base, branch, scope, title, summary, diffstat, requirementVersionIds: requirementIds,
+        previewComplete, ...(previewReason !== null ? { previewReason } : {}), previewHiddenLines, previewPatchBytes },
       environment: this.environment(ctx), jobId: job.id, attemptN: attempt.n, outputPath: 'head', action: 'exec.changeset_collect',
       onBehalfOf: job.on_behalf_of, now: this.deps.now(),
       inputs: [

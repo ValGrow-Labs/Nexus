@@ -39,6 +39,8 @@ import { runGit, toolEnv, type RunResult } from './proc';
 import { walk, type GuardFs, type GuardRefusal } from './worktreeGuard';
 import { isLockfilePath } from '../shared/nexus/changeSet';
 import { PRIVATE_KEY_HEADER, hasProviderKey, looksSecret } from '../shared/nexus/secretShape';
+import { GIT_DIFF_MAX_BYTES_PER_SIDE } from '../shared/nexus/execution';
+import { redactSecretText } from '../main/nexus/activity/redact';
 
 export const GIT_WRITE_CONFIG: readonly string[] = Object.freeze([
   '-c', 'commit.gpgsign=false', '-c', 'tag.gpgsign=false', '-c', 'core.symlinks=false', '-c', 'core.longpaths=true',
@@ -349,7 +351,7 @@ export const COLLECT_ALWAYS_EXCLUDE: readonly string[] = Object.freeze([
  * and, outside a lockfile, `looksSecret` (advisory). Only the path and the 1-based line number of a hit are kept: the
  * line's text is read here and discarded; it is never returned, logged or stored (D-B14).
  */
-export function scanAddedLines(patch: string): { secretHits: CollectFacts['secretHits']; entropyHits: CollectFacts['entropyHits'] } {
+export function scanAddedLines(patch: string): { secretHits: CollectFacts['secretHits']; entropyHits: CollectFacts['entropyHits']; hiddenLines: number } {
   const secretHits: CollectFacts['secretHits'] = [];
   const entropyHits: CollectFacts['entropyHits'] = [];
   let currentPath: string | null = null;
@@ -379,6 +381,13 @@ export function scanAddedLines(patch: string): { secretHits: CollectFacts['secre
       }
       oldLeft = 0; newLeft = 0;                                               // malformed: leave the hunk, read it as a header
     }
+  /**
+   * Whether the user can review the WHOLE change in Nexus's own diff preview (A1). Counts and a closed code only, never
+   * line text: `hidden_lines` = added lines the preview's own redaction alters (the user would see `[redacted]`, yet
+   * sec.secret_scan does not block them), `too_large` = the preview's patch would exceed its cap, `truncated` = the
+   * secret scan itself was cut. Main stores it in the version's metadata; absent counts as NOT complete.
+   */
+  preview: { complete: boolean; reason?: 'hidden_lines' | 'too_large' | 'truncated'; hiddenLines: number; patchBytes: number };
     if (line.startsWith('+++ ')) {
       currentPath = patchPath(line.slice(4), 'b/');
       continue;
@@ -388,7 +397,12 @@ export function scanAddedLines(patch: string): { secretHits: CollectFacts['secre
       if (m) { oldLeft = m[1] === undefined ? 1 : Number(m[1]); newLeft = m[3] === undefined ? 1 : Number(m[3]); newLine = Number(m[2]); }
     }
   }
-  return { secretHits, entropyHits };
+  // The preview redacts the patch with redactSecretText (the SAME function: acceptService and gitRead). Count the added lines it
+  // would change; the whole text first (the usual case is zero, and one pass is cheap), then line by line.
+  const joined = added.join(String.fromCharCode(10));
+  let hiddenLines = 0;
+  if (added.length > 0 && redactSecretText(joined) !== joined) hiddenLines = added.filter((l) => redactSecretText(l) !== l).length;
+  return { secretHits, entropyHits, hiddenLines };
 }
 
 /** A `---`/`+++` header's path: git's C-style quoting undone, a trailing tab (a name with a space) dropped, the prefix removed; null for /dev/null. */
@@ -399,6 +413,7 @@ function patchPath(rest: string, prefix: string): string | null {
     const bytes: number[] = [];
     const chars = [...p.slice(1, -1)];                       // by code point: a non-BMP character is one unit, never split
     for (let i = 0; i < chars.length; i++) {
+  const added: string[] = [];                                  // every added line, as the preview shows it (with its +)
       const c = chars[i];
       if (c !== '\\') { bytes.push(...Buffer.from(c, 'utf8')); continue; }
       const n = chars[++i];
@@ -413,6 +428,7 @@ function patchPath(rest: string, prefix: string): string | null {
   if (p === '/dev/null') return null;
   return p.startsWith(prefix) ? p.slice(prefix.length) : p;
 }
+        added.push(line);
 
 const isExcludeSpec = (s: string): boolean => s.startsWith(':(glob,exclude)') || s.startsWith(':(glob,icase,exclude)');
 
@@ -504,12 +520,20 @@ export async function collect(g: HardenedGit, t: { repoPath: string; worktreePat
   // patch text is read only here, inside this function, and discarded; `scanAddedLines` returns path:line only.
   const patch = must(await g.run(repo, ['-c', 'core.quotePath=false', 'diff', ...SAFE_DIFF_ARGS, '--no-renames', '--src-prefix=a/', '--dst-prefix=b/', '--text', '-U0', base, head],
     { neutral: n, signal: o.signal, maxStdout: o.patchMaxBytes ?? COLLECT_PATCH_MAX_BYTES }), 'diff -U0');
-  const { secretHits, entropyHits } = scanAddedLines(patch.stdout);
+  const { secretHits, entropyHits, hiddenLines } = scanAddedLines(patch.stdout);
+  // The preview's own patch (gitRead 'diff': default context, at most 2 x GIT_DIFF_MAX_BYTES_PER_SIDE): larger than that, the
+  // user is shown only "too large". A failed read is not a verdict either: it counts as an incomplete preview.
+  const previewMax = GIT_DIFF_MAX_BYTES_PER_SIDE * 2;
+  const pd = await g.run(repo, ['diff', ...SAFE_DIFF_ARGS, '--no-renames', base, head], { neutral: n, signal: o.signal, maxStdout: previewMax + 4 });
+  const previewTooLarge = pd.code !== 0 || pd.truncated || pd.stdoutBytes > previewMax;
+  const scanTruncated = patch.truncated === true;
+  const reason = scanTruncated || pd.code !== 0 ? 'truncated' as const : previewTooLarge ? 'too_large' as const : hiddenLines > 0 ? 'hidden_lines' as const : undefined;
+  const preview: CollectFacts['preview'] = { complete: reason === undefined, ...(reason ? { reason } : {}), hiddenLines, patchBytes: pd.code === 0 ? pd.stdoutBytes : 0 };
   // `--text` renders every file as text, overriding a NUL byte and any `-diff`/`binary` attribute: otherwise such a file
   // is "Binary files differ" and never scanned, and a secret could hide in it. The cost is that a huge real binary now
   // fills the patch cap; that is the same fail-closed outcome (scanTruncated -> sec.secret_scan fails scan_truncated).
   // A patch cut at the cap was not fully scanned: reported, so main fails the secret scan (never passes it).
-  return { ok: true, changed, parent, head, tree, base, ref: t.ref, diffstat, paths, pathsTruncated, secretHits, entropyHits, scanTruncated: patch.truncated === true };
+  return { ok: true, changed, parent, head, tree, base, ref: t.ref, diffstat, paths, pathsTruncated, secretHits, entropyHits, scanTruncated, preview };
 }
 
 // ---------- changeset.merge_check, changeset.accept, changeset.accept_rollback ----------

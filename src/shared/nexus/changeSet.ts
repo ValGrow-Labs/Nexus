@@ -22,6 +22,15 @@ export interface ChangeSetMeta {
   jobId: string;
   /** The message the agent gave (redacted, at most 2000 characters). */
   message: string;
+  /**
+   * Whether the user can review the WHOLE change in the diff preview (A1): false when the preview redacts added lines
+   * (`hidden_lines`), is past its cap (`too_large`) or the secret scan was cut (`truncated`); `unknown` when the facts
+   * carried no preview verdict. Absent counts as NOT complete: approval needs `previewComplete === true`. Counts only.
+   */
+  previewComplete?: boolean;
+  previewReason?: 'hidden_lines' | 'too_large' | 'truncated' | 'unknown';
+  previewHiddenLines?: number;
+  previewPatchBytes?: number;
 }
 
 /** The refs Nexus writes, only under `refs/nexus/*` (D-B13). */

@@ -1,6 +1,7 @@
 /**
- * `git.diff_nonempty` v1 (change_set, register, blocking). Pure. Fails when the agent's commit on the session ref is
- * byte-identical to its parent (`changeset.collect` reports `changed: false`): nothing to review.
+ * `git.diff_nonempty` v1 (change_set, register, blocking). Pure. Judged on the base..head diffstat: no file changed
+ * between the base and the head fails; a collect that committed nothing new (`changed: false`) fails only when a change
+ * set is already registered for that head.
  */
 import { createHash } from 'node:crypto';
 import { canonicalJson } from '../../db/canonical';
@@ -13,6 +14,8 @@ export interface DiffNonemptyFacts {
   base: string;
   head: string;
   changed: boolean;
+  /** A change set is already registered for this head (so an unchanged collect adds nothing new). */
+  headRegistered?: boolean;
   diffstat: { files: number; insertions: number; deletions: number };
 }
 
@@ -26,6 +29,9 @@ export function run(f: DiffNonemptyFacts): ValidatorOutcome {
     { type: 'git' as const, commit: f.head, check: 'diff_nonempty' as const, detail: `${d.files} file(s), +${d.insertions}/-${d.deletions}` },
     { type: 'number' as const, name: 'files', value: d.files, bound: { op: '>=' as const, value: 1 }, source: { blobSha256: sha, pointer: '/diffstat/files' } }
   ];
-  if (!f.changed || d.files === 0) return failed('empty_diff', 'The change has no file change between its base and its head.', evidence);
+  if (d.files === 0) return failed('empty_diff', 'The change has no file change between its base and its head.', evidence);
+  // `changed: false` is "this collect committed nothing new", which is also what a collect whose ingest was lost looks
+  // like on the next register: the base..head diff holds the work. It fails only when that head is already registered.
+  if (!f.changed && f.headRegistered === true) return failed('no_new_change', 'Nothing changed since the change set already registered for this head.', evidence);
   return passed(`${d.files} file(s) changed.`, evidence);
 }
