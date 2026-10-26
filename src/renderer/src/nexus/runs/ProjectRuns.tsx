@@ -66,7 +66,8 @@ function useCheckReason(job: JobView, enabled: boolean): string | null {
 function JobRow({ job, explain, jobs, deployments }: { job: JobView; explain: boolean; jobs: readonly JobView[]; deployments: readonly DeploymentView[] | null }) {
   const titleId = useId();
   const ui = useExecutionUi();
-  const reason = useCheckReason(job, explain && (job.headline === 'checks_failed' || job.headline === 'checks_could_not_run'));
+  // An agent turn is not a run of checks: main's `checks_could_not_run` headline on a no-change turn never starts a check-reason read or wording.
+  const reason = useCheckReason(job, explain && job.kind !== 'agent.run' && (job.headline === 'checks_failed' || job.headline === 'checks_could_not_run'));
   const awaitingCheck = useAwaitingCheck(job, jobs, deployments);
   const run = jobRun(job, { reason, awaitingCheck });
   const [busy, setBusy] = useState<'cancel' | 'retry' | null>(null);

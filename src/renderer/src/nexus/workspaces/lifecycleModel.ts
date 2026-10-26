@@ -100,6 +100,16 @@ const LIVE = new Set(['queued', 'leased', 'running', 'awaiting_approval', 'retry
 export const liveActionsOf = (jobs: readonly Pick<JobView, 'state' | 'actionId'>[]): string[] =>
   jobs.filter((j) => LIVE.has(j.state) && j.actionId).map((j) => j.actionId!) ;
 
+/**
+ * The `review` record (B2b): a change set was reviewed AND accepted. Main makes a change set current (status `active`) only through
+ * Accept, and Accept refuses unless the change's newest review approves it (a later review cannot be made once it is no longer a
+ * candidate; promote and rollback refuse a change set). So an ACTIVE change set is exactly one whose newest review approved it and
+ * that was accepted. A candidate that is only approved, rejected, or sent back for changes, or one never reviewed, is not.
+ */
+export function reviewRecorded(records: Pick<RailRecords, 'versions'>): boolean {
+  return records.versions.some((v) => v.kind === 'change_set' && v.status === 'active');
+}
+
 /** The rail of one domain; `records` only inside a project (null: no state is claimed). */
 export function railFor(view: DomainSpecView, records: RailRecords | null = null): RailView {
   const spec = getDomain(view.id);
@@ -128,7 +138,8 @@ export function railFor(view: DomainSpecView, records: RailRecords | null = null
         liveDeployments: records.liveDeployments === undefined ? undefined
           : 'kind' in done && records.draftPreviews !== undefined ? records.draftPreviews.length
             : records.liveDeployments + records.liveActions.filter((a) => deploymentActions.includes(a)).length,
-        recordPresent: 'record' in done ? (done.record === 'participation' ? records.participation : done.record === 'deployment_healthy' ? records.deploymentHealthy : false) : undefined
+        recordPresent: 'record' in done ? (done.record === 'participation' ? records.participation : done.record === 'deployment_healthy' ? records.deploymentHealthy
+          : done.record === 'review' ? reviewRecorded(records) : false) : undefined
       }, view.currentSubPhase);
     }
     return {

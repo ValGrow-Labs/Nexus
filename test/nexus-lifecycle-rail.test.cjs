@@ -430,3 +430,45 @@ test('S16 per version: with two application versions and a live preview of only 
   assert.match(bench, /nexusClient\.lineageGet\(id, \{ direction: 'up', depth: 1 \}\)/);
   assert.match(bench, /livePreviewsOf\(\{ versionId, buildVersionId: builds\.get\(versionId\) \?\? null \}, deployments\.data \?\? \[\], jobs\.data \?\? \[\]\)/);
 });
+
+// ---------- B2b Task 15 fix round 3: the Review step reads its record ----------
+
+test('LR3 the Review step is Done exactly when a change set was reviewed AND accepted (an active change set); never from approved-only, rejected, changes requested or no review', () => {
+  const S = loadTs('src/renderer/src/nexus/project/spineModel.ts');
+  const CHANGE = ['git.diff_nonempty', 'git.paths_in_scope', 'sec.secret_scan', 'cs.tests_pass', 'git.applies_cleanly'];
+  const ALL = Object.fromEntries(CHANGE.map((id) => [id, 'passed']));
+  const review = (records) => stepOf('sde', 'review', records);
+  const cs = (status, validators = ALL) => ({ kind: 'change_set', status, validators });
+  // Candidate change sets whatever their newest review says (approved, rejected, changes requested) or none: waiting, never done.
+  for (const status of ['draft', 'candidate', 'failed', 'deprecated']) {
+    assert.notEqual(review(rec({ versions: [cs(status)] })).state, 'done', `${status} change set`);
+    assert.notEqual(review(rec({ versions: [cs(status)] })).word, 'Done');
+  }
+  assert.equal(review(rec({ versions: [cs('candidate')] })).state, 'ready', 'a change set waiting for a decision: ready, not done');
+  assert.equal(review(rec()).state, 'blocked', 'no change set at all');
+  // Accepted (active): done, with the word.
+  const done = review(rec({ versions: [cs('active')] }));
+  assert.equal(done.state, 'done');
+  assert.equal(done.word, 'Done');
+  assert.equal(L.reviewRecorded(rec({ versions: [cs('candidate')] })), false);
+  assert.equal(L.reviewRecorded(rec({ versions: [cs('active')] })), true);
+  assert.equal(L.reviewRecorded(rec({ versions: [{ kind: 'requirement', status: 'active', validators: {} }] })), false, 'only a change set is the review record');
+  // From the Spine's own summaries: the accepted change set is the artifact's current version.
+  const art = (id, kind, current, latest) => ({ artifact: { id: `a${id}`, kind, status: 'active', ownerWorkspaceId: 'sde', ownerScope: 'participation', createdAt: id, updatedAt: id },
+    versionCount: 1, current, latest });
+  const accepted = art(1, 'change_set', { id: 'v1', versionNo: 1 }, { id: 'v1', versionNo: 1, status: 'active' });
+  const waiting = art(2, 'change_set', null, { id: 'v2', versionNo: 1, status: 'candidate' });
+  const records = (artifacts) => S.railRecordsFor({ workspaceId: 'sde', artifacts, checks: new Map(artifacts.map((a) => [a.latest.id, ALL])), liveActions: [], deploymentHealthy: false, participating: true });
+  assert.equal(review(records([accepted])).state, 'done');
+  assert.equal(review(records([waiting])).state, 'ready');
+  assert.equal(review(records([waiting, accepted])).state, 'done');
+  // The other steps are unchanged by the change set.
+  const withCs = L.railFor(view('sde'), records([accepted]));
+  const without = L.railFor(view('sde'), records([]));
+  for (const id of ['requirement', 'project', 'repository', 'code', 'tests', 'build', 'application', 'dev-deployment', 'diagnostics']) {
+    const a = withCs.steps.find((x) => x.id === id); const b = without.steps.find((x) => x.id === id);
+    if (a && b) assert.equal(a.state, b.state, id);
+  }
+  // The Review step still names its actions and keeps the registry's scope note.
+  assert.match(done.note, /Accepting merges the change into a Nexus ref, never into your branch or files/);
+});

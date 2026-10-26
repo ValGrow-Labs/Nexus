@@ -555,3 +555,16 @@ test('F4 a SessionLog heading sits one level under the panel heading', () => {
   assert.doesNotMatch(log, /<h4/);
   assert.match(log, /<h3 /);
 });
+
+test('F5 a no-change turn that main headlines `checks_could_not_run` reads "The agent made no change" in the run row, the log and the runs list', () => {
+  const t = job({ state: 'partial', outcome: 'no_change', headline: 'checks_could_not_run', startedAt: NOW, finishedAt: NOW });
+  const run = R.jobRun(t, { reason: 'No tests were executed.' });
+  assert.equal(run.headline, 'The agent made no change');
+  assert.doesNotMatch(`${run.headline} ${run.word}`, /checks|could not run/i);
+  // The conversation log words the same turn from its state and outcome, never from the headline.
+  const log = A.sessionLogModel({ ...session(), turnHistory: [{ jobId: 'J1', state: 'partial', headline: 'checks_could_not_run', outcome: 'no_change', error: null, usage: null, createdAt: NOW, startedAt: NOW, finishedAt: NOW }],
+    messages: [], toolCalls: [], versions: [], approvals: [] });
+  assert.equal(log.turns[0].headline, 'The agent made no change');
+  // The runs list does not even read a check reason for an agent turn.
+  assert.match(src('runs/ProjectRuns.tsx'), /explain && job\.kind !== 'agent\.run' && \(job\.headline === 'checks_failed'/);
+});
