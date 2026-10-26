@@ -51,7 +51,7 @@ import {
 import {
   acceptResultView, actionView, activityView, approvalView, artifactView, deploymentView, domainView, edgeView, eventView, gcView, handoffDetailView,
   handoffSummaryView, healthView, jobDetailView, jobView, lineageNodeView, logPageView, mergeView, participationView, previewView, repoStatusUnavailable,
-  repoStatusView, reviewResultView, sessionDetailView, sessionViewOf, summaryView, validationView, versionDetail, versionView
+  repoStatusView, reviewResultView, sessionDetailView, sessionViewOf, summaryView, validationView, versionDetail, versionView, versionViewOfKind
 } from './dto';
 import { agentConsentView, agentSetupView } from './agentSetup';
 
@@ -204,6 +204,11 @@ function limitOf(x: unknown, f: string, max: number, dflt: number): number {
 const optionalObject = <K extends string>(x: unknown, keys: readonly K[]): Record<K, unknown> =>
   V.object(x === undefined ? {} : x, keys, keys);
 
+/** A version's view with its change-set review (the newest decision) when it is a change set; every other kind is the plain view. */
+function viewWithReview(nx: NexusPlatform, kind: string, v: Parameters<typeof versionView>[0]): ReturnType<typeof versionView> {
+  return versionViewOfKind(kind, v, kind === 'change_set' ? nx.reviews?.latestDecisions([v.id]).get(v.id) : undefined);
+}
+
 const saveView = (r: SaveResult) => ({ artifact: artifactView(r.artifact), version: versionView(r.version), created: r.created });
 
 /** The execution sub-reason an execution service would refuse with (the envelope maps it to 'execution_unavailable'). */
@@ -333,14 +338,16 @@ export function registerNexusIpc(registrar: IpcRegistrar, deps: NexusIpcDeps): v
   reg('nexus:artifact:get', (args) => { V.arity(args, 1); return V.platformId(args[0], 'artifactId'); }, (nx, me, artifactId) => {
     const artifact = nx.artifacts.get(me, artifactId);
     const versions = nx.artifacts.listVersions(me, artifact.id);
-    return ok({ artifact: artifactView(artifact), versions: versions.map(versionView) });
+    // A change set's versions carry the newest review of each (one read for all of them).
+    const latest = artifact.kind === 'change_set' ? nx.reviews?.latestDecisions(versions.map((x) => x.id)) : undefined;
+    return ok({ artifact: artifactView(artifact), versions: versions.map((x) => versionViewOfKind(artifact.kind, x, latest?.get(x.id))) });
   });
 
   // #7 one version with its content: the commit of a git version, the text of a text file.
   reg('nexus:version:get', (args) => { V.arity(args, 1); return V.platformId(args[0], 'versionId'); }, (nx, me, versionId) => {
     const v = nx.artifacts.getVersion(me, versionId);
     const a = nx.artifacts.get(me, v.artifactId);
-    return ok(versionDetail(a.kind, v));
+    return ok(versionDetail(a.kind, v, a.kind === 'change_set' ? nx.reviews?.latestDecisions([v.id]).get(v.id) : undefined));
   });
 
   // #8 lineage of a version, one direction, depth 1..6.
@@ -375,7 +382,7 @@ export function registerNexusIpc(registrar: IpcRegistrar, deps: NexusIpcDeps): v
 
   // #11 mark a user draft ready (draft -> candidate, finalized by the system on the user's behalf).
   reg('nexus:version:markReady', (args) => { V.arity(args, 1); return V.platformId(args[0], 'versionId'); },
-    (nx, me, versionId) => ok(versionView(nx.artifacts.markReady(me, versionId))));
+    (nx, me, versionId) => { const v = nx.artifacts.markReady(me, versionId); return ok(viewWithReview(nx, nx.artifacts.get(me, v.artifactId).kind, v)); });
 
   // #12 promote a candidate, or roll back to a version that was active before; compare-and-set on the current pointer.
   reg('nexus:version:promote', (args) => {
@@ -384,12 +391,12 @@ export function registerNexusIpc(registrar: IpcRegistrar, deps: NexusIpcDeps): v
   }, (nx, me, q) => {
     const r = nx.artifacts.promote(me, q.versionId, q.expected);
     if (!r.ok) throw new PlatformError('conflict', 'the current version changed; reload and try again', { currentVersionId: r.currentVersionId });
-    return ok(versionView(r.version));
+    return ok(viewWithReview(nx, nx.artifacts.get(me, r.version.artifactId).kind, r.version));
   });
 
   // #13 discard a draft or a candidate.
   reg('nexus:version:discard', (args) => { V.arity(args, 1); return V.platformId(args[0], 'versionId'); },
-    (nx, me, versionId) => ok(versionView(nx.artifacts.discard(me, versionId))));
+    (nx, me, versionId) => { const v = nx.artifacts.discard(me, versionId); return ok(viewWithReview(nx, nx.artifacts.get(me, v.artifactId).kind, v)); });
 
   // #14 record the versions a version was derived from (1 to 20, all or nothing).
   reg('nexus:version:linkSources', (args) => {
@@ -749,7 +756,7 @@ export function registerNexusIpc(registrar: IpcRegistrar, deps: NexusIpcDeps): v
     return { versionId: V.platformId(args[0], 'versionId'), expectedIntegrationHead: V.commitId(args[1], 'expectedIntegrationHead') };
   }, async (nx, me, q) => {
     const r = await nx.accepts!.accept(me, q.versionId, q.expectedIntegrationHead);
-    return ok(acceptResultView(versionView(r.version), r.accept));
+    return ok(acceptResultView(viewWithReview(nx, 'change_set', r.version), r.accept));
   });
 
   // #49 the repository as the accept and merge flows see it. A repository that cannot be read answers a status that says why.

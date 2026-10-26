@@ -92,6 +92,13 @@ const INLINE_KINDS = Object.freeze({
 export type InlineKind = keyof typeof INLINE_KINDS;
 export interface SaveInlineInput {
   projectId: ProjectId; workspaceId: WorkspaceId; kind: InlineKind; target: SaveTarget; content: unknown;
+  /**
+   * B2b Task 16: the agent turn that drafted this version (main only: the MCP gateway; the IPC schema has no such field). It is
+   * recorded as the version's producer (`produced_by_job_id`, `produced_by_session_id`), so "which versions did this turn
+   * register" is one join for a requirement draft as it is for a change set. The job must be an `agent.run` of the same
+   * project, requested by the saving user.
+   */
+  producedBy?: { jobId: string; sessionId: string | null };
 }
 /** Late-bound by the platform once the validation service exists (schema v9). */
 export interface ArtifactValidatorHooks {
@@ -421,6 +428,11 @@ export class ArtifactService {
   promote(p: Principal, versionId: VersionId, expectedCurrentVersionId: VersionId | null): PromoteResult {
     if (expectedCurrentVersionId !== null && !isStr(expectedCurrentVersionId)) throw new PlatformError('invalid', 'expectedCurrentVersionId must be an id or null');
     const { v: stored } = this.loadVersion(p, versionId, 'version.promote');
+    // B2b: a change set becomes current only through review and accept (the accept ingest's own `promoteTx`, with the user's
+    // compare-and-set), never through this door: neither promote nor a rollback to an earlier accepted change set.
+    if (this.artifactRow(stored.artifact_id)?.kind === 'change_set') {
+      throw new PlatformError('illegal_transition', 'A change set is accepted through review, not made current directly.', { reason: 'change_set_not_promotable' });
+    }
     const now = this.deps.now();
     return immediateTx(this.db, (): PromoteResult => this.promoteTx(p, stored.id, expectedCurrentVersionId, now));
   }
@@ -702,7 +714,16 @@ export class ArtifactService {
     const byId = Object.prototype.hasOwnProperty.call(t, 'artifactId');
     const byName = Object.prototype.hasOwnProperty.call(t, 'name');
     if (byId === byName || Object.keys(t).length !== 1) throw new PlatformError('invalid', 'target names either an artifactId or a name');
-    const version = { storage, contentHash, metadataJson: '{}', ioContractJson: null, inputs: [], jobId: null, sessionId: null,
+    const by = i.producedBy;
+    if (by !== undefined) {
+      const j = isPlainObject(by) && isStr(by.jobId)
+        ? this.db.prepare('SELECT project_id, kind, requested_by FROM jobs WHERE id = ?').get(by.jobId) as { project_id: string; kind: string; requested_by: string } | undefined
+        : undefined;
+      if (!j || j.kind !== 'agent.run' || j.project_id !== i.projectId || j.requested_by !== p.id) {
+        throw new PlatformError('invalid', 'producedBy does not name an agent turn of this project run for the saving user', { reason: 'bad_producer' });
+      }
+    }
+    const version = { storage, contentHash, metadataJson: '{}', ioContractJson: null, inputs: [], jobId: by?.jobId ?? null, sessionId: by?.sessionId ?? null,
       action: rule.action, clientKey: null };
     const record = (v: ArtifactVersion, now: number): void => hook.recordInlineRegisterTx!(v.id, kind, i.content, now);
 

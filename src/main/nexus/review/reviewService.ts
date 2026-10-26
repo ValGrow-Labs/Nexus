@@ -68,6 +68,22 @@ export class ReviewService {
     return (this.db.prepare('SELECT * FROM reviews WHERE version_id = ? ORDER BY created_at, rowid').all(v.id) as ReviewRow[]).map(toView);
   }
 
+  /**
+   * The newest review of each given version, in one read (the order accept reads: newest first by time, then insertion). The
+   * caller has already been authorized to read these versions (they come out of its own authorized view): no principal id and
+   * no comment text leave here, only the decision and when it was made.
+   */
+  latestDecisions(versionIds: readonly string[]): Map<string, { decision: ReviewDecision; decidedAt: number }> {
+    const out = new Map<string, { decision: ReviewDecision; decidedAt: number }>();
+    const ids = [...new Set(versionIds.filter((x) => typeof x === 'string' && x.length > 0))].slice(0, 500);
+    if (ids.length === 0) return out;
+    const rows = this.db.prepare(`SELECT r.version_id AS version_id, r.decision AS decision, r.created_at AS created_at FROM reviews r
+      WHERE r.version_id IN (${ids.map(() => '?').join(', ')}) AND r.rowid = (SELECT x.rowid FROM reviews x WHERE x.version_id = r.version_id
+        ORDER BY x.created_at DESC, x.rowid DESC LIMIT 1)`).all(...ids) as { version_id: string; decision: ReviewDecision; created_at: number }[];
+    for (const r of rows) out.set(r.version_id, { decision: r.decision, decidedAt: r.created_at });
+    return out;
+  }
+
   private versionOf(id: unknown): { id: string; project_id: string; status: string; kind: string; owner_workspace_id: string | null;
     artifact_id: string; produced_by_job_id: string | null } | null {
     if (typeof id !== 'string' || id.length === 0) return null;

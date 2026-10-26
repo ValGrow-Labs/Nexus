@@ -387,10 +387,15 @@ export function createNexusPlatform(db: Database.Database, opts?: NexusPlatformO
         },
         onMessage: (fn) => port.onMessage((raw) => {
           const op = (raw as { op?: unknown } | null)?.op;
-          if (op === 'probe.result' && runtimeCache) {
+          if (op === 'probe.result') {
             const m = parseRunnerMessage(raw);
-            // The scheduler's sandbox probe answers `runtimes: []` (it never checks the engine): only a non-empty list is a runtime answer.
-            if (m && m.op === 'probe.result' && m.runtimes.length > 0) runtimeCache.record(m.runtimes);
+            // The scheduler's sandbox probe answers `runtimes: []` (it never checks the engine): only a non-empty list is a runtime
+            // answer. That second message repeats sandbox facts from BEFORE the engine check (up to 25 s old), so it records the
+            // runtimes only and the execution core never sees it: it must not stamp old Docker or image state fresh over a newer probe.
+            if (m && m.op === 'probe.result' && m.runtimes.length > 0) {
+              runtimeCache?.record(m.runtimes);
+              return;
+            }
           }
           // B2b Task 9: a `git.read.result` answers a waiting read; the execution core never sees it.
           if (op === 'git.read.result' && gitRead) {

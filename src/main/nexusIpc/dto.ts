@@ -70,8 +70,21 @@ export function versionContent(kind: string, v: ArtifactVersion): VersionContent
   return { type: 'none' };
 }
 
-export function versionDetail(kind: string, v: ArtifactVersion): VersionDetail {
-  return { ...versionView(v), content: versionContent(kind, v) };
+export function versionDetail(kind: string, v: ArtifactVersion, latest?: LatestReview): VersionDetail {
+  return { ...versionViewOfKind(kind, v, latest), content: versionContent(kind, v) };
+}
+
+/** The newest review of a version as the service reads it (decision and when). */
+export type LatestReview = { decision: 'approve' | 'request_changes' | 'reject'; decidedAt: number } | undefined;
+
+/**
+ * `versionView`, plus (change sets only) `latestReview`: the newest review's decision and ISO time, or null when none.
+ * Any other kind is the plain view with no such field.
+ */
+export function versionViewOfKind(kind: string, v: ArtifactVersion, latest?: LatestReview): VersionView {
+  const view = versionView(v);
+  if (kind !== 'change_set') return view;
+  return { ...view, latestReview: latest && Number.isFinite(latest.decidedAt) ? { decision: latest.decision, decidedAt: new Date(latest.decidedAt).toISOString() } : null };
 }
 
 export function lineageNodeView(n: LineageNode): LineageNodeView {

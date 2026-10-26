@@ -962,3 +962,116 @@ test('M2 the merge dialog fails closed: with no live window to parent it nothing
   assert.equal((idx.match(/confirmMergeOn\(/g) || []).length, 1);
   assert.doesNotMatch(idx, /confirmMergeWith/);
 });
+
+// ---------- fix round 2: a change set is never made current by hand; its newest review rides on its view; a late runtimes message ----------
+
+test('PR1 promote and rollback of a change set are refused on every user path (the IPC channel and the service); the version is unchanged; other kinds still promote; the accept path\'s own promotion still works', async () => {
+  const w = world();
+  const SENTENCE = 'A change set is accepted through review, not made current directly.';
+  const cs = addChangeSet(w, { status: 'candidate' });
+  const row = (id) => w.db.prepare('SELECT status, promoted_by, promoted_at FROM artifact_versions WHERE id = ?').get(id);
+  const current = (id) => w.db.prepare('SELECT current_version_id FROM artifacts WHERE id = (SELECT artifact_id FROM artifact_versions WHERE id = ?)').get(id).current_version_id;
+  const before = { row: row(cs), current: current(cs), promotes: w.db.prepare("SELECT COUNT(*) n FROM activity WHERE action = 'version.promote'").get().n };
+  // The channel, even after an approving review (the generic door skips review, accept and the Nexus branch).
+  await w.x.ok('nexus:review:decide', cs, { decision: 'approve' }, intent());
+  const r = await w.x.refused('nexus:version:promote', [cs, null], 'illegal_transition', { reason: 'change_set_not_promotable' });
+  assert.equal(r.message, SENTENCE);
+  // The service.
+  assert.throws(() => w.nx.artifacts.promote(w.me, cs, null), (e) => e instanceof PlatformError && e.code === 'illegal_transition' && e.detail.reason === 'change_set_not_promotable' && e.message === SENTENCE);
+  // A rollback target: a change set that was accepted and is deprecated now (promoted before) is refused the same way.
+  w.db.prepare("UPDATE artifact_versions SET status = 'deprecated', promoted_at = ?, promoted_by = 'user:local' WHERE id = ?").run(w.clock.t, cs);
+  const old = row(cs);
+  await w.x.refused('nexus:version:promote', [cs, null], 'illegal_transition', { reason: 'change_set_not_promotable' });
+  assert.throws(() => w.nx.artifacts.promote(w.me, cs, null), (e) => e.detail?.reason === 'change_set_not_promotable');
+  assert.deepEqual(row(cs), old, 'unchanged');
+  assert.equal(current(cs), before.current, 'the current pointer did not move');
+  assert.equal(w.db.prepare("SELECT COUNT(*) n FROM activity WHERE action = 'version.promote'").get().n, before.promotes, 'no promote row was written');
+  // Another kind still promotes through the same channel.
+  const repo = addChangeSet(w, { kind: 'repository', status: 'candidate', metadata: { profile: 'sde-node', branch: 'main', lockfile: { sha256: 'a'.repeat(64) } } });
+  const ok = await w.x.ok('nexus:version:promote', repo, null);
+  assert.equal(ok.status, 'active');
+  assert.equal('latestReview' in ok, false);
+  // The internal path the accept ingest uses (the user's compare-and-set inside its own transaction) is untouched.
+  const { immediateTx } = loadTs('src/main/nexus/db/tx.ts');
+  const cs2 = addChangeSet(w, { status: 'candidate' });
+  const p = immediateTx(w.db, () => w.nx.artifacts.promoteTx(w.me, cs2, null, w.clock.t, { onBehalfOf: w.me.id }));
+  assert.equal(p.ok, true);
+  assert.equal(row(cs2).status, 'active');
+  assert.equal(row(cs2).promoted_by, w.me.id);
+  // Source: the one public door refuses; the only promoteTx callers are the accept ingest, validation (repository) and handoff receipts.
+  const svc = read('src/main/nexus/artifact/artifactService.ts');
+  assert.match(svc, /kind === 'change_set'\) \{\s*throw new PlatformError\('illegal_transition', 'A change set is accepted through review, not made current directly\.'/);
+  const callers = fs.readdirSync(path.join(ROOT, 'src/main'), { recursive: true }).map(String).filter((f) => f.endsWith('.ts') && /\.promoteTx\(/.test(read(path.join('src/main', f)))).map((f) => f.replace(/\\/g, '/')).sort();
+  assert.deepEqual(callers, ['nexus/artifact/artifactService.ts', 'nexus/exec/acceptIngest.ts', 'nexus/handoff/handoffService.ts', 'nexus/validation/validationService.ts']);
+});
+
+test('LR1 a change set\'s version view carries its newest review (decision and ISO time), null when never reviewed; no other kind has the field; no comment or reviewer id', async () => {
+  const w = world();
+  const a = addChangeSet(w, { status: 'candidate' });
+  const b = addChangeSet(w, { status: 'candidate' });
+  const repo = addChangeSet(w, { kind: 'repository', status: 'candidate', metadata: { profile: 'sde-node', branch: 'main', lockfile: { sha256: 'a'.repeat(64) } } });
+  const artifactOf = (id) => w.db.prepare('SELECT artifact_id FROM artifact_versions WHERE id = ?').get(id).artifact_id;
+  const viaGet = async (id) => (await w.x.ok('nexus:artifact:get', artifactOf(id))).versions.find((v) => v.id === id);
+  const viaDetail = async (id) => w.x.ok('nexus:version:get', id);
+  for (const get of [viaGet, viaDetail]) {
+    assert.equal((await get(a)).latestReview, null, 'never reviewed');
+    assert.equal('latestReview' in (await get(repo)), false, 'absent for another kind');
+  }
+  const t1 = w.clock.t;
+  await w.x.ok('nexus:review:decide', a, { decision: 'approve', comment: 'private words' }, intent());
+  for (const get of [viaGet, viaDetail]) {
+    const v = await get(a);
+    assert.deepEqual(Object.keys(v.latestReview).sort(), ['decidedAt', 'decision']);
+    assert.equal(v.latestReview.decision, 'approve');
+    assert.equal(v.latestReview.decidedAt, new Date(t1).toISOString());
+    assert.equal((await get(b)).latestReview, null, 'a review of one version is not another\'s');
+  }
+  // A newer review replaces it, however old the first is; the older one is not shown.
+  w.advance(5000);
+  await w.x.ok('nexus:review:decide', a, { decision: 'reject', comment: 'second thoughts' }, intent());
+  const v2 = await viaGet(a);
+  assert.deepEqual(v2.latestReview, { decision: 'reject', decidedAt: new Date(t1 + 5000).toISOString() });
+  w.advance(1000);
+  await w.x.ok('nexus:review:decide', a, { decision: 'approve' }, intent());
+  assert.equal((await viaDetail(a)).latestReview.decision, 'approve');
+  // The view holds no comment text and no principal id; the other results that return a version carry it too.
+  const text = JSON.stringify([await viaGet(a), await viaDetail(a)]);
+  assert.doesNotMatch(text, /private words|second thoughts|user:local/);
+  const discarded = await w.x.ok('nexus:version:discard', b);
+  assert.equal(discarded.latestReview, null);
+  assert.equal('latestReview' in (await w.x.ok('nexus:version:discard', repo)), false);
+  // The shared type documents it (absent for other kinds).
+  assert.match(read('src/shared/nexus/ipc.ts'), /latestReview\?: \{ decision: ReviewDecision; decidedAt: string \} \| null;/);
+  // Reviews made with agents off cannot exist: a change set view without the review service says null, never throws.
+  const off = world({ agents: false, noRunner: true, agentsReason: () => 'not_enabled' });
+  const cs = addChangeSet(off, { status: 'candidate' });
+  assert.equal((await off.x.ok('nexus:version:get', cs)).latestReview, null);
+});
+
+test('LP1 a late runtimes message records only the runtimes: it never overwrites a newer sandbox probe with its old facts (nor is it seen by the execution core)', async () => {
+  const w = world({ noInitialRefresh: true });
+  const sandbox = (docker) => ({ op: 'probe.result', probe: { docker: 'running', version: docker, gpu: { detected: false, usableInContainers: false } }, images: [], freeBytes: 10 ** 12, runtimes: [] });
+  w.runner.report(sandbox('27.0.0'));
+  assert.equal(w.nx.exec.health().docker.version, '27.0.0');
+  // The flagged probe's sandbox facts (taken before the engine check), then a NEWER scheduler probe lands while the engine is checked.
+  const stale = { ...sandbox('27.0.0'), runtimes: [okRuntime()] };
+  w.advance(20_000);
+  w.runner.report(sandbox('28.0.0'));
+  const checkedAt = w.nx.exec.health().checkedAt;
+  assert.equal(w.nx.exec.health().docker.version, '28.0.0');
+  w.advance(5_000);
+  w.runner.report(stale);
+  const h2 = w.nx.exec.health();
+  assert.equal(h2.docker.version, '28.0.0', 'the newer sandbox probe stands');
+  assert.equal(h2.checkedAt, checkedAt, 'its time was not re-stamped');
+  assert.equal(w.nx.agentProbe.cache.fresh()?.health.ok, true, 'the runtimes were recorded');
+  // With agents off a stray non-empty list is not taken for sandbox state either.
+  const off = world({ agents: false, noRunner: true, agentsReason: () => 'not_enabled' });
+  off.runner = new FakeRunner({ probeReply: () => sandbox('27.0.0') });
+  off.nx.exec.attachRunner(off.runner, off.nx.bootId);
+  off.advance(10_000);
+  off.runner.report(sandbox('28.0.0'));
+  off.advance(10_000);
+  off.runner.report({ ...sandbox('27.0.0'), runtimes: [okRuntime()] });
+  assert.equal(off.nx.exec.health().docker.version, '28.0.0');
+});

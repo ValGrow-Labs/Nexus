@@ -86,6 +86,11 @@ export interface VersionView {
   /** True when a job or an agent session produced the draft (mark ready is then the engine's, not the user's). */
   producedByEngine: boolean; producedByAction: string | null;
   createdAt: number; statusChangedAt: number; promotedAt: number | null;
+  /**
+   * B2b: for a `change_set` version only (the field is absent for every other kind): the newest review's decision and when it was
+   * made (ISO time), or null when it was never reviewed. No comment text, no reviewer id. Accept is offered only for `approve`.
+   */
+  latestReview?: { decision: ReviewDecision; decidedAt: string } | null;
 }
 /** What a version holds: the commit of a git version, the text of a saved text file, a receipt's handoff. */
 export type VersionContent =
@@ -371,6 +376,9 @@ export interface AgentSetupView {
  * #51's answer (get, grant and revoke): the setup row plus, in its consent row ONLY, the destinations the permission covers
  * (F24). `hosts` are `host:port` strings: the live consent's own, or, with none, the ones the runtime's probe reported (what a
  * grant would cover). No other view carries them: #23's `agent` keeps `hostsCount` and nothing else.
+ * `get` never waits for the runtime check: on a first open (or with a stale answer) it returns `hosts: []` (and `state: 'unknown'`)
+ * while it asks for the check in the background, so a caller re-fetches once the check has landed (a moment later, or after #23's
+ * "Check again"). With a fresh answer, `hosts` is filled BEFORE any consent exists, so the Grant button can name the destination.
  */
 export interface AgentConsentView extends AgentSetupView {
   consent: AgentSetupView['consent'] & { hosts: string[] };
