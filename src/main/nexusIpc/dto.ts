@@ -89,7 +89,7 @@ export function versionViewOfKind(kind: string, v: ArtifactVersion, latest?: Lat
   const reason = m.previewReason;
   return { ...view, latestReview: latest && Number.isFinite(latest.decidedAt) ? { decision: latest.decision, decidedAt: new Date(latest.decidedAt).toISOString() } : null,
     previewComplete: complete,
-    previewReason: complete ? null : reason === 'hidden_lines' || reason === 'too_large' || reason === 'truncated' || reason === 'binary_file' ? reason : 'unknown' };
+    previewReason: complete ? null : reason === 'hidden_lines' || reason === 'too_large' || reason === 'truncated' || reason === 'binary_file' || reason === 'unsafe_characters' ? reason : 'unknown' };
 }
 
 export function lineageNodeView(n: LineageNode): LineageNodeView {

@@ -578,6 +578,27 @@ test('A1: the version view carries binary_file as its own closed reason', async 
   assert.deepEqual([view.previewComplete, view.previewReason], [false, 'binary_file']);
 });
 
+test('R2: the version view and the metadata carry unsafe_characters and previewUnsafeChars; an unfamiliar reason stays unknown', async () => {
+  const { versionViewOfKind } = loadTs('src/main/nexusIpc/dto.ts');
+  const w = newWorld();
+  const turn = openRunningTurn(w.db, w.nx);
+  const a = await collectWith(w, turn, css(w), { title: 'Unsafe', summary: '' }, factsFor(turn, { preview: { complete: false, reason: 'unsafe_characters', hiddenLines: 0, unsafeChars: 3, patchBytes: 40 } }));
+  const view = versionViewOfKind('change_set', w.nx.artifacts.getVersion(w.me, a.versionId));
+  assert.deepEqual([view.previewComplete, view.previewReason], [false, 'unsafe_characters']);
+  const m = JSON.parse(version(w, a.versionId).metadata_json);
+  assert.deepEqual([m.previewComplete, m.previewReason, m.previewUnsafeChars], [false, 'unsafe_characters', 3]);
+  const w2 = newWorld();
+  const t2 = openRunningTurn(w2.db, w2.nx);
+  const b = await collectWith(w2, t2, css(w2), { title: 'Odd', summary: '' }, factsFor(t2, { preview: { complete: false, reason: 'made_up', hiddenLines: 0, patchBytes: 40 } }));
+  const m2 = JSON.parse(version(w2, b.versionId).metadata_json);
+  assert.deepEqual([m2.previewComplete, m2.previewReason, m2.previewUnsafeChars], [false, 'unknown', 0], 'an unfamiliar reason fails closed to unknown; no count');
+  const w3 = newWorld();
+  const t3 = openRunningTurn(w3.db, w3.nx);
+  const c = await collectWith(w3, t3, css(w3), { title: 'Bad count', summary: '' }, factsFor(t3, { preview: { complete: false, reason: 'unsafe_characters', hiddenLines: 0, unsafeChars: -2, patchBytes: 40 } }));
+  const m3 = JSON.parse(version(w3, c.versionId).metadata_json);
+  assert.deepEqual([m3.previewComplete, m3.previewReason, m3.previewUnsafeChars], [false, 'unknown', 0], 'a malformed count fails closed');
+});
+
 test('A1: the version records whether its preview is complete (counts and a closed code only); absent or malformed facts are NOT complete', async () => {
   const meta = async (previewFacts) => {
     const w = newWorld();

@@ -42,6 +42,7 @@ import {
   type JobRow, type JobService
 } from '../jobs/jobService';
 import { TERMINAL_JOB_STATES } from '../jobs/jobRules';
+import { NOT_CANCELLABLE_RECIPES } from '../exec/executionService';
 import { ProjectAccess } from '../project/projectAccess';
 import { canTransitionSession, isSessionStatus, TERMINAL_SESSION_STATES } from './sessionRules';
 
@@ -182,6 +183,7 @@ export class SessionService {
       if (TERMINAL_SESSION_STATES.has(s.status)) return toSession(s);
       // B2b Task 10: a turn that is running owns a live attempt (a container, a runtime process, a token): ending the session
       // under it would leave all three. The user cancels the turn first (AgentService.cancel / end, through the execution core).
+      // (Nexus's own non-cancellable git jobs are not a turn: a running worktree job never blocks ending the conversation.)
       if (this.hasLiveAttempt(s.id)) throw new PlatformError('conflict', 'cancel the running turn first', { reason: 'turn_running' });
       if (s.cancel_requested_at === null) {
         this.db.prepare('UPDATE agent_sessions SET cancel_requested_at = ?, cancel_requested_by = ?, updated_at = ? WHERE id = ?')
@@ -201,8 +203,9 @@ export class SessionService {
   /** Whether a job of the session has a live attempt (schema v9 and later; false below it). */
   private hasLiveAttempt(sessionId: string): boolean {
     try {
-      return this.db.prepare(`SELECT 1 FROM job_attempts a JOIN jobs j ON j.id = a.job_id WHERE j.session_id = ? AND a.state IN ('starting','running') LIMIT 1`)
-        .get(sessionId) !== undefined;
+      return this.db.prepare(`SELECT 1 FROM job_attempts a JOIN jobs j ON j.id = a.job_id WHERE j.session_id = ? AND a.state IN ('starting','running')
+        AND (j.recipe_id IS NULL OR j.recipe_id NOT IN (${NOT_CANCELLABLE_RECIPES.map(() => '?').join(', ')})) LIMIT 1`)
+        .get(sessionId, ...NOT_CANCELLABLE_RECIPES) !== undefined;
     } catch { return false; }
   }
 
@@ -243,8 +246,10 @@ export class SessionService {
    * (deepest first by parent_job_id), then oldest first.
    */
   private liveJobsChildrenFirst(sessionId: string): JobRow[] {
+    // Nexus's own git jobs (a worktree, an accept, a rollback, a fast-forward) are never cancelled from outside: they end through
+    // ingest, which records what they did whether or not the conversation has ended.
     const rows = (this.db.prepare('SELECT * FROM jobs WHERE session_id = ? ORDER BY created_at, id').all(sessionId) as JobRow[])
-      .filter((j) => !TERMINAL_JOB_STATES.has(j.state));
+      .filter((j) => !TERMINAL_JOB_STATES.has(j.state) && !(j.recipe_id !== null && NOT_CANCELLABLE_RECIPES.includes(j.recipe_id)));
     const byId = new Map(rows.map((j) => [j.id, j]));
     const depth = new Map<string, number>();
     const depthOf = (j: JobRow): number => {

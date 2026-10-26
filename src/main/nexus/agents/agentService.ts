@@ -504,19 +504,23 @@ export class AgentService implements AgentTurnPort {
     } catch { guard = 'consent_missing'; }
     // A damaged consent record never lets a turn start (it would fail `consent_mismatch` at lease anyway).
     if (consent && guard === 'ok') {
-      try { this.consentHostsOrThrow(consent); this.adapterHostsOrThrow(consent); } catch { guard = 'consent_missing'; }
+      try { this.consentHostsOrThrow(consent); } catch { guard = 'consent_missing'; }
+      // The adapter's hosts are read from the health cache: with no usable health the runtime guard speaks, not the consent's.
+      if (runtimeOk && guard === 'ok') { try { this.adapterHostsOrThrow(consent); } catch { guard = 'consent_missing'; } }
     }
     const holding = (this.db.prepare(`SELECT COUNT(*) AS n FROM jobs WHERE kind = 'agent.run' AND id <> ? AND state IN (${HOLDING_STATES.map(() => '?').join(', ')})`)
       .get(j.id, ...HOLDING_STATES) as { n: number }).n;
-    const wait = agentTurnGuard({ runnerReady: i.runnerReady, runtimeOk, guard, liveTurns: holding + i.preparing, concurrentTurns: this.deps.budget.caps().concurrentTurns },
-      i.profile, i.probe, i.live, i.caps);
-    if (runtimeOk) this.autoRefreshes = 0;
-    if (wait === 'waiting:runtime') this.requestRuntimeRefresh();
+    const facts = { runnerReady: i.runnerReady, runtimeOk, guard, liveTurns: holding + i.preparing, concurrentTurns: this.deps.budget.caps().concurrentTurns };
+    const wait = agentTurnGuard(facts, i.profile, i.probe, i.live, i.caps);
+    // A refresh is asked for only when the runtime is what holds the turn: were it healthy, would the LATER guards (budget, rate,
+    // slots, Docker, image, disk, memory) pass? A turn held by one of those never makes the user's CLI run, however stale its cached
+    // health is. And only a USER trigger gives the refresh budget back (never a healthy answer: it would restart the count every TTL).
+    if (wait === 'waiting:runtime' && agentTurnGuard({ ...facts, runtimeOk: true }, i.profile, i.probe, i.live, i.caps) === null) this.requestRuntimeRefresh();
     return wait;
   }
 
   private lastRefreshAt: number | null = null;
-  /** Consecutive scheduler-driven refreshes that did not turn the runtime ok (a user trigger or a healthy runtime resets it). */
+  /** Scheduler-driven refreshes asked for since the last user trigger (only a user trigger resets it). */
   private autoRefreshes = 0;
   private refreshRuntime: (() => boolean) | null = null;
   /** B3: Task 14's probe trigger, bound once the platform has built it. */

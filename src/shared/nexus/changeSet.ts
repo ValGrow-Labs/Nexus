@@ -24,12 +24,13 @@ export interface ChangeSetMeta {
   message: string;
   /**
    * Whether the user can review the WHOLE change in the diff preview (A1): false when the preview redacts added lines
-   * (`hidden_lines`), is past its cap (`too_large`), shows a file only as "Binary files differ" (`binary_file`) or the secret scan was cut (`truncated`); `unknown` when the facts
+   * (`hidden_lines`), is past its cap (`too_large`), shows a file only as "Binary files differ" (`binary_file`), holds characters that read differently from how they run or show as nothing (`unsafe_characters`: bidi controls, zero-width and control characters; `previewUnsafeChars` counts them) or the secret scan was cut (`truncated`); `unknown` when the facts
    * carried no preview verdict. Absent counts as NOT complete: approval needs `previewComplete === true`. Counts only.
    */
   previewComplete?: boolean;
-  previewReason?: 'hidden_lines' | 'too_large' | 'truncated' | 'binary_file' | 'unknown';
+  previewReason?: 'hidden_lines' | 'too_large' | 'truncated' | 'binary_file' | 'unsafe_characters' | 'unknown';
   previewHiddenLines?: number;
+  previewUnsafeChars?: number;
   previewPatchBytes?: number;
 }
 

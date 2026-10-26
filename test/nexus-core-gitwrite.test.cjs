@@ -621,6 +621,131 @@ test('previewText is the one transform (redaction, then only LONE surrogates rep
   assert.match(readSrc, /previewText\(raw\.toString\('utf8'\)\)/, 'and the transform collect judges');
 });
 
+// ---------- Final re-review round 2: a change never alters a gitlink; characters that read differently from how they run ----------
+
+/** A repository whose only submodule is uninitialized: a gitlink at `sub` (git's own checkout of it is an empty folder). */
+function gitlinkWorld() {
+  const w = world();
+  const sha = out(w.repo, ['rev-parse', 'HEAD']);
+  git(w.repo, ['update-index', '--add', '--cacheinfo', `160000,${sha},sub`]);
+  git(w.repo, ['commit', '-q', '-m', 'a submodule']);
+  return w;
+}
+
+test('R2-1 removing an uninitialized submodule folder (the deletion of a gitlink) is refused: link_or_gitlink, nothing committed', async () => {
+  const w = gitlinkWorld();
+  await ensureWorktree(w.g, w.task, { dataRoot: w.dataRoot });
+  assert.ok(fs.statSync(path.join(w.wt, 'sub')).isDirectory(), 'git checks a gitlink out as an empty folder');
+  fs.rmSync(path.join(w.wt, 'sub'), { recursive: true, force: true });
+  fs.writeFileSync(path.join(w.wt, 'a.txt'), 'changed\n');
+  const ref = refOf(w.repo, w.task.ref);
+  await failsWith(collect(w.g, w.collectTask(), { dataRoot: w.dataRoot }), 'link_or_gitlink');
+  assert.equal(refOf(w.repo, w.task.ref), ref, 'nothing was committed');
+  // The premise of the hole: once `add -A` has staged the deletion, the index lists no gitlink any more (the old index scan saw nothing),
+  // and the diff the preview uses (--ignore-submodules=all) omits it.
+  assert.ok(!/^160000 /m.test(out(w.wt, ['ls-files', '-s'])), 'the index scan alone would not have refused');
+  const head = out(w.wt, ['write-tree']);
+  assert.equal(out(w.repo, ['diff', ...GW.PREVIEW_DIFF_ARGS.slice(1), 'HEAD', head]).includes('sub'), false, 'the preview diff (--ignore-submodules=all) does not show the deletion');
+});
+
+test('R2-1 replacing the submodule folder by a file (a gitlink turned into a blob) is refused', async () => {
+  const w = gitlinkWorld();
+  await ensureWorktree(w.g, w.task, { dataRoot: w.dataRoot });
+  fs.rmSync(path.join(w.wt, 'sub'), { recursive: true, force: true });
+  fs.writeFileSync(path.join(w.wt, 'sub'), 'now a file\n');
+  const ref = refOf(w.repo, w.task.ref);
+  await failsWith(collect(w.g, w.collectTask(), { dataRoot: w.dataRoot }), 'link_or_gitlink');
+  assert.equal(refOf(w.repo, w.task.ref), ref);
+});
+
+test('R2-1 a gitlink bump is refused; a gitlink added only to the index is dropped again by the scope staging (nothing to refuse)', async () => {
+  const bump = gitlinkWorld();
+  await ensureWorktree(bump.g, bump.task, { dataRoot: bump.dataRoot });
+  git(bump.wt, ['update-index', '--cacheinfo', `160000,${'1'.repeat(40)},sub`]);
+  const ref = refOf(bump.repo, bump.task.ref);
+  await failsWith(collect(bump.g, bump.collectTask(), { dataRoot: bump.dataRoot }), 'link_or_gitlink');
+  assert.equal(refOf(bump.repo, bump.task.ref), ref);
+  // `add -A` restages every path from the disk, so an index-only entry with no folder behind it vanishes before the tree is written.
+  const add = world();
+  await ensureWorktree(add.g, add.task, { dataRoot: add.dataRoot });
+  git(add.wt, ['update-index', '--add', '--cacheinfo', `160000,${'2'.repeat(40)},newsub`]);
+  const c = await collect(add.g, add.collectTask(), { dataRoot: add.dataRoot });
+  assert.equal(c.changed, false);
+  assert.ok(!/newsub/.test(out(add.repo, ['ls-tree', '-r', c.head])));
+});
+
+test('R2-1 an unchanged re-collect on a repository that has no gitlink change is unaffected (and a normal change registers)', async () => {
+  const f = await previewOf({ 'src/ok.js': 'module.exports = 1;\n' });
+  assert.equal(f.changed, true);
+  assert.equal(f.preview.complete, true);
+});
+
+const cpoint = (...n) => String.fromCodePoint(...n);
+
+test('R2-2 each class of unsafe character makes the preview incomplete (unsafe_characters), counts only', async () => {
+  const cases = {
+    'a bidi override in a comment': ['// access ' + cpoint(0x202e) + ' granted\n', 1],
+    'a bidi isolate': ['const x = 1; // ' + cpoint(0x2066) + 'a' + cpoint(0x2069) + '\n', 2],
+    'a zero-width space inside an identifier': ['const ad' + cpoint(0x200b) + 'min = 1;\n', 1],
+    'a word joiner': ['const a = 1;' + cpoint(0x2060) + '\n', 1],
+    'an ANSI escape sequence': ['console.log("' + cpoint(0x1b) + '[2K");\n', 1],
+    'a backspace': ['x' + cpoint(8) + 'y\n', 1],
+    'a C1 control': ['x' + cpoint(0x85) + 'y\n', 1],
+    'an Arabic letter mark': ['x' + cpoint(0x61c) + 'y\n', 1],
+    'a line separator': ['x' + cpoint(0x2028) + 'y\n', 1],
+    'a byte-order mark in the middle of a line': ['const a' + cpoint(0xfeff) + ' = 1;\n', 1],
+    'a ZERO WIDTH JOINER between letters': ['const a' + cpoint(0x200d) + 'b = 1;\n', 1],
+  };
+  for (const [label, [text, n]] of Object.entries(cases)) {
+    const f = await previewOf({ 'x.js': text });
+    assert.equal(f.preview.complete, false, label);
+    assert.equal(f.preview.reason, 'unsafe_characters', label);
+    assert.equal(f.preview.unsafeChars, n, label);
+    assert.ok(!/granted|admin|console/.test(JSON.stringify(f)), 'counts only: ' + label);
+  }
+});
+
+test('R2-2 unsafe characters on a CONTEXT or REMOVED line count (the whole preview text is read)', async () => {
+  const before = 'line one\nconst a = "x' + cpoint(0x202e) + 'y";\nline three\nline four\nline five\nline six\n';
+  const removed = await previewOf({ 'x.txt': 'line one\nline three\nline four\nline five\nline six\n' }, { 'a.txt': 'a\n', 'x.txt': before });
+  assert.equal(removed.preview.reason, 'unsafe_characters', 'a removed line');
+  const context = await previewOf({ 'x.txt': before.replace('line six', 'line SIX') }, { 'a.txt': 'a\n', 'x.txt': before });
+  assert.equal(context.preview.complete, false, 'a context line');
+  assert.equal(context.preview.reason, 'unsafe_characters');
+});
+
+test('R2-2 an emoji ZWJ sequence, a leading byte-order mark and ordinary non-ASCII text stay complete', async () => {
+  const family = cpoint(0x1f468, 0x200d, 0x1f469, 0x200d, 0x1f467);
+  const flag = cpoint(0x1f3f3, 0xfe0f, 0x200d, 0x1f308);
+  const ok = await previewOf({
+    'emoji.txt': `family ${family} and ${flag}\n`,
+    'bom.txt': cpoint(0xfeff) + 'first line with a byte-order mark\nsecond\n',
+    'text.txt': 'caf' + cpoint(0xe9) + ' na' + cpoint(0xef) + 've, ' + cpoint(0x65e5, 0x672c, 0x8a9e) + ', ' + cpoint(0x645, 0x631, 0x62d, 0x628, 0x627) + '\n',
+  });
+  assert.equal(ok.preview.complete, true);
+  assert.equal(ok.preview.unsafeChars, 0);
+  assert.equal(ok.preview.reason, undefined);
+});
+
+test('R2-2 precedence: binary_file beats unsafe_characters, unsafe_characters beats hidden_lines', async () => {
+  const bin = await previewOf({ 'b.js': Buffer.concat([Buffer.from('a = 1; // '), Buffer.from([0]), Buffer.from(cpoint(0x202e) + '\n')]) });
+  assert.equal(bin.preview.reason, 'binary_file');
+  const both = await previewOf({ 'x.js': 'const cfg = { password: \'x\' }; // ' + cpoint(0x202e) + '\n' });
+  assert.equal(both.preview.reason, 'unsafe_characters');
+  assert.ok(both.preview.hiddenLines >= 1, 'the hidden lines are still counted');
+});
+
+test('R2-2 previewUnsafeChars is a pure count (never text); a hunk head and a file name are read too', () => {
+  const { previewUnsafeChars } = GW;
+  assert.equal(previewUnsafeChars('+plain\n-text\n \t tab and cr\r\n'), 0);
+  assert.equal(previewUnsafeChars('@@ -1,2 +1,2 @@ fn' + cpoint(0x202e) + '\n+x\n'), 1);
+  assert.equal(previewUnsafeChars('+++ b/dir' + cpoint(0x200b) + '/f.js\n'), 1);
+  assert.equal(previewUnsafeChars('@@ -1,2 +1,2 @@\n+' + cpoint(0xfeff) + 'first\n+' + cpoint(0xfeff) + 'second\n'), 1, 'only the first line of a file may begin with a BOM');
+  assert.equal(previewUnsafeChars('@@ -5,2 +5,2 @@\n+' + cpoint(0xfeff) + 'mid-file\n'), 1);
+  assert.equal(previewUnsafeChars('+' + cpoint(0x1f468, 0x200d, 0x1f4bb) + '\n'), 0, 'man technologist');
+  assert.equal(previewUnsafeChars('+a' + cpoint(0x200d) + '\n+' + cpoint(0x200d) + 'b\n'), 2);
+});
+
 test('CS14 after the first change set is accepted, the next collect\'s base is the merge-base with the integration ref and its diffstat shows only the new work', async () => {
   const w = world();
   const c1 = await changed(w);

@@ -1338,6 +1338,63 @@ test('B3 the scheduler never turns a stuck runtime into a timer: no probe withou
   assert.equal(off.nx.agentProbe, null);
 });
 
+test('re-review: a healthy runtime never makes the scheduler probe while a LATER guard holds the turn; a healthy answer does not give the refreshes back', async () => {
+  const w = await turnWorld({ caps: { dayUsdCents: 200, turnUsdCents: 200 } });
+  const flagged = () => w.runner.sentOf('probe').filter((m) => m.runtimes === true).length;
+  const a = await w.running();
+  const b = w.start();
+  w.usage(a.attempt.id, { costUsdCents: 200 });
+  assert.equal(w.job(a.job.id).outcome, 'limit');
+  // The cached health of a perfectly healthy CLI goes stale every five minutes; the day budget is spent. Thirty minutes: no probe.
+  w.health.current = null;
+  w.tick(); await sleep(15);
+  w.run(30 * 60_000);
+  assert.equal(w.job(b.job.id).phase, 'waiting:runtime', 'the shown reason is unchanged (the runtime is checked first)');
+  assert.equal(flagged(), 0, 'the CLI of the user is not run while the budget is what holds the turn');
+  // Docker down is a later guard too.
+  const d = await turnWorld({ probe: { docker: 'stopped' } });
+  d.start();
+  d.health.current = null;
+  d.tick(); await sleep(15);
+  d.run(30 * 60_000);
+  assert.equal(d.runner.sentOf('probe').filter((m) => m.runtimes === true).length, 0);
+});
+
+test('re-review: ending a conversation never cancels the own worktree job of Nexus and is not blocked by one that runs; the job still records its worktree', async () => {
+  const w = await turnWorld({ platform: { ingest: undefined } });
+  const mk = (sessionId, parent, key) => w.db.transaction(() => w.nx.jobs.createTx(w.sys, { kind: 'tool.run', projectId: PROJECT, workspaceId: WORKSPACE, sessionId, parentJobId: parent,
+    idempotencyKey: key, recipeId: 'repo.worktree', params: { sessionId, branch: 'main' }, retry: { idempotent: true, maxAttempts: 2, backoffMs: [10_000] } })).immediate().job;
+  // (b) a QUEUED worktree job survives the end of the conversation.
+  const q = w.start({ seed: false });
+  const queuedWt = mk(q.session.id, q.job.id, `wt-q-${ulid()}`);
+  const ended = w.nx.agents.end(w.me, q.session.id);
+  assert.equal(ended.status, 'cancelled');
+  assert.equal(w.job(q.job.id).state, 'cancelled', 'the turn itself is cancelled');
+  assert.equal(w.job(queuedWt.id).state, 'queued', 'the worktree job is not');
+  // (a) a RUNNING one: the conversation ends at once, the job finishes and records on its own.
+  const r = w.start({ seed: false });
+  const wt = mk(r.session.id, r.job.id, `wt-r-${ulid()}`);
+  const { insertAttemptTx, transitionAttemptTx, attemptRow } = loadTs('src/main/nexus/exec/attempts.ts');
+  const attemptId = newId(w.clock.t);
+  w.db.transaction(() => {
+    const leased = w.nx.jobs.transitionTx(w.sys, wt.id, 'leased', undefined, { expectState: 'queued' });
+    insertAttemptTx(w.db, { id: attemptId, jobId: wt.id, projectId: PROJECT, n: leased.attempts, bootId: w.nx.bootId, now: w.clock.t, logPath: null, sandbox: { kind: 'engine' }, environment: {} });
+    transitionAttemptTx(w.db, attemptRow(w.db, attemptId), 'running', w.clock.t, PROJECT);
+    w.nx.jobs.transitionTx(w.sys, wt.id, 'running', undefined, { expectState: 'leased' });
+  }).immediate();
+  const done = w.nx.agents.end(w.me, r.session.id);
+  assert.equal(done.status, 'cancelled', 'the conversation ends now, not after the worktree job');
+  assert.equal(w.job(wt.id).state, 'running'); assert.equal(w.attemptOf(attemptId).state, 'running');
+  const name = r.session.id.toLowerCase();
+  w.runner.report({ op: 'attempt.exited', attemptId, exit: { code: 0, oomKilled: false, finishedAt: w.clock.t }, outputs: [], logBytes: 0,
+    parsed: [{ parser: 'git-facts', sourceSha256: '0'.repeat(64), normalized: { ok: true, ref: `refs/nexus/job/${name}`, worktree: `wt/${name}`, locked: true, base: 'b'.repeat(40),
+      integrationHead: 'b'.repeat(40), integrationCreated: false, reused: false } }] });
+  await w.nx.exec.settled();
+  assert.equal(w.job(wt.id).state, 'completed', w.job(wt.id).error_json);
+  const row = w.db.prepare('SELECT rel_path, base_commit FROM session_worktrees WHERE session_id = ?').get(r.session.id);
+  assert.equal(row.rel_path, `wt/${name}`);
+});
+
 test('B4 an attempt that never reached the runtime costs nothing and does not count toward the rate; one that started without a cost is charged the turn cap', async () => {
   const w = await turnWorld({ caps: { turnsPerHour: 3 } });
   // Seven turns each refused by the runner before anything ran: no spend, no rate.

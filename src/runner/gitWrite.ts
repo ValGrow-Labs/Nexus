@@ -77,6 +77,38 @@ export function previewHiddenLines(raw: string): number {
   let suf = 0; while (suf < a.length - pre && suf < b.length - pre && a[a.length - 1 - suf] === b[b.length - 1 - suf]) suf++;
   return Math.max(1, a.length - pre - suf, b.length - pre - suf);
 }
+/**
+ * Characters that make a patch read differently from how it runs, or that the review pane shows as nothing (Trojan Source):
+ * bidi controls (U+202A-202E, U+2066-2069, U+200E/F, U+061C), zero-width and invisible characters (U+200B-200D, U+2060-2064,
+ * U+FEFF, U+180E), the Unicode line and paragraph separators (U+2028/9) and the C0/C1 control characters (U+0000-001F, U+007F-009F)
+ * except tab, line feed and carriage return (an ESC sequence, a form feed, a backspace). Two exceptions, nothing else: a ZERO WIDTH
+ * JOINER between two emoji (a family or a flag sequence) and a byte-order mark as the very first character of a file's first line.
+ */
+const UNSAFE_CHAR_RE = /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F-\u009F\u061C\u180E\u200B-\u200F\u2028\u2029\u202A-\u202E\u2060-\u2064\u2066-\u2069\uFEFF]/g;
+const EMOJI_BEFORE_RE = /[\p{Extended_Pictographic}\u{FE0F}\p{Emoji_Modifier}]$/u;
+const EMOJI_AFTER_RE = /^\p{Extended_Pictographic}/u;
+const HUNK_HEAD_RE = /^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/;
+/**
+ * How many characters of the preview's text are unsafe to show as they are (see UNSAFE_CHAR_RE). The whole patch is judged,
+ * context and removed lines included, because the user reads them all. A COUNT only: never the characters or their line.
+ */
+export function previewUnsafeChars(raw: string): number {
+  let count = 0;
+  let bomAt = -1;                                              // the one place a BOM is the file's own: after the marker of line 1
+  for (const line of raw.split('\n')) {
+    const bomHere = bomAt; bomAt = -1;
+    const head = HUNK_HEAD_RE.exec(line);
+    if (head && Number(head[1]) <= 1 && Number(head[2]) <= 1) bomAt = 1;
+    UNSAFE_CHAR_RE.lastIndex = 0;
+    for (let m = UNSAFE_CHAR_RE.exec(line); m !== null; m = UNSAFE_CHAR_RE.exec(line)) {
+      const ch = m[0]; const at = m.index;
+      if (ch === '\u200D' && EMOJI_BEFORE_RE.test(line.slice(Math.max(0, at - 4), at)) && EMOJI_AFTER_RE.test(line.slice(at + 1, at + 5))) continue;
+      if (ch === '\uFEFF' && at === bomHere) continue;
+      count++;
+    }
+  }
+  return count;
+}
 /** D-B8: the agent's commits, and accept merges. */
 export const AGENT_IDENTITY = Object.freeze({ name: 'Nexus agent', email: 'agent@nexus.invalid' });
 export const ACCEPT_IDENTITY = Object.freeze({ name: 'Nexus', email: 'agent@nexus.invalid' });
@@ -90,11 +122,11 @@ const SMALL = 64 * 1024;
 export type GitFailureCode =
   | 'git_missing' | 'bad_task' | 'repo_layout_unsupported' | 'repo_empty' | 'branch_missing' | 'worktree_tampered' | 'worktree_conflict'
   | 'link_or_gitlink' | 'ref_moved' | 'unknown_commit' | 'merge_conflict' | 'tree_dirty' | 'branch_mismatch' | 'not_fast_forward'
-  | 'git_failed' | 'integration_diverged' | GuardRefusal;
+  | 'git_failed' | 'integration_diverged' | 'base_moved' | GuardRefusal;
 export const GIT_FAILURE_CODES: readonly GitFailureCode[] = Object.freeze([
   'git_missing', 'bad_task', 'repo_layout_unsupported', 'repo_empty', 'branch_missing', 'worktree_tampered', 'worktree_conflict',
   'link_or_gitlink', 'ref_moved', 'unknown_commit', 'merge_conflict', 'tree_dirty', 'branch_mismatch', 'not_fast_forward', 'git_failed',
-  'integration_diverged', 'symlink_in_worktree', 'nested_repo', 'worktree_too_large', 'file_too_large'
+  'integration_diverged', 'base_moved', 'symlink_in_worktree', 'nested_repo', 'worktree_too_large', 'file_too_large'
 ] as GitFailureCode[]);
 
 export class GitFailure extends Error {
@@ -430,9 +462,11 @@ export interface CollectFacts {
    * line text: `hidden_lines` = lines of the preview's text (context and removed lines too, multi-line spans included) that
    * its own redaction alters (the user would see `[redacted]`, yet sec.secret_scan does not block them; `hiddenLines` counts
    * the changed lines), `too_large` = the preview's patch would exceed its cap, `binary_file` = the preview shows a file
-   * only as "Binary files differ" (the scan reads it as text, the user cannot), `truncated` = the secret scan itself was cut. Main stores it in the version's metadata; absent counts as NOT complete.
+   * only as "Binary files differ" (the scan reads it as text, the user cannot), `unsafe_characters` = the preview's text holds characters
+   * that read differently from how they run or show as nothing (bidi controls, zero-width characters, control characters;
+   * `unsafeChars` counts them), `truncated` = the secret scan itself was cut. Main stores it in the version's metadata; absent counts as NOT complete.
    */
-  preview: { complete: boolean; reason?: 'hidden_lines' | 'too_large' | 'truncated' | 'binary_file'; hiddenLines: number; patchBytes: number };
+  preview: { complete: boolean; reason?: 'hidden_lines' | 'too_large' | 'truncated' | 'binary_file' | 'unsafe_characters'; hiddenLines: number; unsafeChars: number; patchBytes: number };
 }
 /** The most hits of each kind a collect reports (the count itself, and every `location` evidence item, stay bounded). */
 export const COLLECT_MAX_HITS = 500;
@@ -579,6 +613,17 @@ export async function collect(g: HardenedGit, t: { repoPath: string; worktreePat
   const again = await walk(t.worktreePath, { maxFileBytes: t.maxFileBytes, maxTotalBytes: t.maxTotalBytes, fs: o.guardFs });
   if (!again.ok) throw new GitFailure(again.code, 'the worktree guard refused the tree');
   const tree = shaOut(await g.run(t.worktreePath, ['write-tree'], { neutral: n, worktree: wt, signal: o.signal }), 'write-tree');
+  // The merge base is the same before and after the commit below (the new commit's only new ancestor is itself), so it is read here,
+  // and a change that touches a gitlink in ANY way is refused BEFORE anything is committed. The index scan above sees only the gitlinks
+  // that are still there: an agent that removes an uninitialized submodule's empty folder stages its DELETION (or swaps it for a
+  // file), the entry is gone from `ls-files`, and every `--ignore-submodules=all` diff below omits it: the user would approve a
+  // change that silently removes their submodule. The raw tree diff has no such option: a 160000 mode on either side is a gitlink.
+  const integration = await resolveRef(g, repo, n, t.integrationRef, o.signal);
+  if (!integration) throw new GitFailure('ref_moved', 'the integration ref is gone');
+  const base = shaOut(await g.run(repo, ['merge-base', integration, parent], { neutral: n, signal: o.signal }), 'merge-base');
+  const raw = must(await g.run(repo, ['diff-tree', '-r', '--raw', '--no-renames', '--no-ext-diff', '-z', base, tree], { neutral: n, signal: o.signal, maxStdout: 8 * 2 ** 20 }), 'diff-tree');
+  if (/(?:^|\0):(?:160000 |\d{6} 160000 )/.test(raw.stdout)) throw new GitFailure('link_or_gitlink', 'the change adds, removes or changes a gitlink');
+  if (raw.truncated) throw new GitFailure('worktree_too_large', 'the change touches too many paths to check for gitlinks');
   const parentTree = shaOut(await g.run(repo, ['rev-parse', `${parent}^{tree}`], { neutral: n, signal: o.signal }), 'rev-parse');
   let head = parent;
   const changed = tree !== parentTree;
@@ -587,9 +632,6 @@ export async function collect(g: HardenedGit, t: { repoPath: string; worktreePat
     if (!(await updateRefCas(g, repo, n, t.ref, head, parent, o.signal))) throw new GitFailure('ref_moved', 'the session ref moved');
     must(await g.run(t.worktreePath, ['update-ref', '--no-deref', 'HEAD', head], { neutral: n, worktree: wt, signal: o.signal }), 'update-ref HEAD');
   }
-  const integration = await resolveRef(g, repo, n, t.integrationRef, o.signal);
-  if (!integration) throw new GitFailure('ref_moved', 'the integration ref is gone');
-  const base = shaOut(await g.run(repo, ['merge-base', integration, head], { neutral: n, signal: o.signal }), 'merge-base');
   const ns = must(await g.run(repo, ['diff', ...SAFE_DIFF_ARGS, '--no-renames', '--numstat', '-z', base, head], { neutral: n, signal: o.signal, maxStdout: 8 * 2 ** 20 }), 'diff');
   const diffstat = { files: 0, insertions: 0, deletions: 0 };
   const paths: string[] = [];
@@ -620,9 +662,10 @@ export async function collect(g: HardenedGit, t: { repoPath: string; worktreePat
   // Completeness is decided on the preview's OWN text (the whole patch, as the user is shown it), never on the scan's lines.
   const binaryInPreview = binaryFiles > 0 || (pd.code === 0 && /^Binary files .* differ$/m.test(pd.stdout));
   const hiddenLines = pd.code === 0 && !previewTooLarge ? previewHiddenLines(pd.stdout) : 0;
+  const unsafeChars = pd.code === 0 && !previewTooLarge ? previewUnsafeChars(pd.stdout) : 0;
   const reason = scanTruncated || pd.code !== 0 ? 'truncated' as const : previewTooLarge ? 'too_large' as const
-    : binaryInPreview ? 'binary_file' as const : hiddenLines > 0 ? 'hidden_lines' as const : undefined;
-  const preview: CollectFacts['preview'] = { complete: reason === undefined, ...(reason ? { reason } : {}), hiddenLines, patchBytes: pd.code === 0 ? pd.stdoutBytes : 0 };
+    : binaryInPreview ? 'binary_file' as const : unsafeChars > 0 ? 'unsafe_characters' as const : hiddenLines > 0 ? 'hidden_lines' as const : undefined;
+  const preview: CollectFacts['preview'] = { complete: reason === undefined, ...(reason ? { reason } : {}), hiddenLines, unsafeChars, patchBytes: pd.code === 0 ? pd.stdoutBytes : 0 };
   // `--text` renders every file as text, overriding a NUL byte and any `-diff`/`binary` attribute: otherwise such a file
   // is "Binary files differ" and never scanned, and a secret could hide in it. The cost is that a huge real binary now
   // fills the patch cap; that is the same fail-closed outcome (scanTruncated -> sec.secret_scan fails scan_truncated).
@@ -660,8 +703,12 @@ export async function mergeCheck(g: HardenedGit, t: { repoPath: string; integrat
  * `changeset.accept`: the integration ref must still be `expectedOld` (else `ref_moved`); the merged tree (a conflict is
  * `merge_conflict`) is committed as Nexus with both parents; `onPrepared({ old, new })` is reported BEFORE the CAS
  * `update-ref` (main records it durably; recovery rolls an unfinished accept back from it).
+ *
+ * `t.base` is the commit the change was made on (the version's recorded `metadata.base`, from main): the change the user reviewed is
+ * `base..head`. It must be an ancestor of `expectedOld`, else (`base_moved`) the user's branch was amended or reset since, the merge
+ * would also bring in older commits of `head`'s history that the preview never showed, and nothing is merged.
  */
-export async function accept(g: HardenedGit, t: { repoPath: string; integrationRef: string; expectedOld: string; head: string; message: string },
+export async function accept(g: HardenedGit, t: { repoPath: string; integrationRef: string; expectedOld: string; head: string; message: string; base?: string },
   o: { signal?: AbortSignal; onPrepared: (p: { old: string; new: string }) => Promise<void> | void }): Promise<{ ok: true; old: string; new: string; mergeCommit: string; tree: string }> {
   if (!isNexusRef(t.integrationRef, 'accepted') || !COMMIT_RE.test(t.expectedOld) || typeof t.message !== 'string' || t.message.length === 0
     || t.message.length > 8192 || t.message.includes('\0')) throw new GitFailure('bad_task', 'the accept task is malformed');
@@ -669,6 +716,12 @@ export async function accept(g: HardenedGit, t: { repoPath: string; integrationR
   await requireCommit(g, t.repoPath, n, t.head, o.signal);
   const cur = await resolveRef(g, t.repoPath, n, t.integrationRef, o.signal);
   if (cur !== t.expectedOld) throw new GitFailure('ref_moved', 'the integration ref moved');
+  if (t.base !== undefined) {
+    if (!COMMIT_RE.test(t.base)) throw new GitFailure('bad_task', 'the accept task is malformed');
+    const anc = await g.run(t.repoPath, ['merge-base', '--is-ancestor', t.base, t.expectedOld], { neutral: n, signal: o.signal });
+    if (anc.code === 1) throw new GitFailure('base_moved', 'the ground the change was made on has moved');
+    if (anc.code !== 0) throw new GitFailure('unknown_commit', "the change's base is not in the repository");
+  }
   const tree = await mergeTree(g, t.repoPath, n, t.expectedOld, t.head, o.signal);
   if (!tree) throw new GitFailure('merge_conflict', 'the change does not merge cleanly');
   const merge = shaOut(await g.run(t.repoPath, ['commit-tree', tree, '-p', t.expectedOld, '-p', t.head, '-m', t.message],

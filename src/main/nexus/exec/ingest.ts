@@ -406,13 +406,15 @@ export class IngestService implements IngestPort {
     const scanTruncated = !(isObj(f) && f.scanTruncated === false);
     // Preview completeness (A1), fail closed: absent or malformed facts are NOT complete. Only counts and a closed code.
     const pv = isObj(f) && isObj(f.preview) ? f.preview : null;
-    const pvReasonOk = pv !== null && (pv.reason === undefined || pv.reason === 'hidden_lines' || pv.reason === 'too_large' || pv.reason === 'truncated' || pv.reason === 'binary_file');
+    const pvReasonOk = pv !== null && (pv.reason === undefined || pv.reason === 'hidden_lines' || pv.reason === 'too_large' || pv.reason === 'truncated' || pv.reason === 'binary_file' || pv.reason === 'unsafe_characters');
     const pvValid = pv !== null && typeof pv.complete === 'boolean' && pvReasonOk && Number.isSafeInteger(pv.hiddenLines) && (pv.hiddenLines as number) >= 0
+      && (pv.unsafeChars === undefined || (Number.isSafeInteger(pv.unsafeChars) && (pv.unsafeChars as number) >= 0))
       && Number.isSafeInteger(pv.patchBytes) && (pv.patchBytes as number) >= 0;
     const previewComplete = pvValid && pv!.complete === true && pv!.reason === undefined && !scanTruncated;
     const previewReason: string | null = previewComplete ? null
       : !pvValid ? 'unknown' : scanTruncated ? 'truncated' : typeof pv!.reason === 'string' ? pv!.reason : 'unknown';
     const previewHiddenLines = pvValid ? (pv!.hiddenLines as number) : 0;
+    const previewUnsafeChars = pvValid && typeof pv!.unsafeChars === 'number' ? pv!.unsafeChars : 0;
     const previewPatchBytes = pvValid ? (pv!.patchBytes as number) : 0;
     const secretHits = isObj(f) && Array.isArray(f.secretHits) ? (f.secretHits as unknown[]) : [];
     const entropyHits = isObj(f) && Array.isArray(f.entropyHits) ? (f.entropyHits as unknown[]) : [];
@@ -463,7 +465,7 @@ export class IngestService implements IngestPort {
       storage: { kind: 'git', commit: head, ref },
       contentHash: `git:${tree}`,
       metadata: { base, branch, scope, title, summary, diffstat, requirementVersionIds: requirementIds,
-        previewComplete, ...(previewReason !== null ? { previewReason } : {}), previewHiddenLines, previewPatchBytes },
+        previewComplete, ...(previewReason !== null ? { previewReason } : {}), previewHiddenLines, previewUnsafeChars, previewPatchBytes },
       environment: this.environment(ctx), jobId: job.id, attemptN: attempt.n, outputPath: 'head', action: 'exec.changeset_collect',
       onBehalfOf: job.on_behalf_of, now: this.deps.now(),
       inputs: [
