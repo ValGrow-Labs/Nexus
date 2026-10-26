@@ -1170,3 +1170,26 @@ test('a worktree that could not be reused is recorded (reused: false) and the ag
   const okContext = fs.readFileSync(path.join(w.dataHome.root, 'jobs', second.job.id, 'agent', 'context.md'), 'utf8');
   assert.doesNotMatch(okContext, /NOT carried over/);
 });
+
+test('the host proxy decisions of an agent turn are persisted as attempt.progress job_events: exactly one row per decision, the cap marker too, the token nowhere', async () => {
+  const w = await turnWorld();
+  const { job, attempt, plan } = await w.running();
+  const report = (seq, event) => w.runner.report({ op: 'attempt.event', attemptId: attempt.id, seq, event });
+  const at = w.clock.t;
+  report(2_000_001, { t: 'egress', decision: 'allowed', host: 'api.example.com', port: 443, reason: 'allowed', at });
+  report(2_000_002, { t: 'egress', decision: 'refused', host: 'evil.example.org', port: 443, reason: 'host_not_allowed', at });
+  report(2_000_003, { t: 'egress.truncated', count: 7, at });
+  report(2_000_003, { t: 'egress', decision: 'allowed', host: 'dup.example.com', port: 443, reason: 'allowed', at });   // a repeated seq is dropped
+  const rows = w.db.prepare("SELECT summary, data_json FROM job_events WHERE job_id = ? AND type = 'attempt.progress' ORDER BY seq").all(job.id)
+    .map((r) => ({ summary: r.summary, data: JSON.parse(r.data_json) }));
+  const egress = rows.filter((r) => r.data.egress);
+  assert.deepEqual(egress.map((r) => r.data.egress), [
+    { decision: 'allowed', host: 'api.example.com', port: 443, reason: 'allowed' },
+    { decision: 'refused', host: 'evil.example.org', port: 443, reason: 'host_not_allowed' }]);
+  assert.match(egress[0].summary, /egress allowed api\.example\.com:443/);
+  assert.match(egress[1].summary, /egress refused evil\.example\.org:443 \(host_not_allowed\)/);
+  const marks = rows.filter((r) => r.data.egressTruncated);
+  assert.equal(marks.length, 1);
+  assert.deepEqual(marks[0].data.egressTruncated, { count: 7 });
+  assert.ok(!JSON.stringify(rows).includes(plan.runtime?.token ?? 'no-token-in-plan'), 'no token in any recorded event');
+});

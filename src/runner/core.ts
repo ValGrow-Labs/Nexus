@@ -1188,6 +1188,7 @@ stderr: ${r.stderr}` : ''}`
       refuse: (reason, detail) => this.refuse(a, reason, detail),
       fault: (failureClass, message) => this.fault(a, failureClass, message),
       runtimeEvent: (event) => this.post({ op: 'attempt.runtime', attemptId: a.id, seq: ++a.seq, event }),
+      progress: (event) => { if (!a.released && !a.cleaned) this.post({ op: 'attempt.event', attemptId: a.id, seq: ++a.seq, event }); },
       exited: (exit, reason) => {
         if (a.released || a.cleaned) return;
         this.post({ op: 'attempt.exited', attemptId: a.id, exit, outputs: [], parsed: [], logBytes: a.log?.bytes() ?? 0, ...(reason ? { reason } : {}) });

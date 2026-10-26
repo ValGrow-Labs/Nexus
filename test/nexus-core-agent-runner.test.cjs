@@ -674,6 +674,82 @@ test('MCPTOOLS the mcpTools of a plan are exactly the cli-agent allow-list; an u
   assert.ok(!w.driver.ops().includes('create'), 'nothing was created for a refused plan');
 });
 
+// ---------- Follow-up 2: the host proxy's decisions are progress events ----------
+
+/** A stand-in host proxy: it hands the turn's `onDecision` to the test, which plays the decisions the real proxy would report. */
+function fakeProxy(play, dropped = 0) {
+  return async (o) => {
+    play(o.onDecision);
+    return { url: 'http://127.0.0.1:9', port: 9, decisions: 0, get dropped() { return dropped; }, async close() {} };
+  };
+}
+const decision = (host, ok = true, port = 443, reason = ok ? 'allowed' : 'host_not_allowed') =>
+  ({ t: 'egress', decision: ok ? 'allowed' : 'refused', host, port, reason, at: NOW });
+const egressEvents = (w, attemptId) => w.of('attempt.event', attemptId).map((m) => m.event).filter((e) => e.t === 'egress');
+
+test('EGRESS one allowed and one refused host become exactly two egress progress events with the right fields, in order, seq strictly increasing', async () => {
+  const w = await world({ agentRuntime: { startProxy: fakeProxy((on) => { on(decision('api.example.com')); on(decision('evil.example.org', false)); }) } });
+  const plan = agentPlan(w, { steps: textTurn('ok'), egress: { allow: ALLOW, consentHostsSha256: hostsSha256(ALLOW) } });
+  await startAgent(w, plan);
+  await w.waitOp('attempt.exited', plan.attemptId, 'exited');
+  const events = egressEvents(w, plan.attemptId);
+  assert.deepEqual(events.map((e) => [e.decision, e.host, e.port, e.reason]),
+    [['allowed', 'api.example.com', 443, 'allowed'], ['refused', 'evil.example.org', 443, 'host_not_allowed']]);
+  assert.equal(w.of('attempt.event', plan.attemptId).filter((m) => m.event.t === 'egress.truncated').length, 0);
+  const seqs = w.of('attempt.event', plan.attemptId).map((m) => m.seq);
+  assert.deepEqual(seqs, [...seqs].sort((a, b) => a - b));
+  assert.equal(new Set(seqs).size, seqs.length);
+  assert.ok(!JSON.stringify(w.of('attempt.event', plan.attemptId)).includes(plan.runtime.token), 'the turn token is in no egress event');
+});
+
+test('EGRESS at most 200 decisions are reported; the rest are counted in one egress.truncated marker (the proxy\'s own drops included)', async () => {
+  const w = await world({ agentRuntime: { startProxy: fakeProxy((on) => { for (let i = 0; i < 205; i++) on(decision(`h${i}.example.com`)); }, 3) } });
+  const plan = agentPlan(w, { steps: textTurn('ok'), egress: { allow: ALLOW, consentHostsSha256: hostsSha256(ALLOW) } });
+  await startAgent(w, plan);
+  await w.waitOp('attempt.exited', plan.attemptId, 'exited');
+  assert.equal(egressEvents(w, plan.attemptId).length, 200);
+  const marks = w.of('attempt.event', plan.attemptId).map((m) => m.event).filter((e) => e.t === 'egress.truncated');
+  assert.equal(marks.length, 1, 'one marker, never more');
+  assert.equal(marks[0].count, 5 + 3);
+  // The marker comes after every reported decision and before the turn ends.
+  const all = w.got.filter((m) => m.attemptId === plan.attemptId);
+  const last = all.findLastIndex((m) => m.op === 'attempt.event' && m.event.t === 'egress');
+  assert.ok(all.findIndex((m) => m.op === 'attempt.event' && m.event.t === 'egress.truncated') > last);
+  assert.ok(all.findIndex((m) => m.op === 'attempt.exited') > all.findIndex((m) => m.op === 'attempt.event' && m.event.t === 'egress.truncated'));
+});
+
+test('EGRESS a hostile host string is neutralised, never stored raw: secret-shaped and token-shaped are redacted, anything not a DNS name is invalid', async () => {
+  const hostile = ['AKIA1234567890ABCDEF', 'a/b?q=1', 'evil\nhost', '10.0.0.5', '[fe80::1]', 'x'.repeat(300), 'bad host', 'sk-ant-abcdefghijklmnop'];
+  let plan = null;
+  const w = await world({ agentRuntime: { startProxy: fakeProxy((on) => {
+    for (const h of hostile) on(decision(h, false, 443, 'malformed'));
+    on(decision(plan.runtime.token, false, 443, 'malformed'));
+    on(decision('Good-Host.example.com', false));
+  }) } });
+  plan = agentPlan(w, { steps: textTurn('ok'), egress: { allow: ALLOW, consentHostsSha256: hostsSha256(ALLOW) } });
+  await startAgent(w, plan);
+  await w.waitOp('attempt.exited', plan.attemptId, 'exited');
+  const events = egressEvents(w, plan.attemptId);
+  assert.equal(events.length, hostile.length + 2);
+  const hosts = events.map((e) => e.host);
+  assert.deepEqual(hosts, ['redacted', 'invalid', 'invalid', 'invalid', 'invalid', 'invalid', 'invalid', 'redacted', 'redacted', 'Good-Host.example.com']);
+  const wire = JSON.stringify(w.got.filter((m) => m.attemptId === plan.attemptId));
+  for (const raw of [...hostile, plan.runtime.token]) assert.ok(!wire.includes(raw), `${raw.slice(0, 12)} never leaves the runner raw`);
+  assert.ok(!fs.readFileSync(plan.logPath, 'utf8').includes(plan.runtime.token));
+});
+
+test('EGRESS a decision after the turn ended is never reported', async () => {
+  let late = null;
+  const w = await world({ agentRuntime: { startProxy: fakeProxy((on) => { late = on; }) } });
+  const plan = agentPlan(w, { steps: textTurn('ok'), egress: { allow: ALLOW, consentHostsSha256: hostsSha256(ALLOW) } });
+  await startAgent(w, plan);
+  await w.waitOp('attempt.exited', plan.attemptId, 'exited');
+  const before = w.of('attempt.event', plan.attemptId).length;
+  late(decision('late.example.com'));
+  await new Promise((r) => setTimeout(r, 30));
+  assert.equal(w.of('attempt.event', plan.attemptId).length, before);
+});
+
 // ---------- the posture pin this task adds (sanity: taskkill is resolved, never a bare command) ----------
 
 test('taskkill is launched only by its resolved absolute path', () => {

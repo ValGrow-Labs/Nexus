@@ -99,6 +99,8 @@ export type ProgressEvent =
    * named (never a path, query string or header), its port, and why. At most EGRESS_EVENT_MAX per attempt.
    */
   | { t: 'egress'; decision: 'allowed' | 'refused'; host: string; port: number; reason: EgressReason; at: number }
+  /** An agent turn's host proxy made more than EGRESS_EVENT_MAX decisions: `count` of them were not reported (one final marker, never more). */
+  | { t: 'egress.truncated'; count: number; at: number }
   /**
    * B2b: a `changeset.accept` is about to move the integration ref from `old` to `new` (reported, durably recorded by
    * main, before the `update-ref`): recovery rolls an unfinished accept back from it, never forward.
@@ -444,6 +446,8 @@ const progressEvent: Check<ProgressEvent> = (x) => {
   if (g !== NO) return g;
   const a = obj<ProgressEvent>({ t: lit('accept.prepared'), old: commit, new: commit, at: count })(x);
   if (a !== NO) return a;
+  const tr = obj<ProgressEvent>({ t: lit('egress.truncated'), count, at: count })(x);
+  if (tr !== NO) return tr;
   const e = obj<Extract<ProgressEvent, { t: 'egress' }>>({ t: lit('egress'), decision: oneOf(['allowed', 'refused'] as const),
     host: str({ re: EGRESS_HOST_RE }), port: intIn(0, 65535), reason: oneOf(EGRESS_REASONS), at: count })(x);
   if (e === NO) return NO;

@@ -15,15 +15,15 @@
  * `worktree_guard` rather than a plain cancel.
  */
 import * as path from 'node:path';
-import type { AttemptPhase, ExitReason, RefusalReason } from '../shared/nexus/runnerProtocol';
-import { chunkText } from '../shared/nexus/runnerProtocol';
+import type { AttemptPhase, ExitReason, ProgressEvent, RefusalReason } from '../shared/nexus/runnerProtocol';
+import { chunkText, EGRESS_EVENT_MAX } from '../shared/nexus/runnerProtocol';
 import type { AttemptFailureClass } from '../shared/nexus/runnerProtocol';
 import type { AgentPlan, ExitInfo, PreflightReport } from '../shared/nexus/execution';
 import type { AgentRuntime, RunRequest, RuntimeEvent } from '../shared/nexus/runtime';
 import type { GuardRefusal } from './worktreeGuard';
 import { scrub } from './logs';
 import { DockerError, SpecError } from './sandbox/dockerDriver';
-import type { startHostEgressProxy, HostEgressProxy } from './hostEgressProxy';
+import type { startHostEgressProxy, HostEgressProxy, EgressEvent } from './hostEgressProxy';
 import type { RunnerDriver, RunnerFs } from './types';
 
 export const AGENT_STOP_GRACE_MS = 10_000;
@@ -40,6 +40,8 @@ export interface AgentAttemptPort {
   refuse: (reason: RefusalReason, detail?: string) => Promise<void>;
   fault: (failureClass: AttemptFailureClass, message: string) => Promise<void>;
   runtimeEvent: (event: RuntimeEvent) => void;
+  /** One progress event of the turn (`attempt.event`): the host proxy's decisions, and the one marker that says some were not reported. */
+  progress: (event: Extract<ProgressEvent, { t: 'egress' | 'egress.truncated' }>) => void;
   exited: (exit: ExitInfo, reason?: ExitReason) => void;
   bindAgentTurn: (bearer: string, attemptId: string, containerId: string) => void;
   unbindAgentTurn: (bearer: string) => void;
@@ -70,6 +72,19 @@ async function stopAndRemove(driver: RunnerDriver, cid: string): Promise<void> {
 }
 async function safeRemove(driver: RunnerDriver, cid: string): Promise<void> {
   try { await driver.remove(cid); } catch { /* already gone, or never started */ }
+}
+
+/** A DNS name (labels of letters, digits, `_` and `-`, at most 253 characters): the only host text a decision event may carry. */
+const DNS_HOST_RE = /^(?=.{1,253}$)[a-z0-9_]([a-z0-9_-]{0,61}[a-z0-9_])?(\.[a-z0-9_]([a-z0-9_-]{0,61}[a-z0-9_])?)*$/i;
+
+/**
+ * The host of one proxy decision as it may leave the runner: a secret-shaped or token-shaped one is `redacted`, one that
+ * is not a DNS name (an address, a bracketed IPv6, anything odd) is `invalid` (the decision's `reason` still says why it
+ * was refused). Never a URL, path, query, header or credential: the proxy's own line parser already refuses those.
+ */
+export function safeEgressHost(host: string): string {
+  if (typeof host !== 'string' || scrub(host) !== host) return 'redacted';
+  return DNS_HOST_RE.test(host) && !/^[0-9.]+$/.test(host) ? host : 'invalid';
 }
 
 /** Step 3: the adapter's own engine-format files (here: the `RunRequest` itself, for the runtime process to read). */
@@ -164,6 +179,15 @@ export async function run(plan: AgentPlan, port: AgentAttemptPort): Promise<void
   const request: RunRequest = { ...plan.runtime.request, container: { id: cid } };
   const configDir = plan.runtime.request.configDir;
   let proxy: HostEgressProxy | null = null;
+  // The host proxy's decisions become progress events: at most EGRESS_EVENT_MAX, the rest only counted (one marker at the end).
+  let egressOpen = true;
+  let egressSent = 0;
+  let egressOver = 0;
+  const onDecision = (d: EgressEvent): void => {
+    if (!egressOpen || egressSent >= EGRESS_EVENT_MAX) { egressOver++; return; }
+    egressSent++;
+    port.progress({ t: 'egress', decision: d.decision, host: safeEgressHost(d.host), port: d.port, reason: d.reason, at: d.at });
+  };
   let runRef: string | null = null;
   let completedOk = false;
   let failedWith: string | null = null;
@@ -179,7 +203,7 @@ export async function run(plan: AgentPlan, port: AgentAttemptPort): Promise<void
       proxy = await port.startHostEgressProxy({
         allow: plan.egress.allow,
         consentHostsSha256: plan.egress.consentHostsSha256,
-        onDecision: () => { /* no attempt.event in this build: the runtime's own host traffic is not evidence */ },
+        onDecision,
         imagesDir: port.imagesDir
       });
     } catch (e) {
@@ -217,6 +241,9 @@ export async function run(plan: AgentPlan, port: AgentAttemptPort): Promise<void
     port.unbindAgentTurn(plan.runtime.token);
     // The host process is ended even when no abort fired (a turn that completed or failed with its CLI still alive).
     try { await port.runtime.cancel(runRef ?? '', AGENT_STOP_GRACE_MS); } catch { /* best effort */ }
+    const unreported = egressOver + (proxy?.dropped ?? 0);
+    if (unreported > 0) port.progress({ t: 'egress.truncated', count: unreported, at: port.now() });
+    egressOpen = false;
     try { await proxy?.close(); } catch { /* best effort */ }
     await stopAndRemove(port.driver, cid);
     await cleanupEngineFiles(port.fs, configDir);

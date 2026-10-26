@@ -889,9 +889,11 @@ export class ExecutionService {
       appendJobEventTx(this.db, { type: 'attempt.progress', projectId: j.project_id, jobId: j.id, attemptN: a.n,
         summary: ev.t === 'phase' ? `attempt ${a.n}: ${ev.phase}` : ev.t === 'guard' ? `attempt ${a.n}: size guard ${ev.guard}`
           : ev.t === 'accept.prepared' ? `attempt ${a.n}: accept prepared ${ev.old.slice(0, 12)} to ${ev.new.slice(0, 12)}`
+          : ev.t === 'egress.truncated' ? `attempt ${a.n}: ${ev.count} more egress decision(s) were not reported`
           : `attempt ${a.n}: egress ${ev.decision} ${ev.host}:${ev.port}${ev.decision === 'refused' ? ` (${ev.reason})` : ''}`,
         data: ev.t === 'phase' ? { seq: m.seq, phase: ev.phase } : ev.t === 'guard' ? { seq: m.seq, guard: ev.guard, bytes: ev.bytes, limitBytes: ev.limitBytes }
           : ev.t === 'accept.prepared' ? { seq: m.seq, acceptPrepared: { old: ev.old, new: ev.new } }
+          : ev.t === 'egress.truncated' ? { seq: m.seq, egressTruncated: { count: ev.count } }
           : { seq: m.seq, egress: { decision: ev.decision, host: ev.host, port: ev.port, reason: ev.reason } } }, now);
     });
   }
