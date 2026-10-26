@@ -48,7 +48,14 @@ const VALIDATOR_LABEL: Readonly<Record<string, string>> = Object.freeze({
   'app.manifest_schema': 'The application manifest is valid',
   'app.preview_health': 'The dev deployment answers its health check',
   'diag.schema': 'Every fact of the report names its source',
-  'sde.deps.lock_matches': 'The installed dependencies match the lockfile'
+  'sde.deps.lock_matches': 'The installed dependencies match the lockfile',
+  // B2b: a change made by the agent. The tests of a change are named as the change's own, and no label says "passed".
+  'git.diff_nonempty': 'The change contains file changes',
+  'git.paths_in_scope': 'Every changed file is inside the allowed folders',
+  'sec.secret_scan': 'The change holds no key or secret',
+  'sec.entropy_notes': 'Long random-looking strings (advice only)',
+  'cs.tests_pass': 'The change’s own tests',
+  'git.applies_cleanly': 'The change merges onto the accepted work'
 });
 export const validatorLabel = (id: string): string => VALIDATOR_LABEL[id] ?? (getValidator(id) ? id : `Check ${id}`);
 

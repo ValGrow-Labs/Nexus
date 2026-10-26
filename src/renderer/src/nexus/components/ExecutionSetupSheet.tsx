@@ -2,8 +2,10 @@ import { useMemo, useState } from 'react';
 import type { ImageProfileArg } from '@shared/nexus/ipc';
 import { nexusClient } from '../data/nexusClient';
 import { execFailText } from '../data/errorCopy';
-import { checkedLine, noticeFor, setupLead, setupSheet } from '../data/executionModel';
+import { checkedLine, consentHostsOf, noticeFor, setupLead, setupSheet } from '../data/executionModel';
 import { useApprovals, useHealth, useHealthPoll, withIntent } from '../data/useExecution';
+import { useAgentConsent } from '../data/useAgents';
+import { agentFailText } from '../agent/agentModel';
 import { ApprovalList } from '../project/ApprovalsSection';
 import { Sheet } from '../ui/Sheet';
 import { Button } from '../ui/Button';
@@ -21,7 +23,7 @@ export function ExecutionSetupSheet({ open, onClose }: { open: boolean; onClose:
 }
 
 function SetupBody({ onClose }: { onClose: () => void }) {
-  const { health, availability, checkAgain } = useHealth();
+  const { health, availability, checkAgain: askAgain } = useHealth();
   useHealthPoll(true);
   const approvals = useApprovals(null);
   const prepares = useMemo(() => (approvals.data ?? []).filter((a) => a.reason === 'image.prepare'), [approvals.data]);
@@ -32,7 +34,12 @@ function SetupBody({ onClose }: { onClose: () => void }) {
     return m;
   }, [prepares]);
   const pendingProfiles = useMemo(() => new Set(waiting.map((a) => a.request.profile ?? '')), [waiting]);
-  const rows = health ? setupSheet(health, { estimates, pending: pendingProfiles }) : [];
+  // B2b: the agent's permission row reads #51 when the sheet opens (and again every 45 s while it stays open). Its destinations are
+  // shown on that row and nowhere else.
+  const consent = useAgentConsent(true);
+  const checkAgain = () => { askAgain(); consent.reload(); };
+  const shown = health && consent.view ? { ...health, agent: consent.view } : health;
+  const rows = shown ? setupSheet(shown, { estimates, pending: pendingProfiles, hosts: consentHostsOf(consent.view) }) : [];
   const [busy, setBusy] = useState<string | null>(null);
   const [note, setNote] = useState<{ text: string; alert: boolean } | null>(null);
   const notice = noticeFor(availability);
@@ -45,6 +52,15 @@ function SetupBody({ onClose }: { onClose: () => void }) {
     setBusy(null);
     approvals.reload();
     setNote(r.ok ? { text: 'Approve the request below to prepare the image.', alert: false } : { text: execFailText(r), alert: true });
+  };
+
+  const changeConsent = async (op: 'grant' | 'revoke') => {
+    if (busy) return;
+    setBusy(`consent:${op}`); setNote(null);
+    const r = await consent.act(op);
+    setBusy(null);
+    setNote(r.ok ? { text: op === 'grant' ? 'The network permission was granted.' : 'The network permission was revoked.', alert: false } : { text: agentFailText(r), alert: true });
+    if (op === 'grant') checkAgain();
   };
 
   return (
@@ -62,6 +78,11 @@ function SetupBody({ onClose }: { onClose: () => void }) {
               <span className="nx-xs__word">{r.word}</span>
               <span className="nx-xs__text">{r.text}</span>
               {r.action && <span className="nx-xs__action">{r.action}</span>}
+              {r.consent && (
+                <span className="nx-xs__btn">
+                  <Button disabled={busy !== null} onClick={() => { void changeConsent(r.consent!.op); }}>{busy === `consent:${r.consent.op}` ? 'Working…' : r.consent.label}</Button>
+                </span>
+              )}
               {r.prepare && (
                 <span className="nx-xs__btn">
                   <Button disabled={busy !== null} onClick={() => { void prepare(r.prepare!.profile); }}>{busy === r.prepare.profile ? 'Asking…' : r.prepare.label}</Button>

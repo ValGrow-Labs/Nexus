@@ -57,7 +57,7 @@ export type VersionAction =
   | { kind: 'handoff'; versionId: string };
 
 type ActionVersion = Pick<VersionView, 'id' | 'status' | 'producedByEngine' | 'promotedAt'>;
-type ActionArtifact = Pick<ArtifactView, 'status' | 'ownerScope' | 'currentVersionId'>;
+type ActionArtifact = Pick<ArtifactView, 'status' | 'ownerScope' | 'currentVersionId'> & Partial<Pick<ArtifactView, 'kind'>>;
 
 /**
  * Only the actions the platform would allow on this version. A frozen owner (its
@@ -67,6 +67,11 @@ type ActionArtifact = Pick<ArtifactView, 'status' | 'ownerScope' | 'currentVersi
  */
 export function actionsFor(version: ActionVersion, artifact: ActionArtifact, ownerActive: boolean): VersionAction[] {
   if (!ownerActive || artifact.status !== 'active' || artifact.ownerScope !== 'participation') return [];
+  // B2b: a change made by the agent becomes current only by Accept (it puts the change on the Nexus branch first), never by a
+  // bare "Make current", which would skip the review and the branch.
+  if (artifact.kind === 'change_set' && (version.status === 'candidate' || version.status === 'deprecated')) {
+    return version.status === 'candidate' ? [{ kind: 'discard', versionId: version.id }] : [];
+  }
   const id = version.id;
   const expected = artifact.currentVersionId ?? null;
   switch (version.status) {

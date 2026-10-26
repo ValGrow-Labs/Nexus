@@ -19,7 +19,9 @@ export const ACTIVITY_DETAIL_ALLOW: readonly string[] = Object.freeze([
   // B2a Task 11: how many leftover sandbox resources main asked the runner to remove (a count).
   'requested',
   // B2b Task 7: whether a job's worktree was freshly created or an existing one was reused (a flag, never a path).
-  'reused'
+  'reused',
+  // B2b Task 14: the consent row's `op` (grant or revoke), read only as one of those two words.
+  'op'
 ]);
 
 /** Every action the platform services write to the activity log. */
@@ -49,7 +51,9 @@ export const ACTIVITY_ACTIONS: readonly string[] = Object.freeze([
   // accept that did not finish, and "Merge accepted work" (never a path, a sha or a comment: only the decision word).
   'review.decide', 'changeset.accept', 'changeset.rollback', 'repo.merge',
   // B2b Task 5 (sentences added in Task 9's fix round): an agent tool call, and context left out of a turn for looking like a secret.
-  'mcp.call', 'context_redacted'
+  'mcp.call', 'context_redacted',
+  // B2b Task 5: the gateway's one refusal row for a turn permission that did not cover a call (words, never the call).
+  'auth.denied'
 ]);
 
 /** Plain words for an action a person may be refused (every platform action). */
@@ -358,8 +362,13 @@ function sentence(row: ActivityView, ctx: ActivityContext): string | null {
       if (decision === 'fail') return pick(RECOVER_FAIL_WORDS, detail(row, 'status')) ?? 'Job failed: it stopped while the app was closed';
       return pick(RECOVER_WORDS, decision) ?? RECOVER_NEUTRAL;
     }
-    case 'agent.consent':
-      return detail(row, 'op') === 'revoke' ? "The agent's network permission was revoked" : 'The agent was given network permission, with spend limits';
+    case 'agent.consent': {
+      const op = detail(row, 'op');
+      if (op === 'revoke') return "The agent's network permission was revoked";
+      if (op === 'grant') return 'The agent was given network permission, with spend limits';
+      return "The agent's network permission was changed";
+    }
+    case 'auth.denied': return 'The agent asked for something its permission does not cover, so it was refused';
     case 'token.mint': return 'The agent was given a permission for one turn';
     case 'token.revoke': return "The agent's turn permission ended";
     case 'repo.worktree':
@@ -387,6 +396,7 @@ function sentence(row: ActivityView, ctx: ActivityContext): string | null {
 
 /** What a row says happened. A refusal or failure names the action in words; an unknown action says only its name. */
 export function activityText(row: ActivityView, ctx: ActivityContext): string {
+  if (row.action === 'auth.denied') return sentence(row, ctx) ?? 'A request was refused';
   if (row.status === 'denied') return `Refused: ${actionWords(row.action)}`;
   if (row.status === 'failed') return `Failed: ${actionWords(row.action)}`;
   if (row.status === 'cancelled') return `Cancelled: ${actionWords(row.action)}`;

@@ -86,7 +86,7 @@ function onHint(lastSeq: number): void {
   if (!timer && !pulling) timer = setTimeout(() => { void pull(); }, HINT_COALESCE_MS);
 }
 
-function useHints(): void {
+export function useHints(): void {
   useEffect(() => {
     subscribers += 1;
     if (subscribers === 1) unsubscribe = nexusClient.onHint((h) => onHint(h.lastSeq));
@@ -105,7 +105,7 @@ function useHints(): void {
 
 export interface Read<T> { data: T | null; fail: Extract<NexusResult<T>, { ok: false }> | null; loaded: boolean; reload: () => void }
 
-function useRead<T>(key: string | null, run: () => Promise<NexusResult<T>>, deps: readonly unknown[]): Read<T> {
+export function useRead<T>(key: string | null, run: () => Promise<NexusResult<T>>, deps: readonly unknown[]): Read<T> {
   const [state, setState] = useState<{ key: string | null; data: T | null; fail: Read<T>['fail']; loaded: boolean }>({ key, data: null, fail: null, loaded: false });
   const seq = useRef(0);
   const [attempt, setAttempt] = useState(0);

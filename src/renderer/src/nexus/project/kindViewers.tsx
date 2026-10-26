@@ -6,6 +6,7 @@ import { useExecStore } from '../data/useExecution';
 import { Button } from '../ui/Button';
 import { useExecutionUi } from './execContext';
 import { logRangesOf, partialReportNote, reportFacts } from './evidenceModel';
+import { ChangeSetReview } from './ChangeSetReview';
 
 const PAGE_BYTES = 64 * 1024;
 
@@ -16,7 +17,7 @@ function usePreview(versionId: string, part: PreviewPart): { pages: PreviewView[
   const [loaded, setLoaded] = useState(false);
   const tick = useExecStore((s) => s.ticks.validations);
   const read = async (from: PreviewView | null, alive: () => boolean) => {
-    const q = part === 'content' ? { part, page: from?.nextPage ?? 0, maxBytes: PAGE_BYTES } : { part, fromRow: from?.nextRow ?? 0, maxBytes: PAGE_BYTES };
+    const q = part === 'content' || part === 'diff' ? { part, page: from?.nextPage ?? 0, maxBytes: PAGE_BYTES } : { part, fromRow: from?.nextRow ?? 0, maxBytes: PAGE_BYTES };
     const r = await nexusClient.versionPreview(versionId, q);
     if (!alive()) return;
     setLoaded(true);
@@ -46,7 +47,7 @@ function usePreview(versionId: string, part: PreviewPart): { pages: PreviewView[
     return () => { alive = false; };
   }, [tick]);
   const last = pages[pages.length - 1] ?? null;
-  const hasMore = last !== null && (part === 'content' ? last.nextPage !== null : last.nextRow !== null);
+  const hasMore = last !== null && (part === 'content' || part === 'diff' ? last.nextPage !== null : last.nextRow !== null);
   return { pages, error, loaded, more: hasMore ? () => { void read(last, () => true); } : null };
 }
 
@@ -165,7 +166,7 @@ function Repository({ version }: { version: VersionView }) {
   return <section><h2>Snapshot</h2><pre className="nx-xv__text">{c.text}</pre></section>;
 }
 
-/** What a version holds, by kind: a test suite's discovered tests and JUnit table (failures first), a build's
+/** What a version holds, by kind: a change made by the agent (diff and decisions), a test suite's discovered tests and JUnit table (failures first), a build's
  *  manifest, an application's manifest, a diagnostic report's sourced facts, a requirement or a problem statement,
  *  a repository snapshot. Other kinds keep the Passport's own content line. */
 export function KindViewer({ kind, version }: { kind: string; version: VersionView }) {
@@ -177,6 +178,8 @@ export function KindViewer({ kind, version }: { kind: string; version: VersionVi
     case 'diagnostic_report': return <DiagnosticReport version={version} />;
     case 'requirement': case 'problem_statement': return <Structured version={version} kind={kind} />;
     case 'repository': return <Repository version={version} />;
+    // B2b: a change made by the agent: the read-only diff, your decision, Accept and Merge (its checks are the Folio's evidence section).
+    case 'change_set': return <ChangeSetReview versionId={version.id} projectId={version.projectId} status={version.status} />;
     default: return null;
   }
 }

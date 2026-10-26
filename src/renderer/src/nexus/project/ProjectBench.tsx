@@ -33,6 +33,7 @@ import { ExecutionNotice } from '../components/ExecutionNotice';
 import { ExecutionSetupSheet } from '../components/ExecutionSetupSheet';
 import { JobLogSheet } from '../runs/JobLogSheet';
 import { ApprovalsSection } from './ApprovalsSection';
+import { AgentPanel } from '../agent/AgentPanel';
 import { RequirementSheet } from './RequirementSheet';
 import { ExecutionUiContext, type ExecutionUi } from './execContext';
 import type { LogRange } from './evidenceModel';
@@ -212,7 +213,8 @@ function Workbench({ project, tool }: { project: Project; tool: ProjectTool }) {
 
   const node: SpineNode = nodes.find((n) => n.id === selected) ?? nodes[0];
   const sourceNode = nodes.find((n) => n.kind === 'source') ?? nodes[0];
-  const hasChanges = nodes.some((n) => n.kind === 'changes');
+  // The Changes tool is offered for your uncommitted changes and for the changes the agent made (B2b).
+  const hasChanges = nodes.some((n) => n.kind === 'changes') || artifacts.some((s) => s.artifact.kind === 'change_set' && s.artifact.status === 'active');
   const label = nodeLabel(node);
 
   useEffect(() => { setSelection({ kind: node.kind, label }); }, [node.kind, label, setSelection]);
@@ -303,6 +305,7 @@ function Workbench({ project, tool }: { project: Project; tool: ProjectTool }) {
     projectJobs.data ? { jobs: projectJobs.data, builds: draftBuilds } : null),
   [versionChecks.words, versionChecks.validators, artifacts, projectDeployments.data, projectJobs.data, draftBuilds]);
   const rails = useGroupRails(project.id, groups, artifacts, versionChecks.validators, draftBuilds);
+  const hasSde = (idx.byProject.get(project.id) ?? []).some((r) => r.status === 'active' && r.workspaceId === 'sde');
   const [setupOpen, setSetupOpen] = useState(false);
   const [write, setWrite] = useState<{ workspaceId: string; kind: 'requirement' | 'problem_statement' } | null>(null);
   const [log, setLog] = useState<{ jobId: string; range?: LogRange | null } | null>(null);
@@ -323,6 +326,8 @@ function Workbench({ project, tool }: { project: Project; tool: ProjectTool }) {
       <div className="nx-xstrip">
         <ExecutionNotice availability={availability} onSetup={execUi.openSetup} />
         <ApprovalsSection projectId={project.id} />
+        {/* B2b: the agent is offered only where SDE takes part: no other domain claims to work yet. */}
+        {hasSde && <AgentPanel projectId={project.id} workspaceId="sde" />}
       </div>
       <div className="nx-bench">
         <ToolRail projectId={project.id} rootPath={project.rootPath} tool={tool} hasChanges={hasChanges} onOpenTerminal={openTerminal}

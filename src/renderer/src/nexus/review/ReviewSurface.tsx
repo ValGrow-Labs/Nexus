@@ -6,6 +6,7 @@ import { useNexusUi } from '../state/uiStore';
 import { useShellActions } from '../shellActions';
 import { Button } from '../ui/Button';
 import { useMedia } from '../ui/useMedia';
+import { ChangeSets } from '../project/ChangeSetReview';
 
 type DiffResult =
   | { key: string; status: 'error'; message: string }
@@ -53,6 +54,8 @@ export function ReviewSurface({ root, git, refresh }: { root: string; git: GitSt
   const frame = (body: ReactNode) => (
     <section className="nx-surface nx-review" aria-labelledby="nx-surface-title">
       <h1 id="nx-surface-title" className="nx-surface__title" tabIndex={-1}>Changes</h1>
+      {/* B2b: the changes the agent made (decide, accept, merge) come first; your own uncommitted changes follow. */}
+      <ChangeSets />
       {body}
     </section>
   );

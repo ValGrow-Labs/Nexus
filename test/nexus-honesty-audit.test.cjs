@@ -149,6 +149,11 @@ const B2A_ROWS = [
   ...['oom', 'nonzero_exit', 'invalid_output', 'outputs_missing'].map((status) => ['exec.recover', { decision: 'fail', reason: 'container_exited', status, to: 'failed' }]),
   ...[0, 1, 3].map((requested) => ['exec.orphan_removed', { requested }]),
   ['version.revalidate', { intent: 'i', jobs: ['j2'] }],
+  // B2b: the agent flow's rows (decision words only; no sentence calls the work complete or the change merged before it was).
+  ...['grant', 'revoke', 'other'].map((op) => ['agent.consent', { op }]), ['auth.denied', { reason: 'out_of_scope' }], ['token.mint', {}], ['token.revoke', {}],
+  ['repo.worktree', { reused: true }], ['repo.worktree', { reused: false }], ['mcp.call', {}], ['context_redacted', {}],
+  ...['approve', 'request_changes', 'reject', 'other'].map((decision) => ['review.decide', { decision }]),
+  ['changeset.accept', {}], ['changeset.rollback', {}], ['repo.merge', {}],
   ['job.create', {}], ['job.cancel', {}],
   ...['queued', 'leased', 'running', 'awaiting_approval', 'retry_scheduled', 'completed', 'partial', 'failed', 'cancelled', 'timed_out', 'interrupted']
     .map((to) => ['job.transition', { from: 'running', to }])
@@ -176,7 +181,10 @@ test('HA1 (final review C6a) no B2a activity sentence or job-run headline calls 
 
   // Every headline, for every kind of run, with and without a sourced reason: headline, word and stage labels.
   const flavours = [...USER_ACTIONS.map((a) => ({ actionId: a.id, recipeId: null, kind: 'tool.run' })), { actionId: null, recipeId: null, kind: 'validate' },
-    { actionId: null, recipeId: 'something.else', kind: 'tool.run' }];
+    { actionId: null, recipeId: 'something.else', kind: 'tool.run' },
+    // B2b: an agent turn and the jobs its flow starts (their titles are words, never a recipe id).
+    { actionId: null, recipeId: null, kind: 'agent.run' }, ...['repo.worktree', 'changeset.collect', 'changeset.merge_check', 'changeset.accept', 'changeset.accept_rollback', 'repo.ff']
+      .map((recipeId) => ({ actionId: null, recipeId, kind: 'tool.run' }))];
   const HEADLINES = ['queued', 'waiting:runner', 'waiting:docker', 'waiting:image', 'waiting:disk', 'waiting:slots', 'waiting:memory', 'waiting:git',
     'waiting:retry', 'provisioning', 'running', 'waiting_for_approval', 'collecting', 'validating', 'checks_passed', 'checks_failed',
     'checks_could_not_run', 'failed', 'cancelled', 'timed_out', 'interrupted'];
@@ -275,7 +283,9 @@ test('HA-B2b the agent flow actions answer agents_unavailable while the agents p
 const NEW_COPY = ['workspaces/lifecycleModel.ts', 'workspaces/LifecycleRail.tsx', 'data/useExecution.ts', 'data/executionModel.ts', 'data/errorCopy.ts',
   'runs/jobRunModel.ts', 'runs/JobLogSheet.tsx', 'runs/ProjectRuns.tsx', 'project/evidenceModel.ts', 'project/EvidenceSection.tsx', 'project/kindViewers.tsx',
   'project/ActionBar.tsx', 'project/ApprovalsSection.tsx', 'project/DeploymentsSection.tsx', 'project/RequirementSheet.tsx', 'project/actionModel.ts',
-  'components/ExecutionSetupSheet.tsx', 'components/ExecutionNotice.tsx'];
+  'components/ExecutionSetupSheet.tsx', 'components/ExecutionNotice.tsx',
+  // B2b Task 15: the agent panel, the change-set views and their models.
+  'agent/agentModel.ts', 'agent/AgentPanel.tsx', 'agent/SessionLog.tsx', 'project/changeSetModel.ts', 'project/ChangeSetReview.tsx', 'data/useAgents.ts'];
 
 test('HA2 the registry strings and the new copy pass the identity guard rules (no persona, office or lead words)', () => {
   const strings = [];

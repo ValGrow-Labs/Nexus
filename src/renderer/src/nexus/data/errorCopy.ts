@@ -126,6 +126,68 @@ export function executionNotice(subReason: string | null | undefined): string {
     : 'Running jobs is not available right now. Artifacts, handoffs and activity still work.';
 }
 
+/**
+ * B2b: the sentence for each reason an agent, review, accept or merge flow refuses with (main's AGENT_REASON_MESSAGES in
+ * nexusIpc/envelope.ts, word for word: a test compares them). Kept apart from REASON_TEXT, which mirrors REASON_MESSAGES.
+ * No reason code, git message, path or sha is ever shown; `tree_dirty` says "tracked files" because untracked files never
+ * block a merge. The last three are the renderer's own (main words them in its message, which is not shown).
+ */
+export const AGENT_REASON_TEXT: Readonly<Record<string, string>> = Object.freeze({
+  agents_unavailable: 'Agent work is not available on this database.',
+  runtime_unknown: 'The agent has not been checked on this computer yet. Open Setup and check again.',
+  runtime_not_installed: 'The agent program is not installed on this computer.',
+  runtime_not_authenticated: 'The agent program is not signed in. Sign in with it, then check again in Setup.',
+  runtime_version_unsupported: 'The installed agent program is not a version Nexus supports.',
+  runtime_error: 'The agent could not be checked. Open Setup and check again.',
+  runtime_mismatch: 'The agent program installed is not the one that was given permission.',
+  consent_missing: 'Agent turns need your network permission. Open Setup to grant it.',
+  consent_mismatch: 'The permission on record does not match what the agent needs. Revoke it and grant it again in Setup.',
+  consent_live: 'A permission is already granted. Revoke it first to change it.',
+  budget_exhausted: 'The agent has used its budget for today.',
+  rate_limited: 'The agent has started too many turns this hour. Try again later.',
+  turn_running: 'The agent is still working on the last message.',
+  session_ended: 'That conversation has ended. Start a new one.',
+  no_turn: 'No agent turn is running in that conversation.',
+  secret_in_message: 'The message looks like it holds a secret, so nothing was started.',
+  message_too_long: 'The message is too long.',
+  unknown_skill: 'That skill is not available.',
+  secret_in_comment: 'The comment looks like it holds a secret, so nothing was recorded.',
+  comment_required: 'Say what should change: this decision needs a comment.',
+  comment_too_long: 'The comment is too long.',
+  not_a_change_set: 'Only a change made by the agent can be reviewed or accepted.',
+  not_candidate: 'This change is no longer waiting for a decision.',
+  not_approved: 'This change has no approving review yet.',
+  ref_moved: 'The accepted branch moved while you were deciding, so nothing was accepted. Look at the change again.',
+  merge_conflict: 'The change does not merge cleanly onto the accepted work, so it was not accepted.',
+  accept_rolled_back: 'The accept could not be recorded, so the accepted branch was put back as it was. The change is still waiting for you.',
+  integration_unexpected: 'The accepted work is not what Nexus recorded (it was changed outside Nexus, or an earlier accept did not finish), so nothing was done.',
+  tree_dirty: 'Your working tree has uncommitted changes to tracked files, so nothing was merged. New, untracked files do not block a merge.',
+  branch_mismatch: 'Another branch is checked out than the one the accepted work is for, so nothing was merged.',
+  not_fast_forward: 'Your branch has moved on, so the accepted work is no longer a fast-forward. Nothing was merged.',
+  nothing_to_merge: 'Your branch already has all the accepted work.',
+  cancelled: 'The merge was cancelled; nothing was changed.',
+  accept_pending: 'The accept is still running. Ask again in a moment.',
+  merge_pending: 'The merge is still running. Ask again in a moment.',
+  no_such_part: 'There is nothing of that kind to show for this item.',
+  no_commit: 'This change does not record the commits needed to show it.',
+  runner_unavailable: 'The part of Nexus that reads your repository is not available right now.',
+  branch_unknown: "Nexus has not recorded the repository's branch yet. Take a repository snapshot first.",
+  git_missing: 'Git is not installed on this computer.',
+  // The renderer's own.
+  no_session: 'That change was not made in an agent conversation, so there is no agent to ask for changes.',
+  intent_mismatch: 'That click belongs to another decision. Try again.',
+  intent_required: 'The request could not be accepted. Try again.'
+});
+export const AGENT_REASONS: readonly string[] = Object.freeze(Object.keys(AGENT_REASON_TEXT));
+/** An accept whose undo could not be queued: said once, after the refusal's own sentence. */
+export const ROLLBACK_OWED_TEXT = 'Nexus still owes an undo of the accepted branch and will not accept or merge anything until it is done.';
+
+/** Agent work off: the same sub-reasons as execution say why. */
+export function agentsNotice(subReason: string | null | undefined): string {
+  const why = subReason ? EXECUTION_WHY[subReason] : undefined;
+  return why ? `Agent work is not available because ${why}.` : AGENT_REASON_TEXT.agents_unavailable;
+}
+
 /** The setup sentences (main's SETUP_MESSAGES in nexusIpc/envelope.ts, word for word). */
 export const SETUP_TEXT: Readonly<Record<string, string>> = Object.freeze({
   docker_missing: 'Docker is not installed, so this cannot run on this computer yet.',
@@ -162,12 +224,14 @@ export function errorCopy(code: string, reason?: string | null, subReason?: stri
     if (reason === 'busy') return { text: BUSY_TEXT, retry: true, kind: 'busy' };
     if (reason === 'handoffs_unavailable') return { text: handoffsNotice(subReason), retry: false, kind: 'handoffs_unavailable' };
     if (reason === 'execution_unavailable') return { text: executionNotice(subReason), retry: false, kind: 'execution_unavailable' };
+    if (reason === 'agents_unavailable') return { text: agentsNotice(subReason), retry: false, kind: 'execution_unavailable' };
   }
   if (code === 'platform_unavailable') {
     return { text: unavailableNotice(reason), retry: false, kind: 'unavailable' };
   }
   if (code === 'internal') return { text: CODE_TEXT.internal, retry: true, kind: 'internal' };
-  const byReason = reason ? REASON_TEXT[reason] ?? EXEC_REASON_TEXT[reason] : undefined;
+  const byReason = reason && Object.prototype.hasOwnProperty.call(AGENT_REASON_TEXT, reason) ? AGENT_REASON_TEXT[reason]
+    : reason ? REASON_TEXT[reason] ?? EXEC_REASON_TEXT[reason] : undefined;
   const byCode = Object.prototype.hasOwnProperty.call(CODE_TEXT, code) ? CODE_TEXT[code as NexusErrorCode] : undefined;
   return { text: byReason ?? byCode ?? 'The request was refused.', retry: false, kind: 'refused' };
 }

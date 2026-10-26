@@ -165,9 +165,76 @@ export const READY_TO_CHECK = 'Ready to check — start a preview';
 export function jobTitle(j: Pick<JobView, 'actionId' | 'recipeId' | 'kind'>): string {
   const a = j.actionId ? getUserAction(j.actionId) : null;
   if (a) return a.label;
+  if (j.kind === 'agent.run') return 'Agent turn';
   if (j.kind === 'validate') return 'Check';
   if (j.kind === 'ingest') return 'Collect outputs';
-  return j.recipeId ?? 'Run';
+  const r = j.recipeId ? RECIPE_TITLE[j.recipeId] : undefined;
+  return r ?? j.recipeId ?? 'Run';
+}
+
+/** B2b: the plain title of the jobs the agent flow starts for itself (a raw recipe id is never a title). */
+const RECIPE_TITLE: Readonly<Record<string, string>> = Object.freeze({
+  'repo.worktree': 'Prepare the agent’s working copy', 'changeset.collect': 'Collect the change', 'changeset.merge_check': 'Check the change merges',
+  'changeset.accept': 'Accept the change', 'changeset.accept_rollback': 'Undo an accept that did not finish', 'repo.ff': 'Merge accepted work'
+});
+
+/**
+ * B2b: why a queued job waits when main holds it with a reason in `phase` (`waiting:consent`, ...): the headline alone says
+ * only "queued". No host, model or number: the setup sheet holds those.
+ */
+export const WAIT_PHASE_TEXT: Readonly<Record<string, string>> = Object.freeze({
+  'waiting:runtime': 'Waiting for the agent to be checked on this computer',
+  'waiting:consent': 'Waiting for your network permission',
+  'waiting:budget': 'Waiting for budget',
+  'waiting:rate': 'Waiting: too many agent turns this hour',
+  'waiting:approval': 'Waiting for your approval',
+  'waiting:worktree': 'Waiting for the working copy to be prepared',
+  'waiting:slots': 'Waiting for a free slot',
+  'waiting:gc': 'Waiting: stored files are being cleaned up'
+});
+/** The sentence for a waiting phase, or null (not a phase this build words). */
+export const waitPhaseText = (phase: string | null | undefined): string | null =>
+  typeof phase === 'string' && Object.prototype.hasOwnProperty.call(WAIT_PHASE_TEXT, phase) ? WAIT_PHASE_TEXT[phase] : null;
+
+/**
+ * B2b: how an agent turn reads. A turn is not a run of checks: `partial` with outcome `no_change` is "The agent made no
+ * change" (never done), and an ended turn says only that the agent ended it, never that its work is right (the change's
+ * own checks say that). `error.message` is never shown: it is runtime text.
+ */
+export const AGENT_NO_CHANGE = 'The agent made no change';
+const AGENT_FAIL_TEXT: Readonly<Record<string, string>> = Object.freeze({
+  runtime_auth: 'The agent could not sign in. Open Setup to check it',
+  limit: 'The agent stopped at one of its limits (time, tokens, tool calls or budget)',
+  runtime_protocol: 'The agent stopped after an answer Nexus could not read',
+  runtime_error: 'The agent ended without a result'
+});
+export function agentTurnHeadline(j: Pick<JobView, 'state' | 'outcome' | 'phase' | 'headline' | 'cancelRequested'>): string {
+  switch (j.state) {
+    case 'queued': case 'retry_scheduled': return waitPhaseText(j.phase) ?? (j.headline === 'queued' ? 'Queued; it starts when a slot is free' : WAITING[j.headline] ?? 'Waiting to start');
+    case 'leased': return 'Preparing the agent’s sandbox';
+    case 'awaiting_approval': return 'Waiting for your approval';
+    case 'running': return j.headline === 'waiting_for_approval' ? 'Waiting for your approval' : j.cancelRequested ? 'Stopping: cancel requested' : 'The agent is working';
+    case 'completed': return j.outcome === 'no_change' ? AGENT_NO_CHANGE : 'The agent ended its turn and registered its work';
+    case 'partial': return j.outcome === 'no_change' || j.outcome === null ? AGENT_NO_CHANGE : 'The agent’s turn ended in part';
+    case 'failed': return (j.outcome && AGENT_FAIL_TEXT[j.outcome]) || 'The agent’s turn failed';
+    case 'cancelled': return 'The agent’s turn was cancelled';
+    case 'timed_out': return 'The agent ran past its time limit';
+    case 'interrupted': return 'The agent was stopped before it ended its turn';
+    default: return `Status: ${String(j.state).replace(/_/g, ' ')}`;
+  }
+}
+
+function agentTurnRun(j: JobView): JobRunView {
+  const ended = j.state === 'completed' || j.state === 'partial';
+  const base = ended ? { stages: STAGES.map((s) => ({ ...s, state: 'done' as JobStageState })), result: null as JobResult } : stagesFor(j.headline, j.startedAt !== null);
+  const live = LIVE_STATES.includes(j.state);
+  const word = j.state === 'completed' ? 'Turn ended' : j.state === 'partial' ? (j.outcome === 'no_change' || j.outcome === null ? 'No change' : 'Ended in part')
+    : j.state === 'failed' ? 'Failed' : j.state === 'cancelled' ? 'Cancelled' : j.state === 'timed_out' ? 'Timed out' : j.state === 'interrupted' ? 'Interrupted'
+      : j.state === 'awaiting_approval' || j.headline === 'waiting_for_approval' ? 'Waiting for you' : j.state === 'running' ? 'Working'
+        : j.state === 'leased' ? 'In progress' : 'Waiting';
+  const result: JobResult = j.state === 'failed' ? 'failed_run' : j.state === 'cancelled' ? 'cancelled' : j.state === 'timed_out' ? 'timed_out' : j.state === 'interrupted' ? 'interrupted' : base.result;
+  return { id: j.id, title: jobTitle(j), headline: agentTurnHeadline(j), word, stages: base.stages, result, live, canCancel: canCancelJob(j), canRetry: false,
+    needsYou: j.state === 'awaiting_approval' || j.headline === 'waiting_for_approval', codes: [] };
 }
 
 function stagesFor(h: JobHeadline, started: boolean): { stages: JobStage[]; result: JobResult } {
@@ -209,6 +276,7 @@ const RESULT_WORD: Record<Exclude<JobResult, null>, string> = {
  * an output, or the job's own error); without it the headline stops at what the headline itself knows.
  */
 export function jobRun(j: JobView, o: { reason?: string | null; awaitingCheck?: boolean } = {}): JobRunView {
+  if (j.kind === 'agent.run') return agentTurnRun(j);
   const h = j.headline;
   const f = flavourOf(j);
   const reason = o.reason ?? (j.error ? CODE_WORDS[j.error.code] ?? j.error.message : null);
@@ -219,7 +287,8 @@ export function jobRun(j: JobView, o: { reason?: string | null; awaitingCheck?: 
   const stages = awaiting ? base.stages.map((s) => (s.id === 'validating' ? { ...s, state: 'waiting' as const } : s)) : base.stages;
   const result = base.result;
   let headline: string;
-  if (WAITING[h]) headline = WAITING[h]!;
+  if (h === 'queued' && waitPhaseText(j.phase)) headline = waitPhaseText(j.phase)!;
+  else if (WAITING[h]) headline = WAITING[h]!;
   else if (h === 'waiting_for_approval') headline = f === 'deps' ? 'Waiting for your approval to download dependencies' : 'Waiting for your approval';
   else if (h === 'provisioning') headline = 'Preparing the sandbox';
   else if (h === 'running') headline = j.cancelRequested ? 'Stopping: cancel requested' : 'Running';

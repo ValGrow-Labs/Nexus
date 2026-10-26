@@ -7,7 +7,9 @@ import type {
   JobStartArgs, JobStartView, JobView, JobsListFilter, LogPageView, NexusHint, PreviewQuery, PreviewView, SaveInlineArgs, ValidationResultView,
   ActivityPage, ActivityView, ArtifactDetail, ArtifactSummaryView, ArtifactsListFilter, HandoffDetailView, HandoffSummaryView,
   HandoffsListFilter, LineageQuery, LineageView, LinkSourcesView, NexusFail, NexusResult, ParticipationView, SaveCommitArgs,
-  SaveResultView, SaveTextFileArgs, SendHandoffArgs, SendHandoffView, VersionDetail, VersionView
+  SaveResultView, SaveTextFileArgs, SendHandoffArgs, SendHandoffView, VersionDetail, VersionView,
+  AcceptResultView, AgentConsentArgs, AgentSetupView, AgentStartArgs, AgentStartResultView, MergeView, RepoMergeArgs, RepoStatusView,
+  ReviewDecideArgs, ReviewResultView, SessionDetailView, SessionView, SessionsListFilter
 } from '@shared/nexus/ipc';
 
 const INTERNAL: NexusFail = { ok: false, code: 'internal', message: 'The request could not be completed.' };
@@ -123,6 +125,21 @@ export const nexusClient = {
   setupPrepareImage: (profile: ImageProfileArg, intentId: string): Promise<NexusResult<{ approval: ApprovalView; created: boolean }>> =>
     execCall(() => window.cth.nexusSetupPrepareImage(profile, intentId)),
   blobsGc: (args: BlobGcArgs): Promise<NexusResult<BlobGcView>> => execCall(() => window.cth.nexusBlobsGc(args)),
+  // ---------- B2b agent flow (#42-#51): ids, enums and small values only; the answers carry no host, path or token ----------
+  agentStart: (args: AgentStartArgs): Promise<NexusResult<AgentStartResultView>> => execCall(() => window.cth.nexusAgentStart(args)),
+  sessionsList: (filter: SessionsListFilter): Promise<NexusResult<SessionView[]>> => execCall(() => window.cth.nexusSessionsList(filter)),
+  sessionGet: (sessionId: string): Promise<NexusResult<SessionDetailView>> => execCall(() => window.cth.nexusSessionGet(sessionId)),
+  sessionEnd: (sessionId: string): Promise<NexusResult<SessionView>> => execCall(() => window.cth.nexusSessionEnd(sessionId)),
+  sessionCancel: (sessionId: string): Promise<NexusResult<SessionView>> => execCall(() => window.cth.nexusSessionCancel(sessionId)),
+  reviewDecide: (versionId: string, args: ReviewDecideArgs, intentId: string): Promise<NexusResult<ReviewResultView>> =>
+    execCall(() => window.cth.nexusReviewDecide(versionId, args, intentId)),
+  changeSetAccept: (versionId: string, expectedIntegrationHead: string): Promise<NexusResult<AcceptResultView>> =>
+    execCall(() => window.cth.nexusChangeSetAccept(versionId, expectedIntegrationHead)),
+  repoStatus: (projectId: string): Promise<NexusResult<RepoStatusView>> => execCall(() => window.cth.nexusRepoStatus(projectId)),
+  /** #50: main shows the real confirmation dialog; this only asks. The answer is the result sentence's source. */
+  repoMergeAccepted: (projectId: string, args: RepoMergeArgs): Promise<NexusResult<MergeView>> =>
+    execCall(() => window.cth.nexusRepoMergeAccepted(projectId, args)),
+  agentConsent: (args: AgentConsentArgs): Promise<NexusResult<AgentSetupView>> => execCall(() => window.cth.nexusAgentConsent(args)),
   /** The nexus:hint push (the newest event seq only). Returns an unsubscribe; a no-op when the preload has none. */
   onHint: (cb: (hint: NexusHint) => void): (() => void) => {
     try {

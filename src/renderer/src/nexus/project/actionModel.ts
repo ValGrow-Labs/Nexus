@@ -76,6 +76,9 @@ export function actionBar(list: readonly ActionAvailabilityView[], ctx: ActionCo
     const def = getUserAction(a.actionId);
     const step = domain.lifecycle.find((s) => s.via.some((v) => 'userAction' in v && v.userAction === a.actionId)) ?? null;
     if (!def || !step || step.status === 'FUTURE' || !isAtOrBefore(step.subPhase) || a.reason === 'future' || a.reason === 'planned') continue;
+    // B2b: an agent flow has its own channel and place (the agent panel, the change in the Folio, the Changes tool). It is
+    // never a job start, so an available one is not a button here; an unavailable one still says why, as a sentence.
+    if (a.available && 'flow' in def.run) continue;
     const inline = 'inlineKind' in def.run;
     const takesInput = def.inputs.some((s) => s.min >= 1);
     // The input slot this version fills, from the registry's own slots.
