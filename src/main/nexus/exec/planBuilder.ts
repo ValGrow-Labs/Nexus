@@ -606,7 +606,8 @@ function buildGitEnginePlan(ctx: PlanContext, base: Omit<EnginePlan, 'kind' | 't
       return plan({ engine: 'repo.worktree', repoPath, worktreePath: underDataHome(ctx.dataHomeRoot, `wt/${name}`), ref: `refs/nexus/job/${name}`,
         integrationRef: integrationRefOf(p.branch), branch: p.branch as string,
         // B6: the integration head main recorded (null: none known, so the ref is never moved).
-        expectedIntegrationHead: p.integrationBaseline === undefined || p.integrationBaseline === null ? null : commitParam(p, 'integrationBaseline') });
+        expectedIntegrationHead: p.integrationBaseline === undefined || p.integrationBaseline === null ? null : commitParam(p, 'integrationBaseline'),
+        allowRewrite: p.allowRewrite === true });
     }
     case 'changeset.collect': {
       let name = sessionName(p.sessionId);

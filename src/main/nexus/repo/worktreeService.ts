@@ -35,7 +35,7 @@ import { PlatformError } from '../errors';
 import type { JobService } from '../jobs/jobService';
 import { appendJobEventTx } from '../exec/events';
 import { GIT_BRANCH_RE, sessionName } from '../exec/planBuilder';
-import { integrationBaseline } from './integrationBaseline';
+import { integrationBaseline, rewriteAllowed } from './integrationBaseline';
 
 /** How long an A3 request waits for its answer (as every approval: 15 minutes). */
 export const A3_TTL_MS = 15 * 60_000;
@@ -232,7 +232,9 @@ export class WorktreeService {
       kind: 'tool.run', projectId: s.project_id, workspaceId: s.workspace_id, sessionId: s.id, parentJobId: turn.id,
       idempotencyKey: `repo.worktree:${s.id}:${seq}`, recipeId: recipe.id,
       // B6: the integration head Nexus recorded (null: none yet). The runner may move the ref forward to the user's branch only from it.
-      params: { sessionId: s.id, branch, integrationBaseline: integrationBaseline(this.db, s.project_id, `refs/nexus/accepted/${branch}`).head },
+      // `allowRewrite`: nothing was accepted after that head, so the user's amend, rebase or reset may move the ref (computed here, from records).
+      params: { sessionId: s.id, branch, integrationBaseline: integrationBaseline(this.db, s.project_id, `refs/nexus/accepted/${branch}`).head,
+        allowRewrite: rewriteAllowed(this.db, s.project_id, `refs/nexus/accepted/${branch}`) },
       retry: { ...WORKTREE_RETRY, backoffMs: [...WORKTREE_RETRY.backoffMs] }
     });
     const cap = { action: 'system.repo.worktree', recipe: recipe.id, recipeVersion: recipe.version, executor: recipe.executor, network: recipe.network, profile: null };

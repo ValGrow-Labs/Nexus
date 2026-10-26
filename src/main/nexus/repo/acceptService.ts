@@ -52,7 +52,7 @@ import type { ValidationService } from '../validation/validationService';
 import * as appliesCleanly from '../validation/validators/appliesCleanly';
 import type { GitRead } from './gitRead';
 import { enqueueAcceptRollbackTx, endedAcceptJobIds, rollbackNeeded } from './acceptRollback';
-import { integrationBaseline } from './integrationBaseline';
+import { integrationBaseline, rollbackOutstanding as rollbackOutstandingFor } from './integrationBaseline';
 
 export const ACCEPT_WAIT_MS = 120_000;
 const POLL_MS = 25;
@@ -325,14 +325,7 @@ export class AcceptService {
 
   /** True while an accept's rollback for this project and branch is owed: queued, running, failed or not yet queued. */
   private rollbackOutstanding(projectId: string, branch: string): boolean {
-    const open = this.db.prepare(`SELECT 1 FROM jobs WHERE recipe_id = 'changeset.accept_rollback' AND project_id = ? AND state <> 'completed'
-      AND json_extract(params_json, '$.branch') = ? LIMIT 1`).get(projectId, branch);
-    if (open) return true;
-    for (const id of endedAcceptJobIds(this.db)) {
-      const n = rollbackNeeded(this.db, id);
-      if (n && n.job.project_id === projectId && n.branch === branch) return true;
-    }
-    return false;
+    return rollbackOutstandingFor(this.db, projectId, branch);
   }
 
   // ---------- status (O25) ----------
@@ -366,7 +359,8 @@ export class AcceptService {
     return { branch, integrationRef, integrationHead: r.integrationHead, checkedOutBranch: r.branch, head: r.head, acceptedNotMerged: pending,
       commitCount: r.acceptedNotMerged, fastForward: r.fastForward, userTreeClean: !r.dirty, integrationConsistent: this.consistent(projectId, integrationRef, r.integrationHead),
       // Both sides have commits the other lacks: the integration ref cannot move forward to the branch, nor the branch to it (B6).
-      integrationDiverged: r.integrationHead !== null && r.head !== null && r.acceptedNotMerged > 0 && !r.fastForward,
+      // Only accepted work that waits can make it a divergence (with nothing accepted a rewritten branch is simply resynced).
+      integrationDiverged: r.integrationHead !== null && r.head !== null && pending > 0 && !r.fastForward,
       lastAcceptedHead: last?.ref_after ?? null };
   }
 

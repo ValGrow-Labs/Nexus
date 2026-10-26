@@ -274,7 +274,9 @@ export type EngineTask =
    * the integration head, then runs `worktree add --detach` and `worktree lock`.
    */
   /** `expectedIntegrationHead`: the integration head main RECORDED (B6): the ref may be moved forward from it to the user's branch head. */
-  | { engine: 'repo.worktree'; repoPath: string; worktreePath: string; ref: string; integrationRef: string; branch: string; expectedIntegrationHead?: string | null }
+  | { engine: 'repo.worktree'; repoPath: string; worktreePath: string; ref: string; integrationRef: string; branch: string; expectedIntegrationHead?: string | null;
+      /** B6: main's own verdict that nothing was accepted after the recorded head, so a rewritten branch may replace the ref. */
+      allowRewrite?: boolean }
   /** Commits the worktree's changes within `scope` on `ref` (sizes capped); refuses links, nested repositories and gitlinks. */
   | { engine: 'changeset.collect'; repoPath: string; worktreePath: string; gitDir: string; ref: string; integrationRef: string;
       scope: string[]; message: string; maxFileBytes: number; maxTotalBytes: number }

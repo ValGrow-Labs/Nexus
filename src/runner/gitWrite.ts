@@ -273,6 +273,8 @@ export interface WorktreeFacts {
    * (activity row `repo.integration_resync`) in the same ingest. Absent from an older runner: no resync.
    */
   integrationResynced?: boolean; integrationBefore?: string | null;
+  /** The resync was a REWRITE (the branch head does not descend from the old ref: the user amended, rebased or reset); main allowed it. */
+  integrationRewrite?: boolean;
   /** The user's branch head the task saw. */
   branchHead?: string;
 }
@@ -291,11 +293,13 @@ export interface WorktreeFacts {
  *   attempt of this job moved it and died before main recorded it; it is reported again (no write), so main records it now;
  * - the branch head is an ancestor of the ref (accepted work still waits to be merged): nothing is touched;
  * - neither is an ancestor of the other (`integration_diverged`): nothing is touched and the task refuses, so the turn says so
- *   instead of starting from code that is not the user's.
+ *   instead of starting from code that is not the user's. EXCEPT a REWRITE: when main says nothing was accepted after the recorded
+ *   head (`t.allowRewrite`), the user's amend, rebase or reset is theirs to make, so the ref is moved to the new branch head by the
+ *   same compare-and-swap from the recorded value and reported (`integrationRewrite`).
  * The ref only ever moves forward along the user's own history; it never takes an accept's or an agent's commit.
  */
 export async function ensureWorktree(g: HardenedGit, t: { repoPath: string; worktreePath: string; ref: string; integrationRef: string; branch: string;
-  expectedIntegrationHead?: string | null },
+  expectedIntegrationHead?: string | null; allowRewrite?: boolean },
   o: { dataRoot: string; signal?: AbortSignal; fs?: typeof fsp }): Promise<WorktreeFacts> {
   const fs = o.fs ?? fsp;
   if (!BRANCH_RE.test(t.branch) || t.integrationRef !== `refs/nexus/accepted/${t.branch}` || !isNexusRef(t.ref, 'job')) {
@@ -323,6 +327,7 @@ export async function ensureWorktree(g: HardenedGit, t: { repoPath: string; work
   }
   let integrationResynced = false;
   let integrationBefore: string | null = null;
+  let integrationRewrite = false;
   if (!integrationCreated) {
     const isAncestor = async (a: string, b: string): Promise<boolean> => {
       const r = await g.run(repo, ['merge-base', '--is-ancestor', a, b], { neutral: n, signal: o.signal });
@@ -330,19 +335,33 @@ export async function ensureWorktree(g: HardenedGit, t: { repoPath: string; work
       return r.code === 0;
     };
     const expected = typeof t.expectedIntegrationHead === 'string' && COMMIT_RE.test(t.expectedIntegrationHead) ? t.expectedIntegrationHead : null;
+    // Main allows a REWRITE only when nothing was accepted after the recorded head (it computes that from its own records, never from
+    // the agent): then the branch head may replace the ref even when it does not descend from it (the user amended, rebased or reset).
+    const allowRewrite = t.allowRewrite === true && expected !== null;
     const same = integrationHead === head;
-    if (same || await isAncestor(integrationHead, head)) {
-      if (!same && expected !== null && integrationHead === expected) {
+    if (same) {
+      // The ref is the branch head. If main's record is older, an earlier attempt moved it and died before the record: report it again.
+      if (expected !== null && integrationHead !== expected) {
+        if (await isAncestor(expected, integrationHead)) { integrationBefore = expected; integrationResynced = true; }
+        else if (allowRewrite) { integrationBefore = expected; integrationResynced = true; integrationRewrite = true; }
+      }
+    } else if (expected !== null && integrationHead === expected) {
+      const forward = await isAncestor(integrationHead, head);
+      if (forward || allowRewrite) {
         if (await updateRefCas(g, repo, n, t.integrationRef, head, integrationHead, o.signal)) {
-          integrationBefore = integrationHead; integrationHead = head; integrationResynced = true;
+          integrationBefore = integrationHead; integrationHead = head; integrationResynced = true; integrationRewrite = !forward;
         } else {
           const again = await resolveRef(g, repo, n, t.integrationRef, o.signal);
           if (!again) throw new GitFailure('git_failed', 'the integration ref disappeared');
           integrationHead = again;
         }
-      } else if (expected !== null && integrationHead !== expected && await isAncestor(expected, integrationHead)) {
-        integrationBefore = expected; integrationResynced = true;
+      } else if (!(await isAncestor(head, integrationHead))) {
+        throw new GitFailure('integration_diverged', 'the integration ref and the branch have both moved on');
       }
+      // else: the ref is ahead of the branch (accepted work waits to be merged): nothing is touched.
+    } else if (await isAncestor(integrationHead, head)) {
+      // Not where main recorded it, but on the branch: moved forward from the recorded head by an earlier attempt that died first.
+      if (expected !== null && await isAncestor(expected, integrationHead)) { integrationBefore = expected; integrationResynced = true; }
     } else if (!(await isAncestor(head, integrationHead))) {
       throw new GitFailure('integration_diverged', 'the integration ref and the branch have both moved on');
     }
@@ -378,7 +397,7 @@ export async function ensureWorktree(g: HardenedGit, t: { repoPath: string; work
     if (lock.code !== 0 && !(await isLocked(g, repo, n, t.worktreePath, o.signal))) throw new GitFailure('git_failed', 'the worktree could not be locked');
   }
   return { ok: true, integrationHead, integrationCreated, ref: t.ref, base, worktree: `wt/${name}`, locked: true, reused, branchHead: head,
-    ...(integrationResynced ? { integrationResynced: true, integrationBefore } : {}) };
+    ...(integrationResynced ? { integrationResynced: true, integrationBefore, ...(integrationRewrite ? { integrationRewrite: true } : {}) } : {}) };
 }
 
 /** Whether `git worktree list --porcelain` shows the worktree at `p` locked. */

@@ -128,8 +128,8 @@ import {
 } from './attempts';
 import { appendJobEventTx, toJobEvent, type JobEvent, type JobEventRow } from './events';
 import { enqueueAcceptRollbackTx, preparedOf, rollbackNeeded } from '../repo/acceptRollback';
-/** The git jobs a user (or anyone) cannot cancel through `cancel`: they move the integration ref or the user's branch and end only through ingest (B5). */
-export const NOT_CANCELLABLE_RECIPES: readonly string[] = Object.freeze(['changeset.accept', 'changeset.accept_rollback', 'repo.ff']);
+/** The git jobs a user (or anyone) cannot cancel through `cancel`, nor any cascade: they move a Nexus ref or the user's branch and end only through ingest (B5). */
+export const NOT_CANCELLABLE_RECIPES: readonly string[] = Object.freeze(['changeset.accept', 'changeset.accept_rollback', 'repo.ff', 'repo.worktree']);
 import {
   AGENT_TURN_MEMORY_MB, boundedRecord, buildPlan, depsVolumeName, imageRef, lockfileSha256Of, RECORD_MAX_CHARS, sandboxRecord, underDataHome,
   type DiagnoseContext, type PlanApproval, type PlanInput, type ServiceContext
@@ -2804,6 +2804,9 @@ export class ExecutionService {
     error?: { code: string; message: string }): void {
     const j = this.row(id)!;
     if (TERMINAL_JOB_STATES.has(j.state)) return;
+    // The git jobs that move a Nexus ref or the user's branch end only through ingest (a worktree job moves the integration ref and
+    // records it in the same transaction): no cascade (a turn cancelled, a permission revoked, a session or participation ended) stops them.
+    if (j.recipe_id !== null && NOT_CANCELLABLE_RECIPES.includes(j.recipe_id)) return;
     if (j.cancel_requested_at === null) this.db.prepare('UPDATE jobs SET cancel_requested_at = ?, updated_at = ? WHERE id = ?').run(now, now, id);
     const a = liveAttemptOf(this.db, id);
     if (a) {

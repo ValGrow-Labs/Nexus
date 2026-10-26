@@ -18,41 +18,7 @@ const { mergeDialogOptions } = loadTs('src/main/nexusExec/mergeDialog.ts');
 const { GIT_FAILURE_TEXT } = loadTs('src/main/nexus/exec/recovery.ts');
 const { previewComplete } = loadTs('src/main/nexus/review/reviewService.ts');
 const { versionViewOfKind } = loadTs('src/main/nexusIpc/dto.ts');
-const REF = 'refs/nexus/accepted/main';
-const baselineOf = (world) => integrationBaseline(world.w.db, PROJECT, REF);
-
-/** A second agent session on the same project: its worktree job is queued with the recorded head, then the runner's real engine runs it. */
-async function secondSession(world, o = {}) {
-  const { w, g } = world;
-  const turn2 = openRunningTurn(w.db, w.nx, { repoPath: world.repo });
-  const name2 = turn2.session.id.toLowerCase();
-  const wt2 = path.join(world.home, 'wt', name2);
-  const baseline = o.baseline !== undefined ? o.baseline : baselineOf(world).head;
-  const res = immediateTx(w.db, () => w.nx.jobs.createTx(w.sys, { kind: 'tool.run', projectId: PROJECT, workspaceId: WORKSPACE, idempotencyKey: `wt-${name2}-${ulid()}`,
-    recipeId: 'repo.worktree', params: { sessionId: turn2.session.id, branch: 'main', integrationBaseline: baseline } }));
-  const sub = { ...world, turn: turn2, name: name2, wt: wt2 };
-  sub.service = new ChangeSetService(w.db, { jobs: w.nx.jobs, system: w.sys, now: () => w.clock.t, waitMs: 60_000 });
-  const run = async () => {
-    const attempt = leaseAndRun(w, res.job.id);
-    try {
-      const f = await ensureWorktree(g, { repoPath: world.repo, worktreePath: wt2, ref: `refs/nexus/job/${name2}`, integrationRef: REF, branch: 'main',
-        expectedIntegrationHead: JSON.parse(jobRow(w, res.job.id).params_json).integrationBaseline }, { dataRoot: world.home });
-      if (o.crash) return { facts: f, crashed: true };
-      finish(turn2, attempt, { parsed: [gitFacts(f)] });
-      return { facts: f };
-    } catch (e) {
-      if (!(e instanceof GitFailure)) throw e;
-      finish(turn2, attempt, { code: 1, parsed: [gitRefused(e.code)] });
-      return { refused: e.code };
-    }
-  };
-  return { sub, turn2, job: res.job, run, name: name2, wt: wt2 };
-}
-const resyncRows = (w) => w.db.prepare("SELECT details_json, actor_kind FROM activity WHERE action = 'repo.integration_resync' ORDER BY seq").all();
-function userCommits(world, file = 'mine.txt', text = 'mine\n') {
-  fs.writeFileSync(path.join(world.repo, file), text); git(world.repo, ['add', file]); git(world.repo, ['commit', '-q', '-m', `user ${file}`]);
-  return out(world.repo, ['rev-parse', 'HEAD']);
-}
+const { REF, baselineOf, secondSession, resyncRows, userCommits } = W;
 
 test('RB1 (B6): after a merge the user commits; the next session resyncs the integration ref, sees the commit, and a second full cycle accepts and fast-forwards', async () => {
   const world = await acceptedWorld();
