@@ -91,6 +91,13 @@ export interface VersionView {
    * made (ISO time), or null when it was never reviewed. No comment text, no reviewer id. Accept is offered only for `approve`.
    */
   latestReview?: { decision: ReviewDecision; decidedAt: string } | null;
+  /**
+   * B2b A1, change sets only (absent for every other kind): whether Nexus's own preview shows the WHOLE change. Only an explicit
+   * `true` is complete (a version with no record of it is not); `previewReason` says why not, as a closed code. An approval is
+   * refused (`preview_incomplete`) unless this is true; asking for changes and rejecting never are.
+   */
+  previewComplete?: boolean;
+  previewReason?: 'hidden_lines' | 'too_large' | 'truncated' | 'unknown' | null;
 }
 /** What a version holds: the commit of a git version, the text of a saved text file, a receipt's handoff. */
 export type VersionContent =

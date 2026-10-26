@@ -27,6 +27,7 @@ import { newId } from '../db/ids';
 import { PlatformError } from '../errors';
 import type { JobService } from '../jobs/jobService';
 import { enqueueAcceptRollbackTx, preparedOf } from '../repo/acceptRollback';
+import { integrationBaseline, RESYNC_ACTION } from '../repo/integrationBaseline';
 import * as appliesCleanly from '../validation/validators/appliesCleanly';
 import type { ValidationService } from '../validation/validationService';
 import type { IngestContext, IngestDecision } from './executionService';
@@ -116,6 +117,29 @@ export function acceptIngestTx(d: AcceptIngestDeps, ctx: IngestContext): IngestD
     versionId, entityType: 'artifact_version', entityId: versionId, action: 'changeset.accept', status: 'failed', details: { reason: 'rolled_back', why: reason } }, now);
   return refuse('accept_rolled_back', 'accept_rolled_back',
     'The accept could not be recorded, so the accepted branch was put back as it was. The change is still waiting for you.');
+}
+
+/**
+ * `repo.worktree` (B6): the integration ref was moved forward to a commit on the user's own branch. Returns null when nothing
+ * was reported or the record is written (or already is: idempotent), else a refusal. The record is ONE `repo.integration_resync`
+ * activity row, `{ branch, before, after }` (commit ids only), the baseline `integrationBaseline` reads next. The facts must
+ * start from the head main recorded (`before`), so a ref moved any other way is never taken as the baseline. A refusal leaves the
+ * ref where the runner put it; the next worktree job finds it moved forward from the recorded head and records it then.
+ */
+export function resyncRecordTx(d: AcceptIngestDeps, ctx: IngestContext, f: Record<string, unknown>, branch: string): IngestDecision | null {
+  if (f.integrationResynced !== true) return null;
+  const before = commitOf(f.integrationBefore); const after = commitOf(f.integrationHead); const branchHead = commitOf(f.branchHead);
+  if (!before || !after || !branchHead || before === after) return refuse('invalid_output', 'parser_contract', 'the integration resync facts were not usable');
+  const ref = `refs/nexus/accepted/${branch}`;
+  const base = integrationBaseline(d.db, ctx.job.project_id, ref);
+  if (base.known && base.head === after) return null;
+  if (!base.known || base.head !== before) {
+    return refuse('invalid_output', 'resync_mismatch', 'the integration branch moved from a commit Nexus had not recorded, so it was not taken as the new baseline');
+  }
+  appendActivityRow(d.db, { actorKind: ctx.system.kind, actorId: ctx.system.id, onBehalfOf: ctx.job.on_behalf_of, jobId: ctx.job.id, attemptN: ctx.attempt.n,
+    projectId: ctx.job.project_id, workspaceId: ctx.job.workspace_id, entityType: 'integration_ref', entityId: ref, action: RESYNC_ACTION, status: 'succeeded',
+    details: { branch, before, after } }, d.now());
+  return null;
 }
 
 /** `changeset.accept_rollback`: the facts must name the move the job was queued for. */

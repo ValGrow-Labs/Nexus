@@ -52,6 +52,7 @@ import type { ValidationService } from '../validation/validationService';
 import * as appliesCleanly from '../validation/validators/appliesCleanly';
 import type { GitRead } from './gitRead';
 import { enqueueAcceptRollbackTx, endedAcceptJobIds, rollbackNeeded } from './acceptRollback';
+import { integrationBaseline } from './integrationBaseline';
 
 export const ACCEPT_WAIT_MS = 120_000;
 const POLL_MS = 25;
@@ -81,6 +82,12 @@ export interface AcceptStatus {
   fastForward: boolean; userTreeClean: boolean;
   /** O25: the integration head is the newest accept's `ref_after`, or the initial head while nothing was accepted. */
   integrationConsistent: boolean;
+  /**
+   * B6: the integration ref and the user's branch have each moved on from a common commit (the branch got commits, and accepted work
+   * still waits): no resync can happen and "Merge accepted work" cannot fast-forward. A new agent turn then refuses with the
+   * reason `integration_diverged`.
+   */
+  integrationDiverged: boolean;
   /** The newest accept's `ref_after`: the commit "Merge accepted work" would merge (null: nothing accepted yet). */
   lastAcceptedHead: string | null;
 }
@@ -335,19 +342,15 @@ export class AcceptService {
       .get(projectId, integrationRef) as { ref_after: string } | undefined) ?? null;
   }
 
-  /** The integration head Nexus first recorded: the base of the project's first worktree (nothing was accepted then). */
-  private initialHead(projectId: string, integrationRef: string): string | null {
-    return (this.db.prepare('SELECT base_commit FROM session_worktrees WHERE project_id = ? AND integration_ref = ? ORDER BY created_at, rowid LIMIT 1')
-      .get(projectId, integrationRef) as { base_commit: string } | undefined)?.base_commit ?? null;
-  }
-
+  /**
+   * O25: the integration head is the RECORDED head (integrationBaseline.ts: the end of the chain of the initial head, the accepts and
+   * the resyncs). A ref that is not there, or a chain that is unknown or forks, is never consistent; a missing ref is consistent
+   * only while nothing was ever accepted or resynced.
+   */
   private consistent(projectId: string, integrationRef: string, integrationHead: string | null): boolean {
-    const last = this.lastAccept(projectId, integrationRef);
-    if (integrationHead === null) return last === null;
-    if (last) return integrationHead === last.ref_after;
-    // Nothing accepted: the initial head must be known and equal (no record of one is not consistency).
-    const initial = this.initialHead(projectId, integrationRef);
-    return initial !== null && integrationHead === initial;
+    const b = integrationBaseline(this.db, projectId, integrationRef);
+    if (integrationHead === null) return !b.records.some((r) => r.kind !== 'initial');
+    return b.known && b.head === integrationHead;
   }
 
   private async readStatus(projectId: string, branch: string | null): Promise<AcceptStatus> {
@@ -362,6 +365,8 @@ export class AcceptService {
     const pending = r.acceptedNotMerged === 0 ? 0 : this.acceptsSinceMerge(projectId, branch, integrationRef, 1).count;
     return { branch, integrationRef, integrationHead: r.integrationHead, checkedOutBranch: r.branch, head: r.head, acceptedNotMerged: pending,
       commitCount: r.acceptedNotMerged, fastForward: r.fastForward, userTreeClean: !r.dirty, integrationConsistent: this.consistent(projectId, integrationRef, r.integrationHead),
+      // Both sides have commits the other lacks: the integration ref cannot move forward to the branch, nor the branch to it (B6).
+      integrationDiverged: r.integrationHead !== null && r.head !== null && r.acceptedNotMerged > 0 && !r.fastForward,
       lastAcceptedHead: last?.ref_after ?? null };
   }
 

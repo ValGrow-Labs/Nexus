@@ -84,7 +84,12 @@ export type LatestReview = { decision: 'approve' | 'request_changes' | 'reject';
 export function versionViewOfKind(kind: string, v: ArtifactVersion, latest?: LatestReview): VersionView {
   const view = versionView(v);
   if (kind !== 'change_set') return view;
-  return { ...view, latestReview: latest && Number.isFinite(latest.decidedAt) ? { decision: latest.decision, decidedAt: new Date(latest.decidedAt).toISOString() } : null };
+  const m = isObj(v.metadata) ? v.metadata : {};
+  const complete = m.previewComplete === true;
+  const reason = m.previewReason;
+  return { ...view, latestReview: latest && Number.isFinite(latest.decidedAt) ? { decision: latest.decision, decidedAt: new Date(latest.decidedAt).toISOString() } : null,
+    previewComplete: complete,
+    previewReason: complete ? null : reason === 'hidden_lines' || reason === 'too_large' || reason === 'truncated' ? reason : 'unknown' };
 }
 
 export function lineageNodeView(n: LineageNode): LineageNodeView {

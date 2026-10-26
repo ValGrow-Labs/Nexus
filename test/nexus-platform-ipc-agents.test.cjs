@@ -67,8 +67,12 @@ function world(o = {}) {
 const grant = (w, caps) => w.x.ok('nexus:agent:consent', { op: 'grant', ...(caps ? { caps } : {}) });
 const startArgs = (o = {}) => ({ projectId: PROJECT, workspaceId: WS, sessionId: null, focusVersionIds: [], message: 'add a ledger export', intentId: intent(), ...o });
 
-/** A change set version in the given status (a git head, its recorded base and branch in metadata, like Task 8 writes it). */
-function addChangeSet(w, { status = 'draft', kind = 'change_set', storage = { kind: 'git', commit: HEAD }, metadata = { base: BASE, branch: 'main', title: 'Add a thing' } } = {}) {
+/**
+ * A change set version in the given status (a git head, its recorded base and branch in metadata, like Task 8 writes it). The default
+ * metadata says its preview is COMPLETE (`previewComplete: true`, which ingest always writes): approval is refused without it, so the
+ * fixtures that need an approval carry it, and the ones that test the refusal override it.
+ */
+function addChangeSet(w, { status = 'draft', kind = 'change_set', storage = { kind: 'git', commit: HEAD }, metadata = { base: BASE, branch: 'main', title: 'Add a thing', previewComplete: true } } = {}) {
   const pw = w.nx.workspaces.primaryOf(w.me, PROJECT);
   const art = require('./load-ts.cjs')('src/main/nexus/db/ids.ts').newId(w.clock.t + Math.floor(Math.random() * 1000));
   w.db.prepare(`INSERT INTO artifacts (id, project_id, kind, name, description, owner_scope, owner_participation_id, owner_workspace_id,
@@ -1076,4 +1080,32 @@ test('LP1 a late runtimes message records only the runtimes: it never overwrites
   off.advance(10_000);
   off.runner.report({ ...sandbox('27.0.0'), runtimes: [okRuntime()] });
   assert.equal(off.nx.exec.health().docker.version, '28.0.0');
+});
+
+test('PV1 (A1) approval over IPC is refused (preview_incomplete) for a change set whose preview is false or not recorded, allowed when true; the other decisions are never blocked; the view carries previewComplete and previewReason', async () => {
+  const w = world();
+  const base = { base: BASE, branch: 'main', title: 'Add a thing' };
+  const absent = addChangeSet(w, { status: 'candidate', metadata: { ...base } });
+  const falsy = addChangeSet(w, { status: 'candidate', metadata: { ...base, previewComplete: false, previewReason: 'hidden_lines', previewHiddenLines: 2 } });
+  const odd = addChangeSet(w, { status: 'candidate', metadata: { ...base, previewComplete: 'true' } });
+  const fine = addChangeSet(w, { status: 'candidate' });
+  for (const id of [absent, falsy, odd]) {
+    const r = await w.x.refused('nexus:review:decide', [id, { decision: 'approve' }, intent()], 'conflict', { reason: 'preview_incomplete' });
+    assert.equal(r.message, REASON_MESSAGES.preview_incomplete);
+    assert.match(REASON_MESSAGES.preview_incomplete, /hidden or too large/);
+    assert.equal(w.db.prepare('SELECT COUNT(*) n FROM reviews WHERE version_id = ?').get(id).n, 0, 'nothing recorded');
+  }
+  await w.x.ok('nexus:review:decide', falsy, { decision: 'reject', comment: 'not reviewable' }, intent());
+  const rc = await w.x.call('nexus:review:decide', absent, { decision: 'request_changes', comment: 'smaller, please' }, intent());
+  assert.notEqual(rc.reason, 'preview_incomplete', 'asking for changes is never blocked by the preview');
+  assert.equal((await w.x.ok('nexus:review:decide', fine, { decision: 'approve' }, intent())).review.decision, 'approve');
+  const view = async (id) => (await w.x.ok('nexus:version:get', id));
+  const f = await view(fine); const x = await view(falsy); const a = await view(absent); const o = await view(odd);
+  assert.deepEqual([f.previewComplete, f.previewReason], [true, null]);
+  assert.deepEqual([x.previewComplete, x.previewReason], [false, 'hidden_lines']);
+  assert.deepEqual([a.previewComplete, a.previewReason], [false, 'unknown'], 'not recorded is not complete');
+  assert.deepEqual([o.previewComplete, o.previewReason], [false, 'unknown']);
+  const repo = addChangeSet(w, { kind: 'repository', status: 'candidate', metadata: { profile: 'sde-node', branch: 'main', lockfile: { sha256: 'a'.repeat(64) } } });
+  const r = await view(repo);
+  assert.ok(!('previewComplete' in r) && !('previewReason' in r), 'other kinds have no such field');
 });

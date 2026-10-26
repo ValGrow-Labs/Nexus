@@ -85,7 +85,7 @@ import * as secretEntropyNotes from '../validation/validators/secretEntropyNotes
 import * as appliesCleanly from '../validation/validators/appliesCleanly';
 import * as csTestsPass from '../validation/validators/csTestsPass';
 import type { JobService } from '../jobs/jobService';
-import { acceptIngestTx, forwardIngestTx, rollbackIngestTx, type AcceptIngestDeps } from './acceptIngest';
+import { acceptIngestTx, forwardIngestTx, resyncRecordTx, rollbackIngestTx, type AcceptIngestDeps } from './acceptIngest';
 
 export type { AttemptExited };
 
@@ -345,6 +345,9 @@ export class IngestService implements IngestPort {
     }
     const hasTable = !!this.db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'session_worktrees'").get();
     if (!hasTable) return refuse('ingest_unavailable', 'v10_missing', 'session worktrees are not recorded in this database yet');
+    // B6: the runner moved the integration ref forward to the user's branch (or found it moved): that is RECORDED here, in this transaction.
+    const resync = resyncRecordTx(this.acceptDeps(), ctx, f, branch);
+    if (resync) return resync;
     const prior = this.db.prepare('SELECT * FROM session_worktrees WHERE session_id = ?').get(sessionId) as
       { rel_path: string; ref: string; integration_ref: string; base_commit: string; removed_at: number | null } | undefined;
     if (prior) {

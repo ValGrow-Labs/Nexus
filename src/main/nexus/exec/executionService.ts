@@ -127,6 +127,9 @@ import {
   attemptRow, HEARTBEAT_GAP_MS, LEASE_MS, heartbeatTx, insertAttemptTx, liveAttemptOf, MAX_ENVIRONMENT_JSON_CHARS, transitionAttemptTx, type AttemptRow
 } from './attempts';
 import { appendJobEventTx, toJobEvent, type JobEvent, type JobEventRow } from './events';
+import { enqueueAcceptRollbackTx, preparedOf, rollbackNeeded } from '../repo/acceptRollback';
+/** The git jobs a user (or anyone) cannot cancel through `cancel`: they move the integration ref or the user's branch and end only through ingest (B5). */
+export const NOT_CANCELLABLE_RECIPES: readonly string[] = Object.freeze(['changeset.accept', 'changeset.accept_rollback', 'repo.ff']);
 import {
   AGENT_TURN_MEMORY_MB, boundedRecord, buildPlan, depsVolumeName, imageRef, lockfileSha256Of, RECORD_MAX_CHARS, sandboxRecord, underDataHome,
   type DiagnoseContext, type PlanApproval, type PlanInput, type ServiceContext
@@ -879,7 +882,13 @@ export class ExecutionService {
 
   private onEvent(m: Extract<RunnerToMain, { op: 'attempt.event' }>): void {
     const a = this.ownAttempt(m.op, m.attemptId); if (!a) return;
-    if (a.state !== 'starting' && a.state !== 'running') { this.drop(m.op, `attempt is ${a.state}`); return; }
+    if (a.state !== 'starting' && a.state !== 'running') {
+      // B5: an accept's `accept.prepared` is the marker that the integration ref may have moved. It is kept WHATEVER the attempt's
+      // state (main's wall clock or a cancel can end the attempt after the runner passed `onPrepared` and before the event
+      // arrives), never dropped; every other late event is.
+      if (m.event.t === 'accept.prepared' && this.persistLateAcceptPrepared(a, m.event)) return;
+      this.drop(m.op, `attempt is ${a.state}`); return;
+    }
     const last = this.lastSeq.get(a.id);
     if (last !== undefined && m.seq <= last) { this.drop(m.op, `seq ${m.seq} is not after ${last}`); return; }
     this.lastSeq.set(a.id, m.seq);
@@ -897,6 +906,35 @@ export class ExecutionService {
           : ev.t === 'egress.truncated' ? { seq: m.seq, egressTruncated: { count: ev.count } }
           : { seq: m.seq, egress: { decision: ev.decision, host: ev.host, port: ev.port, reason: ev.reason } } }, now);
     });
+  }
+
+  /**
+   * B5: records the `accept.prepared` of a `changeset.accept` attempt that already ended (same boot: `ownAttempt` checked it) as
+   * the one progress event rollbackNeeded reads, and, when the job has ended too, queues the rollback in the same transaction
+   * (an accept is never retried and never merged later). Idempotent: the same move is recorded once. False for any other job.
+   */
+  private persistLateAcceptPrepared(a: AttemptRow, ev: { old: string; new: string }): boolean {
+    const j = this.row(a.job_id);
+    if (!j || j.recipe_id !== 'changeset.accept') return false;
+    const now = this.deps.now();
+    try {
+      immediateTx(this.db, () => {
+        const have = preparedOf(this.db, j.id);
+        if (have && have.old === ev.old && have.new === ev.new) return;
+        appendJobEventTx(this.db, { type: 'attempt.progress', projectId: j.project_id, jobId: j.id, attemptN: a.n,
+          summary: `attempt ${a.n}: accept prepared ${ev.old.slice(0, 12)} to ${ev.new.slice(0, 12)} (reported after the attempt ended)`,
+          data: { seq: 0, acceptPrepared: { old: ev.old, new: ev.new }, late: true } }, now);
+        const n = rollbackNeeded(this.db, j.id);
+        if (n) {
+          enqueueAcceptRollbackTx(this.db, this.deps.jobs, this.system(), now, { jobId: n.job.id, projectId: n.job.project_id,
+            workspaceId: n.job.workspace_id, branch: n.branch, versionId: n.versionId, move: n.move });
+        }
+      });
+    } catch (e) {
+      // The marker is the safety record: a failure to keep it is said, not swallowed (the next reconcile pass finds nothing else).
+      this.log(`[nexus] exec: a late accept.prepared was not recorded (${e instanceof PlatformError ? e.code : (e as Error)?.name ?? 'error'})`);
+    }
+    return true;
   }
 
   private onHeartbeat(m: Extract<RunnerToMain, { op: 'attempt.heartbeat' }>): void {
@@ -2742,6 +2780,11 @@ export class ExecutionService {
     this.requireAvailable();
     const j = this.load(p, jobId, 'job.cancel');
     if (TERMINAL_JOB_STATES.has(j.state)) throw new PlatformError('illegal_transition', `a ${j.state} job cannot be cancelled`, { from: j.state });
+    // B5: the git jobs that move the integration ref or the user's branch are Nexus's own steps, never stopped from outside: a
+    // cancel between the runner's `update-ref` and the ingest would leave the ref moved with nothing recorded.
+    if (j.recipe_id !== null && NOT_CANCELLABLE_RECIPES.includes(j.recipe_id)) {
+      throw new PlatformError('conflict', "this step is Nexus's own and cannot be stopped from here", { reason: 'not_cancellable' });
+    }
     const now = this.deps.now();
     const toCancel: { attemptId: string; reason: CancelReason }[] = [];
     immediateTx(this.db, () => {

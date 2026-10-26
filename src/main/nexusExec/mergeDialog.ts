@@ -15,6 +15,7 @@ export const MERGE_BUTTONS = ['Cancel', 'Merge'] as const;
 export const MERGE_CONFIRM_INDEX = 1;
 const MAX_LISTED = 10;
 const MAX_TITLE = 100;
+/** A title is the agent's own text: it is always shown inside `Agent's title: "..."`, so it cannot pass for Nexus's own wording. */
 
 export interface MergeDialogOptions {
   type: 'question'; title: string; message: string; detail: string; buttons: string[]; defaultId: number; cancelId: number; noLink: true;
@@ -32,7 +33,7 @@ export function mergeDialogOptions(info: MergeConfirmInfo): MergeDialogOptions {
   // integration ref: its own and the accept commit). `commitCount` only stands in when no change is listed.
   const count = info.accepted.length > 0 ? info.accepted.length : Number.isSafeInteger(info.commitCount) && info.commitCount >= 0 ? info.commitCount : 0;
   const branch = line(info.branch, 80);
-  const listed = info.accepted.slice(0, MAX_LISTED).map((a) => `• ${line(a.title, MAX_TITLE) || 'Agent change'} (${short(a.mergeCommit)})`);
+  const listed = info.accepted.slice(0, MAX_LISTED).map((a) => `• Agent's title: "${line(a.title, MAX_TITLE) || 'Agent change'}" (${short(a.mergeCommit)})`);
   const more = info.accepted.length > MAX_LISTED ? [`… and ${info.accepted.length - MAX_LISTED} more`] : [];
   const detail = [
     `Your branch "${branch}" will move from ${short(info.from)} to ${short(info.to)} by fast-forward. Your branch and the files git tracks move to the accepted work; untracked files and other branches are not touched.`,

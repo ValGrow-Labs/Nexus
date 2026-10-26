@@ -65,11 +65,11 @@ const SMALL = 64 * 1024;
 export type GitFailureCode =
   | 'git_missing' | 'bad_task' | 'repo_layout_unsupported' | 'repo_empty' | 'branch_missing' | 'worktree_tampered' | 'worktree_conflict'
   | 'link_or_gitlink' | 'ref_moved' | 'unknown_commit' | 'merge_conflict' | 'tree_dirty' | 'branch_mismatch' | 'not_fast_forward'
-  | 'git_failed' | GuardRefusal;
+  | 'git_failed' | 'integration_diverged' | GuardRefusal;
 export const GIT_FAILURE_CODES: readonly GitFailureCode[] = Object.freeze([
   'git_missing', 'bad_task', 'repo_layout_unsupported', 'repo_empty', 'branch_missing', 'worktree_tampered', 'worktree_conflict',
   'link_or_gitlink', 'ref_moved', 'unknown_commit', 'merge_conflict', 'tree_dirty', 'branch_mismatch', 'not_fast_forward', 'git_failed',
-  'symlink_in_worktree', 'nested_repo', 'worktree_too_large', 'file_too_large'
+  'integration_diverged', 'symlink_in_worktree', 'nested_repo', 'worktree_too_large', 'file_too_large'
 ] as GitFailureCode[]);
 
 export class GitFailure extends Error {
@@ -242,14 +242,35 @@ export function worktreeName(dataRoot: string, worktreePath: string): string {
 
 export interface WorktreeFacts {
   ok: true; integrationHead: string; integrationCreated: boolean; ref: string; base: string; worktree: string; locked: true; reused: boolean;
+  /**
+   * B2b B6: the integration ref was moved forward to (or found already moved forward to) a commit on the user's branch, from the
+   * head main recorded (`integrationBefore`). `integrationHead` is then the new head; main records it as the new baseline
+   * (activity row `repo.integration_resync`) in the same ingest. Absent from an older runner: no resync.
+   */
+  integrationResynced?: boolean; integrationBefore?: string | null;
+  /** The user's branch head the task saw. */
+  branchHead?: string;
 }
 
 /**
  * `repo.worktree`: the integration ref at the branch head when absent (CAS on absence), the session ref at the
  * integration head when absent, then a detached worktree at the session ref, locked. Idempotent: a ref that exists is
  * kept, a worktree that exists (with the exact pointer) is reused, a lock that exists stays.
+ *
+ * RESYNC (B2b B6). The integration ref is made once; the user then commits on their own branch, and a stale ref would start every
+ * later session from old code and make "Merge accepted work" impossible. So, when the ref exists:
+ * - it is an ANCESTOR of the branch head (the branch already holds everything accepted: every accept is on the ref's history),
+ *   and `t.expectedIntegrationHead` (the head main RECORDED: the newest accept's, resync's or initial one) is where the ref is:
+ *   it is moved forward to the branch head by compare-and-swap, and reported (`integrationResynced`, `integrationBefore`);
+ * - the ref is not where main recorded it, but the recorded head is its ancestor and it is itself on the branch: an earlier
+ *   attempt of this job moved it and died before main recorded it; it is reported again (no write), so main records it now;
+ * - the branch head is an ancestor of the ref (accepted work still waits to be merged): nothing is touched;
+ * - neither is an ancestor of the other (`integration_diverged`): nothing is touched and the task refuses, so the turn says so
+ *   instead of starting from code that is not the user's.
+ * The ref only ever moves forward along the user's own history; it never takes an accept's or an agent's commit.
  */
-export async function ensureWorktree(g: HardenedGit, t: { repoPath: string; worktreePath: string; ref: string; integrationRef: string; branch: string },
+export async function ensureWorktree(g: HardenedGit, t: { repoPath: string; worktreePath: string; ref: string; integrationRef: string; branch: string;
+  expectedIntegrationHead?: string | null },
   o: { dataRoot: string; signal?: AbortSignal; fs?: typeof fsp }): Promise<WorktreeFacts> {
   const fs = o.fs ?? fsp;
   if (!BRANCH_RE.test(t.branch) || t.integrationRef !== `refs/nexus/accepted/${t.branch}` || !isNexusRef(t.ref, 'job')) {
@@ -274,6 +295,32 @@ export async function ensureWorktree(g: HardenedGit, t: { repoPath: string; work
     integrationCreated = await updateRefCas(g, repo, n, t.integrationRef, head, ZERO, o.signal);
     integrationHead = await resolveRef(g, repo, n, t.integrationRef, o.signal);
     if (!integrationHead) throw new GitFailure('git_failed', 'the integration ref could not be created');
+  }
+  let integrationResynced = false;
+  let integrationBefore: string | null = null;
+  if (!integrationCreated) {
+    const isAncestor = async (a: string, b: string): Promise<boolean> => {
+      const r = await g.run(repo, ['merge-base', '--is-ancestor', a, b], { neutral: n, signal: o.signal });
+      if (r.code !== 0 && r.code !== 1) throw new GitFailure('git_failed', 'git could not compare the integration ref with the branch');
+      return r.code === 0;
+    };
+    const expected = typeof t.expectedIntegrationHead === 'string' && COMMIT_RE.test(t.expectedIntegrationHead) ? t.expectedIntegrationHead : null;
+    const same = integrationHead === head;
+    if (same || await isAncestor(integrationHead, head)) {
+      if (!same && expected !== null && integrationHead === expected) {
+        if (await updateRefCas(g, repo, n, t.integrationRef, head, integrationHead, o.signal)) {
+          integrationBefore = integrationHead; integrationHead = head; integrationResynced = true;
+        } else {
+          const again = await resolveRef(g, repo, n, t.integrationRef, o.signal);
+          if (!again) throw new GitFailure('git_failed', 'the integration ref disappeared');
+          integrationHead = again;
+        }
+      } else if (expected !== null && integrationHead !== expected && await isAncestor(expected, integrationHead)) {
+        integrationBefore = expected; integrationResynced = true;
+      }
+    } else if (!(await isAncestor(head, integrationHead))) {
+      throw new GitFailure('integration_diverged', 'the integration ref and the branch have both moved on');
+    }
   }
   let base = await resolveRef(g, repo, n, t.ref, o.signal);
   if (!base) {
@@ -305,7 +352,8 @@ export async function ensureWorktree(g: HardenedGit, t: { repoPath: string; work
     const lock = await g.run(repo, ['worktree', 'lock', '--reason', WORKTREE_LOCK_REASON, t.worktreePath], { neutral: n, signal: o.signal });
     if (lock.code !== 0 && !(await isLocked(g, repo, n, t.worktreePath, o.signal))) throw new GitFailure('git_failed', 'the worktree could not be locked');
   }
-  return { ok: true, integrationHead, integrationCreated, ref: t.ref, base, worktree: `wt/${name}`, locked: true, reused };
+  return { ok: true, integrationHead, integrationCreated, ref: t.ref, base, worktree: `wt/${name}`, locked: true, reused, branchHead: head,
+    ...(integrationResynced ? { integrationResynced: true, integrationBefore } : {}) };
 }
 
 /** Whether `git worktree list --porcelain` shows the worktree at `p` locked. */

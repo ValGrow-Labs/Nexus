@@ -273,7 +273,8 @@ export type EngineTask =
    * Initialises `integrationRef` at the branch head when it is absent (a compare-and-swap on absence), creates `ref` at
    * the integration head, then runs `worktree add --detach` and `worktree lock`.
    */
-  | { engine: 'repo.worktree'; repoPath: string; worktreePath: string; ref: string; integrationRef: string; branch: string }
+  /** `expectedIntegrationHead`: the integration head main RECORDED (B6): the ref may be moved forward from it to the user's branch head. */
+  | { engine: 'repo.worktree'; repoPath: string; worktreePath: string; ref: string; integrationRef: string; branch: string; expectedIntegrationHead?: string | null }
   /** Commits the worktree's changes within `scope` on `ref` (sizes capped); refuses links, nested repositories and gitlinks. */
   | { engine: 'changeset.collect'; repoPath: string; worktreePath: string; gitDir: string; ref: string; integrationRef: string;
       scope: string[]; message: string; maxFileBytes: number; maxTotalBytes: number }

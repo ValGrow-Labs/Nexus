@@ -54,6 +54,11 @@ interface ReviewRow { id: string; version_id: string; principal_id: string; deci
 const toView = (r: ReviewRow): ReviewView => ({ id: r.id, versionId: r.version_id, principalId: r.principal_id, decision: r.decision, comment: r.comment,
   intentId: r.intent_id, createdAt: r.created_at });
 
+/** True only when the change set's metadata says its preview is complete (`previewComplete === true`); absent or anything else is not. */
+export function previewComplete(metadataJson: string): boolean {
+  try { const m = JSON.parse(metadataJson) as unknown; return typeof m === 'object' && m !== null && (m as Record<string, unknown>).previewComplete === true; } catch { return false; }
+}
+
 export class ReviewService {
   private readonly access: ProjectAccess;
   constructor(private readonly db: Database.Database, private readonly deps: ReviewDeps) {
@@ -85,9 +90,9 @@ export class ReviewService {
   }
 
   private versionOf(id: unknown): { id: string; project_id: string; status: string; kind: string; owner_workspace_id: string | null;
-    artifact_id: string; produced_by_job_id: string | null } | null {
+    artifact_id: string; produced_by_job_id: string | null; metadata_json: string } | null {
     if (typeof id !== 'string' || id.length === 0) return null;
-    return (this.db.prepare(`SELECT v.id, v.project_id, v.status, a.kind, a.owner_workspace_id, v.artifact_id, v.produced_by_job_id
+    return (this.db.prepare(`SELECT v.id, v.project_id, v.status, a.kind, a.owner_workspace_id, v.artifact_id, v.produced_by_job_id, v.metadata_json
       FROM artifact_versions v JOIN artifacts a ON a.id = v.artifact_id WHERE v.id = ?`).get(id) as ReturnType<ReviewService['versionOf']>) ?? null;
   }
 
@@ -113,6 +118,12 @@ export class ReviewService {
     }
     if (v.kind !== 'change_set') throw new PlatformError('invalid', 'only a change set is reviewed', { reason: 'not_a_change_set' });
     if (v.status !== 'candidate') throw new PlatformError('illegal_transition', `a ${v.status} change set cannot be reviewed`, { reason: 'not_candidate' });
+    // A1: an approval is a decision about what the user could SEE. The ingest records whether the preview shows the whole change
+    // (`previewComplete`); anything but an explicit `true` (absent included) is incomplete, and it cannot be approved from Nexus.
+    // Asking for changes and rejecting need no preview and are never blocked by it.
+    if (i.decision === 'approve' && !previewComplete(v.metadata_json)) {
+      throw new PlatformError('conflict', 'part of this change is hidden or too large to show, so it cannot be approved from Nexus', { reason: 'preview_incomplete' });
+    }
     const now = this.deps.now();
     return immediateTx(this.db, () => {
       const cur = this.db.prepare('SELECT status FROM artifact_versions WHERE id = ?').get(v.id) as { status: string } | undefined;
