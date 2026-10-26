@@ -11,7 +11,7 @@ import { Button } from '../ui/Button';
 import { EvidenceSection } from './EvidenceSection';
 import { useExecutionUi } from './execContext';
 import {
-  BUTTON_LABEL, acceptedText, changeSetModel, changeSetRows, diffLineKind, headTitle, mergeModel, mergedText, mergedTitle, reviewOf, type ChangeSetButton, type ChangeSetRow, type MergeModel
+  BUTTON_LABEL, DIFF_REDACTED_NOTE, acceptedText, changeSetModel, changeSetRows, diffHasRedaction, diffLineKind, headTitle, mergeModel, mergedText, mergedTitle, reviewOf, type ChangeSetButton, type ChangeSetRow, type MergeModel
 } from './changeSetModel';
 
 const PAGE_BYTES = 64 * 1024;
@@ -56,6 +56,7 @@ function Diff({ versionId }: { versionId: string }) {
   if (d.text.trim() === '') return <p className="nx-muted">The change contains no file changes to show.</p>;
   return (
     <>
+      {diffHasRedaction(d.text) && <p className="nx-muted" role="status">{DIFF_REDACTED_NOTE}</p>}
       <pre className="nx-cs__diff" tabIndex={0} aria-label="Diff of the change, read only">
         {lines.map((l, i) => <span key={i} className="nx-cs__ln" data-k={diffLineKind(l)}>{l}{'\n'}</span>)}
       </pre>
@@ -123,7 +124,7 @@ export function ChangeSetReview({ versionId, projectId, status, name, withEviden
 
   const shown = detail.data?.status ?? status;
   const review: ReviewDecision | null | undefined = local ?? reviewOf(detail.data?.latestReview);
-  const view = changeSetModel({ version: { status: shown, content: detail.data?.content }, validations: checks.data, review, repo: repo.data });
+  const view = changeSetModel({ version: { status: shown, content: detail.data?.content, previewComplete: detail.data?.previewComplete, previewReason: detail.data?.previewReason }, validations: checks.data, review, repo: repo.data });
   const refresh = () => { usePlatform.getState().bumpRev(); useExecStore.getState().bump(['jobs', 'validations']); repo.reload(); detail.reload(); };
 
   const decide = async (decision: ReviewDecision, text?: string) => {

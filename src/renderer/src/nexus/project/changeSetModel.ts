@@ -20,6 +20,23 @@ export function reviewOf(latest: { decision: ReviewDecision } | null | undefined
 }
 const isDecision = (v: unknown): v is ReviewDecision => typeof v === 'string' && (REVIEW_DECISION_WORDS as readonly string[]).includes(v);
 
+/**
+ * Why a change cannot be approved from Nexus: one fixed sentence per reason (main refuses the approval too, `preview_incomplete`).
+ * A reason this build does not know reads as the generic one: the check fails closed, never a raw code.
+ */
+export const PREVIEW_INCOMPLETE_TEXT: Readonly<Record<string, string>> = Object.freeze({
+  hidden_lines: 'Part of this change is hidden here because it looks like a secret, so it can’t be approved from Nexus. Review it in your own tools, or ask the agent to rewrite it.',
+  too_large: 'This change is too large to show here, so it can’t be approved from Nexus. Review it in your own tools, or ask the agent to split it up.',
+  truncated: 'This change is too large to show here in full, so it can’t be approved from Nexus. Review it in your own tools, or ask the agent to split it up.',
+  unknown: 'Nexus could not confirm that the whole change can be shown here, so it can’t be approved from Nexus. Review it in your own tools, or ask the agent to rewrite it.'
+});
+export function previewIncompleteText(reason: unknown): string {
+  return typeof reason === 'string' && Object.prototype.hasOwnProperty.call(PREVIEW_INCOMPLETE_TEXT, reason) ? PREVIEW_INCOMPLETE_TEXT[reason] : PREVIEW_INCOMPLETE_TEXT.unknown;
+}
+/** True when the change's diff text carries a redacted part (main redacts the diff whole before it is shown). */
+export const diffHasRedaction = (text: string | null | undefined): boolean => typeof text === 'string' && text.includes('[redacted]');
+export const DIFF_REDACTED_NOTE = 'Part of this diff is hidden here as [redacted] because it looks like a secret. What you see is not the whole change.';
+
 export type ChangeSetButton = 'approve' | 'request_changes' | 'reject' | 'accept';
 export const BUTTON_LABEL: Readonly<Record<ChangeSetButton, string>> = Object.freeze({
   approve: 'Approve', request_changes: 'Request changes', reject: 'Reject', accept: 'Accept the change'
@@ -27,7 +44,11 @@ export const BUTTON_LABEL: Readonly<Record<ChangeSetButton, string>> = Object.fr
 
 export interface BlockingCheck { id: string; label: string; word: string }
 export interface ChangeSetInput {
-  version: Pick<VersionView, 'status'> & { content?: VersionContent };
+  version: Pick<VersionView, 'status'> & { content?: VersionContent;
+    /** Whether Nexus's own preview shows the WHOLE change (change sets only). Only an explicit `true` is complete; anything else is not. */
+    previewComplete?: boolean | null;
+    /** Why not, as main's closed code; any other value is read as unknown. */
+    previewReason?: unknown };
   /** #32 for the version; null while unread or when execution is off. */
   validations: readonly ValidationResultView[] | null;
   /**
@@ -94,8 +115,10 @@ export function changeSetModel(i: ChangeSetInput): ChangeSetView {
     return { ...base, headline: `Blocked: ${list(blocking)}`, sentences: ['It cannot be decided on while a check is blocking it.'] };
   }
   if (i.review === undefined) return { ...base, headline: 'Reading the change’s review state…', sentences: [] };
-  const buttons: ChangeSetButton[] = ['approve', 'request_changes', 'reject'];
-  const sentences: string[] = [];
+  // Approve only when Nexus shows the whole change (an explicit `true`); asking for changes and rejecting never need that.
+  const complete = i.version.previewComplete === true;
+  const buttons: ChangeSetButton[] = complete ? ['approve', 'request_changes', 'reject'] : ['request_changes', 'reject'];
+  const sentences: string[] = complete ? [] : [previewIncompleteText(i.version.previewReason)];
   let headline: string;
   switch (i.review) {
     case 'approve': headline = 'Approved by you: ready to accept'; break;
@@ -108,7 +131,7 @@ export function changeSetModel(i: ChangeSetInput): ChangeSetView {
     else if (i.repo && i.repo.reason && ['git_missing', 'branch_unknown', 'runner_unavailable'].includes(i.repo.reason)) sentences.push(AGENT_REASON_TEXT[i.repo.reason]);
     else sentences.push('The accepted branch has not been read yet, so the change cannot be accepted. Look again in a moment.');
   } else {
-    sentences.push('Accept appears once you have approved the change.');
+    if (complete) sentences.push('Accept appears once you have approved the change.');
   }
   return { ...base, headline, buttons, sentences };
 }

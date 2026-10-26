@@ -54,7 +54,8 @@ const BLOCKING = ['git.diff_nonempty', 'git.paths_in_scope', 'sec.secret_scan', 
 const allPass = () => BLOCKING.map((id) => validation(id, 'passed'));
 const repo = (o = {}) => ({ projectId: 'p', branch: 'main', head: SHA, dirty: false, integrationRef: 'refs/nexus/accepted/main', acceptedHead: SHA, acceptedNotMerged: 0,
   canFastForward: false, reason: 'nothing_to_merge', checkedAt: NOW, ...o });
-const cset = (status, o = {}) => ({ status, content: { type: 'git', commit: SHA }, ...o });
+// A change whose whole preview is shown (an explicit true); R5 covers every other value.
+const cset = (status, o = {}) => ({ status, content: { type: 'git', commit: SHA }, previewComplete: true, previewReason: null, ...o });
 
 // ---------- UA1 ----------
 
@@ -721,4 +722,50 @@ test('R4-minors copy and hygiene: merge copy, no raw ids, hashed intent keys, pl
   const panelSrc = src('agent/AgentPanel.tsx') + src('project/ChangeSetReview.tsx');
   assert.ok((panelSrc.match(/ariaExpanded=/g) || []).length >= 3);
   assert.match(src('project/ChangeSetReview.tsx'), /commentBox\.current\?\.focus\(\)/);
+});
+
+// ---------- fix round 5: an approval needs the whole change shown (preview_incomplete) ----------
+
+test('R5 Approve is offered only when previewComplete === true (fail closed); Reject and Request changes stay; one fixed sentence says why, never a raw code', () => {
+  const view = (previewComplete, previewReason, o = {}) => CS.changeSetModel({ version: { ...cset('candidate'), previewComplete, previewReason }, validations: allPass(), review: null, repo: repo(), ...o });
+  // Complete: the three decisions.
+  const ok = view(true, null);
+  assert.deepEqual(ok.buttons, ['approve', 'request_changes', 'reject']);
+  assert.ok(!ok.sentences.some((s) => /can’t be approved/.test(s)));
+  // Not complete, absent, wrong type or an unfamiliar reason: no Approve; the others stay.
+  const cases = [[false, 'hidden_lines'], [false, 'too_large'], [false, 'truncated'], [false, 'unknown'], [false, null], [undefined, undefined], [null, null], ['true', null], [1, null],
+    [false, 'brand_new_reason'], [undefined, 'hidden_lines'], [false, 7]];
+  for (const [pc, reason] of cases) {
+    const v = view(pc, reason);
+    assert.ok(!v.buttons.includes('approve'), `${pc}/${reason}: no Approve`);
+    assert.deepEqual(v.buttons, ['request_changes', 'reject'], `${pc}/${reason}: Reject and Request changes stay`);
+    assert.ok(!v.buttons.includes('accept'));
+    const said = v.sentences.filter((s) => /can’t be approved from Nexus/.test(s));
+    assert.equal(said.length, 1, `${pc}/${reason}: exactly one sentence`);
+    assert.doesNotMatch(v.sentences.join(' '), /hidden_lines|too_large|truncated|brand_new_reason|preview_incomplete|_/, 'no raw code');
+  }
+  // One sentence per reason, an unfamiliar one reads as unknown.
+  assert.match(view(false, 'hidden_lines').sentences[0], /^Part of this change is hidden here because it looks like a secret/);
+  assert.match(view(false, 'too_large').sentences[0], /^This change is too large to show here, so it can’t be approved from Nexus/);
+  assert.match(view(false, 'truncated').sentences[0], /^This change is too large to show here in full/);
+  assert.match(view(false, 'unknown').sentences[0], /^Nexus could not confirm that the whole change can be shown here/);
+  assert.equal(view(false, 'brand_new_reason').sentences[0], view(false, 'unknown').sentences[0]);
+  assert.equal(new Set(['hidden_lines', 'too_large', 'truncated', 'unknown'].map((r) => view(false, r).sentences[0])).size, 4);
+  // The other conditions still apply on top: Accept needs an approving review and a known branch head; a draft or failed change offers nothing.
+  assert.ok(CS.changeSetModel({ version: { ...cset('candidate'), previewComplete: true }, validations: allPass(), review: 'approve', repo: repo() }).buttons.includes('accept'));
+  assert.deepEqual(CS.changeSetModel({ version: { ...cset('draft'), previewComplete: true }, validations: allPass(), review: null, repo: repo() }).buttons, []);
+  assert.deepEqual(CS.changeSetModel({ version: { ...cset('candidate'), previewComplete: true }, validations: allPass(), review: undefined, repo: repo() }).buttons, [], 'review state unknown: no review UI');
+  // Main's refusal of an approval reads its own sentence, never the code.
+  assert.equal(A.agentFailText({ code: 'conflict', reason: 'preview_incomplete' }), E.AGENT_REASON_TEXT.preview_incomplete);
+  assert.doesNotMatch(E.AGENT_REASON_TEXT.preview_incomplete, /preview_incomplete/);
+  // The view feeds the model from the version's own fields.
+  assert.match(src('project/ChangeSetReview.tsx'), /previewComplete: detail\.data\?\.previewComplete, previewReason: detail\.data\?\.previewReason/);
+  // The diff panel says when the shown diff has redacted parts.
+  assert.equal(CS.diffHasRedaction('+const k = "[redacted]"\n'), true);
+  assert.equal(CS.diffHasRedaction('+const k = 1\n'), false);
+  assert.equal(CS.diffHasRedaction(null), false);
+  assert.match(CS.DIFF_REDACTED_NOTE, /\[redacted\]/);
+  assert.match(src('project/ChangeSetReview.tsx'), /diffHasRedaction\(d\.text\) && /);
+  // No vendor, host or code in the new copy (UA2 and UA11 also scan changeSetModel.ts and ChangeSetReview.tsx line by line).
+  for (const t of Object.values(CS.PREVIEW_INCOMPLETE_TEXT)) assert.doesNotMatch(t, VENDOR);
 });
