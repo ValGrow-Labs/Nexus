@@ -11,32 +11,43 @@ import { Button } from '../ui/Button';
 import { EvidenceSection } from './EvidenceSection';
 import { useExecutionUi } from './execContext';
 import {
-  BUTTON_LABEL, DIFF_REDACTED_NOTE, acceptedText, changeSetModel, changeSetRows, diffHasRedaction, diffLineKind, headTitle, mergeModel, mergedText, mergedTitle, reviewOf, type ChangeSetButton, type ChangeSetRow, type MergeModel
+  BUTTON_LABEL, DIFF_REDACTED_NOTE, acceptedText, changeSetModel, changeSetRows, classifyDiff, diffHasRedaction, headTitle, mergeModel, mergedText, mergedTitle, reviewOf, type ChangeSetButton, type ChangeSetRow, type MergeModel
 } from './changeSetModel';
 
 const PAGE_BYTES = 64 * 1024;
 const TOO_LARGE_TEXT = 'This change is too large to show here. Review it in your repository.';
 
+interface DiffState {
+  text: string | null; error: string | null; loaded: boolean; more: (() => void) | null;
+  /** Every page is loaded (an approval needs the whole patch). */
+  whole: boolean; readBytes: number; totalBytes: number | null;
+  /** A page could not be read (or none could): Approve stays hidden. */
+  failed: boolean;
+}
+
 /** The change's patch (#34 `diff`), paged by text page like the version's content. Read-only; main redacts it whole. */
-function useDiff(versionId: string): { text: string | null; error: string | null; loaded: boolean; more: (() => void) | null } {
+function useDiff(versionId: string): DiffState {
   const [pages, setPages] = useState<PreviewView[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [loaded, setLoaded] = useState(false);
+  const [unread, setUnread] = useState(false);
   const read = async (from: PreviewView | null, alive: () => boolean) => {
     const r = await nexusClient.versionPreview(versionId, { part: 'diff', page: from?.nextPage ?? 0, maxBytes: PAGE_BYTES });
     if (!alive()) return;
     setLoaded(true);
     if (!r.ok) {
-      // Execution off: the notice says so. A change too large is said so; any other refusal is its sentence.
+      // Execution off: the notice says so. A change too large is said so; any other refusal is its sentence. Either way nothing
+      // more is known of the patch, so the whole of it has not been read.
+      setUnread(true);
       setError(r.code === 'platform_unavailable' ? null : r.code === 'too_large' ? TOO_LARGE_TEXT : agentFailText(r));
       return;
     }
-    setError(null);
+    setError(null); setUnread(false);
     setPages((p) => (from ? [...p, r.data] : [r.data]));
   };
   useEffect(() => {
     let alive = true;
-    setPages([]); setLoaded(false); setError(null);
+    setPages([]); setLoaded(false); setError(null); setUnread(false);
     void read(null, () => alive);
     return () => { alive = false; };
   }, [versionId]);
@@ -44,23 +55,32 @@ function useDiff(versionId: string): { text: string | null; error: string | null
   // "Show more" ends with the view: a page that arrives after the change was left is dropped.
   const mounted = useRef(true);
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, [versionId]);
-  return { text: pages.length ? pages.map((p) => p.text ?? '').join('') : null, error, loaded, more: last && last.nextPage !== null ? () => { const v = versionId; void read(last, () => mounted.current && v === versionId); } : null };
+  const text = pages.length ? pages.map((p) => p.text ?? '').join('') : null;
+  const more = last && last.nextPage !== null ? () => { const v = versionId; void read(last, () => mounted.current && v === versionId); } : null;
+  return {
+    text, error, loaded, more,
+    whole: loaded && last !== null && last.nextPage === null && !unread,
+    readBytes: text === null ? 0 : new TextEncoder().encode(text).length, totalBytes: pages[0]?.totalBytes ?? null,
+    failed: unread
+  };
 }
 
-function Diff({ versionId }: { versionId: string }) {
-  const d = useDiff(versionId);
-  const lines = useMemo(() => (d.text === null ? [] : d.text.split('\n')), [d.text]);
+function Diff({ d }: { d: DiffState }) {
+  const lines = useMemo(() => (d.text === null ? [] : classifyDiff(d.text)), [d.text]);
   if (!d.loaded) return <p className="nx-muted" role="status">Reading the change…</p>;
-  if (d.error) return <p className="nx-muted" role="status">{d.error}</p>;
-  if (d.text === null) return null;
-  if (d.text.trim() === '') return <p className="nx-muted">The change contains no file changes to show.</p>;
   return (
     <>
-      {diffHasRedaction(d.text) && <p className="nx-muted" role="status">{DIFF_REDACTED_NOTE}</p>}
-      <pre className="nx-cs__diff" tabIndex={0} aria-label="Diff of the change, read only">
-        {lines.map((l, i) => <span key={i} className="nx-cs__ln" data-k={diffLineKind(l)}>{l}{'\n'}</span>)}
-      </pre>
-      {d.more && <Button variant="quiet" onClick={d.more}>Show more of the change</Button>}
+      {d.error && <p className="nx-muted" role="status">{d.error}</p>}
+      {d.text !== null && d.text.trim() === '' && <p className="nx-muted">The change contains no file changes to show.</p>}
+      {d.text !== null && d.text.trim() !== '' && (
+        <>
+          {diffHasRedaction(d.text) && <p className="nx-muted" role="status">{DIFF_REDACTED_NOTE}</p>}
+          <pre className="nx-cs__diff" tabIndex={0} aria-label="Diff of the change, read only">
+            {lines.map((l, i) => <span key={i} className="nx-cs__ln" data-k={l.kind}>{l.text}{'\n'}</span>)}
+          </pre>
+        </>
+      )}
+      {d.more && <Button variant="quiet" onClick={d.more}>{d.error ? 'Try again' : 'Show more of the change'}</Button>}
     </>
   );
 }
@@ -110,6 +130,7 @@ export function ChangeSetReview({ versionId, projectId, status, name, withEviden
   const detail = useRead(versionId, () => nexusClient.versionGet(versionId), [rev]);
   const checks = useChangeChecks(versionId);
   const repo = useRepoStatus(projectId);
+  const diff = useDiff(versionId);
   const [local, setLocal] = useState<ReviewDecision | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [asking, setAsking] = useState<'request_changes' | 'reject' | null>(null);
@@ -124,7 +145,7 @@ export function ChangeSetReview({ versionId, projectId, status, name, withEviden
 
   const shown = detail.data?.status ?? status;
   const review: ReviewDecision | null | undefined = local ?? reviewOf(detail.data?.latestReview);
-  const view = changeSetModel({ version: { status: shown, content: detail.data?.content, previewComplete: detail.data?.previewComplete, previewReason: detail.data?.previewReason }, validations: checks.data, review, repo: repo.data });
+  const view = changeSetModel({ version: { status: shown, content: detail.data?.content, previewComplete: detail.data?.previewComplete, previewReason: detail.data?.previewReason }, diffRead: { whole: diff.whole, readBytes: diff.readBytes, totalBytes: diff.totalBytes, failed: diff.failed }, validations: checks.data, review, repo: repo.data });
   const refresh = () => { usePlatform.getState().bumpRev(); useExecStore.getState().bump(['jobs', 'validations']); repo.reload(); detail.reload(); };
 
   const decide = async (decision: ReviewDecision, text?: string) => {
@@ -192,7 +213,7 @@ export function ChangeSetReview({ versionId, projectId, status, name, withEviden
       {view.merge && shown === 'active' && <MergeBlock projectId={projectId} model={view.merge} onDone={refresh} />}
       {withEvidence && detail.data && <EvidenceSection key={versionId} version={detail.data} kind="change_set" checked />}
       <h3 className="nx-cs__sub">The change</h3>
-      <Diff versionId={versionId} />
+      <Diff d={diff} />
     </section>
   );
 }

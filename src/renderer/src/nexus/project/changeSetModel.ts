@@ -10,6 +10,7 @@ import type {
 } from '@shared/nexus/ipc';
 import { blockingValidatorsFor } from '@shared/nexus/validators';
 import { AGENT_REASON_TEXT } from '../data/errorCopy';
+import { sizeLabel } from '../data/executionModel';
 import { statusWord, validatorLabel } from './evidenceModel';
 
 export const REVIEW_DECISION_WORDS = ['approve', 'request_changes', 'reject'] as const;
@@ -28,11 +29,18 @@ export const PREVIEW_INCOMPLETE_TEXT: Readonly<Record<string, string>> = Object.
   hidden_lines: 'Part of this change is hidden here because it looks like a secret, so it can’t be approved from Nexus. Review it in your own tools, or ask the agent to rewrite it.',
   too_large: 'This change is too large to show here, so it can’t be approved from Nexus. Review it in your own tools, or ask the agent to split it up.',
   truncated: 'This change is too large to show here in full, so it can’t be approved from Nexus. Review it in your own tools, or ask the agent to split it up.',
+  unsafe_characters: 'This change contains characters that can make code look different from what it does (hidden or reordering characters), so it can’t be approved from Nexus. Review it in your own tools, or ask the agent to remove them.',
   binary_file: 'A file in this change is binary, so it can’t be shown here and can’t be approved from Nexus. Review it in your own tools, or ask the agent to leave it out.',
   unknown: 'Nexus could not confirm that the whole change can be shown here, so it can’t be approved from Nexus. Review it in your own tools, or ask the agent to rewrite it.'
 });
 export function previewIncompleteText(reason: unknown): string {
   return typeof reason === 'string' && Object.prototype.hasOwnProperty.call(PREVIEW_INCOMPLETE_TEXT, reason) ? PREVIEW_INCOMPLETE_TEXT[reason] : PREVIEW_INCOMPLETE_TEXT.unknown;
+}
+/** What stands in place of Approve while the patch is only partly loaded (or its load failed). */
+export function loadWholeText(d: ChangeSetInput['diffRead']): string {
+  if (d && d.failed === true) return 'The whole change could not be read, so it can’t be approved from Nexus. Try loading it again.';
+  const of = d && d.totalBytes !== null ? ` (${sizeLabel(d.readBytes)} of ${sizeLabel(d.totalBytes)} loaded)` : d ? ` (${sizeLabel(d.readBytes)} loaded)` : '';
+  return `Load the whole change to approve it${of}.`;
 }
 /** True when the change's diff text carries a redacted part (main redacts the diff whole before it is shown). */
 export const diffHasRedaction = (text: string | null | undefined): boolean => typeof text === 'string' && text.includes('[redacted]');
@@ -59,6 +67,11 @@ export interface ChangeSetInput {
   review: ReviewDecision | null | undefined;
   /** #49; null while unread. */
   repo: RepoStatusView | null;
+  /**
+   * How much of the change's patch the reader has loaded (it is paged; a patch can be up to 2 MiB). An approval needs ALL of it:
+   * `undefined` (not supplied) or anything short of whole is not enough, and a failed page keeps Approve hidden.
+   */
+  diffRead?: { whole: boolean; readBytes: number; totalBytes: number | null; failed?: boolean };
 }
 export interface ChangeSetView {
   headline: string;
@@ -118,8 +131,12 @@ export function changeSetModel(i: ChangeSetInput): ChangeSetView {
   if (i.review === undefined) return { ...base, headline: 'Reading the change’s review state…', sentences: [] };
   // Approve only when Nexus shows the whole change (an explicit `true`); asking for changes and rejecting never need that.
   const complete = i.version.previewComplete === true;
-  const buttons: ChangeSetButton[] = complete ? ['approve', 'request_changes', 'reject'] : ['request_changes', 'reject'];
+  // ... and only after the whole patch has been loaded here: the person approves what they could read.
+  const d = i.diffRead;
+  const whole = complete && d !== undefined && d.whole === true && d.failed !== true;
+  const buttons: ChangeSetButton[] = whole ? ['approve', 'request_changes', 'reject'] : ['request_changes', 'reject'];
   const sentences: string[] = complete ? [] : [previewIncompleteText(i.version.previewReason)];
+  if (complete && !whole) sentences.push(loadWholeText(d));
   let headline: string;
   switch (i.review) {
     case 'approve': headline = 'Approved by you: ready to accept'; break;
@@ -198,13 +215,34 @@ export function changeSetRows(summaries: readonly ArtifactSummaryView[]): Change
 // ---------- the read-only diff ----------
 
 export type DiffLineKind = 'add' | 'del' | 'hunk' | 'meta' | 'ctx';
-const META = /^(diff --git |index [0-9a-f]|--- (a\/|\/dev\/null)|\+\+\+ (b\/|\/dev\/null)|new file mode|deleted file mode|similarity index|rename (from|to) |old mode|new mode|Binary files )/;
+export interface DiffLine { text: string; kind: DiffLineKind }
+const HUNK_HEAD = /^@@ -\d+(?:,(\d+))? \+\d+(?:,(\d+))? @@/;
 
-/** One patch line's kind, for the reader's marks (a word, never colour alone: the line keeps its +/- sign). */
-export function diffLineKind(line: string): DiffLineKind {
-  if (META.test(line)) return 'meta';
-  if (line.startsWith('@@')) return 'hunk';
-  if (line.startsWith('+')) return 'add';
-  if (line.startsWith('-')) return 'del';
-  return 'ctx';
+/**
+ * Each line of a unified patch with its kind, by HUNK CONTEXT, exactly as the runner's secret scan reads a patch (`scanAddedLines`):
+ * a hunk header `@@ -a,b +c,d @@` says how many old and new lines follow, and while any are left EVERY line is content (`+` added,
+ * `-` removed, a space context), so an added line whose text is `++ b/README.md` is an added line, never a file header. Headers are
+ * recognised only outside a hunk. A line that does not fit the counts ends the hunk (the same fail-safe as the scan) and is read as a
+ * header line. The kinds only add a mark and weight; every line keeps its own +/- sign, so nothing relies on a colour.
+ */
+export function classifyDiff(text: string): DiffLine[] {
+  const out: DiffLine[] = [];
+  let oldLeft = 0; let newLeft = 0;
+  for (const raw of text.split('\n')) {
+    const line = raw.endsWith('\r') ? raw.slice(0, -1) : raw;
+    if (oldLeft > 0 || newLeft > 0) {
+      if (line.startsWith('\\')) { out.push({ text: raw, kind: 'ctx' }); continue; }            // "\ No newline at end of file"
+      if (line.startsWith('-') && oldLeft > 0) { oldLeft--; out.push({ text: raw, kind: 'del' }); continue; }
+      if (line.startsWith('+') && newLeft > 0) { newLeft--; out.push({ text: raw, kind: 'add' }); continue; }
+      if (line.startsWith(' ') && oldLeft > 0 && newLeft > 0) { oldLeft--; newLeft--; out.push({ text: raw, kind: 'ctx' }); continue; }
+      oldLeft = 0; newLeft = 0;                                                            // malformed: leave the hunk
+    }
+    // git writes the "no newline" marker right after the last line of a side, which may be the last line of the hunk.
+    if (line.startsWith('\\')) { out.push({ text: raw, kind: 'ctx' }); continue; }
+    const m = HUNK_HEAD.exec(line);
+    if (m) { oldLeft = m[1] === undefined ? 1 : Number(m[1]); newLeft = m[2] === undefined ? 1 : Number(m[2]); out.push({ text: raw, kind: 'hunk' }); continue; }
+    // Outside a hunk: the patch's own header lines (diff --git, index, ---, +++, mode and rename lines) and anything else.
+    out.push({ text: raw, kind: line === '' ? 'ctx' : 'meta' });
+  }
+  return out;
 }

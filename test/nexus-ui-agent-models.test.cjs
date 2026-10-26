@@ -56,6 +56,9 @@ const repo = (o = {}) => ({ projectId: 'p', branch: 'main', head: SHA, dirty: fa
   canFastForward: false, reason: 'nothing_to_merge', checkedAt: NOW, ...o });
 // A change whose whole preview is shown (an explicit true); R5 covers every other value.
 const cset = (status, o = {}) => ({ status, content: { type: 'git', commit: SHA }, previewComplete: true, previewReason: null, ...o });
+// The whole patch is loaded (a fixture default; R7 covers every other state): changeSetModel fails closed without it.
+const WHOLE = { whole: true, readBytes: 10, totalBytes: 10 };
+const csm = (i) => CS.changeSetModel({ diffRead: WHOLE, ...i });
 
 // ---------- UA1 ----------
 
@@ -122,7 +125,7 @@ test('UA11 no host or model string in agent/** or the change-set views; only the
   walkStrings(A.sessionLogModel({ ...session(), turnHistory: [{ jobId: 'J1', state: 'completed', headline: 'checks_passed', outcome: 'completed', error: { code: 'x', message: 'api.example.test:443 said no' }, usage: null, createdAt: NOW, startedAt: NOW, finishedAt: NOW }],
     messages: [], toolCalls: [{ seq: 1, ts: NOW, jobId: 'J1', tool: 'Read', ok: true, resultBytes: 10 }], versions: [], approvals: [] }));
   for (const status of ['draft', 'candidate', 'active', 'failed', 'deprecated'])
-    for (const review of [null, 'approve', 'reject']) walkStrings(CS.changeSetModel({ version: cset(status), validations: allPass(), review, repo: repo({ acceptedNotMerged: 1, canFastForward: true, reason: null }) }));
+    for (const review of [null, 'approve', 'reject']) walkStrings(csm({ version: cset(status), validations: allPass(), review, repo: repo({ acceptedNotMerged: 1, canFastForward: true, reason: null }) }));
   for (const t of outs) { assert.doesNotMatch(t, /Acme|api\.example|:443/, t); assert.doesNotMatch(t, VENDOR, t); }
   // The setup row does carry them (it is the one place).
   const rows = X.setupSheet(h, { hosts });
@@ -142,7 +145,7 @@ test('UA3 Accept appears only on a candidate whose newest review approves (and o
     for (const review of [undefined, null, 'approve', 'request_changes', 'reject']) {
       for (const r of [null, repo(), repo({ acceptedHead: null })]) {
         for (const validations of [null, allPass(), [...allPass().slice(1), validation('git.diff_nonempty', 'failed')]]) {
-          const v = CS.changeSetModel({ version: cset(status), validations, review, repo: r });
+          const v = csm({ version: cset(status), validations, review, repo: r });
           if (v.buttons.includes('accept')) {
             accepts++;
             assert.equal(status, 'candidate'); assert.equal(review, 'approve'); assert.ok(r && r.acceptedHead); assert.ok(validations === null || v.blocking.length === 0);
@@ -152,24 +155,24 @@ test('UA3 Accept appears only on a candidate whose newest review approves (and o
     }
   }
   assert.ok(accepts > 0, 'Accept does appear when it should');
-  const ok = CS.changeSetModel({ version: cset('candidate'), validations: allPass(), review: 'approve', repo: repo() });
+  const ok = csm({ version: cset('candidate'), validations: allPass(), review: 'approve', repo: repo() });
   assert.deepEqual(ok.buttons, ['approve', 'request_changes', 'reject', 'accept']);
-  const none = CS.changeSetModel({ version: cset('candidate'), validations: allPass(), review: null, repo: repo() });
+  const none = csm({ version: cset('candidate'), validations: allPass(), review: null, repo: repo() });
   assert.deepEqual(none.buttons, ['approve', 'request_changes', 'reject']);
   assert.equal(none.headline, 'Waiting for your decision');
   // Approved but the branch head is unread: a sentence, not a button.
-  const unread = CS.changeSetModel({ version: cset('candidate'), validations: allPass(), review: 'approve', repo: repo({ acceptedHead: null }) });
+  const unread = csm({ version: cset('candidate'), validations: allPass(), review: 'approve', repo: repo({ acceptedHead: null }) });
   assert.ok(!unread.buttons.includes('accept') && unread.sentences.some((s) => /accepted branch has not been read/.test(s)));
   // The newest review is the version's own `latestReview` (null: never reviewed; undefined: not read yet or not a change set).
   assert.equal(CS.reviewOf({ decision: 'approve', decidedAt: '2026-10-26T00:00:00.000Z' }), 'approve');
   assert.equal(CS.reviewOf(null), null);
   assert.equal(CS.reviewOf(undefined), undefined);
   assert.equal(CS.reviewOf({ decision: 'bogus' }), null, 'an unknown decision word is never an approval');
-  const accepts2 = (latestReview) => CS.changeSetModel({ version: cset('candidate'), validations: allPass(), review: CS.reviewOf(latestReview), repo: repo() }).buttons.includes('accept');
+  const accepts2 = (latestReview) => csm({ version: cset('candidate'), validations: allPass(), review: CS.reviewOf(latestReview), repo: repo() }).buttons.includes('accept');
   assert.equal(accepts2({ decision: 'approve', decidedAt: 'x' }), true, 'Accept only on an approving latestReview');
   for (const lr of [null, undefined, { decision: 'request_changes', decidedAt: 'x' }, { decision: 'reject', decidedAt: 'x' }]) assert.equal(accepts2(lr), false, JSON.stringify(lr));
   // A version without latestReview (another kind, or not read yet) renders no review UI at all: no decision button, no Accept.
-  const unknown = CS.changeSetModel({ version: cset('candidate'), validations: allPass(), review: undefined, repo: repo() });
+  const unknown = csm({ version: cset('candidate'), validations: allPass(), review: undefined, repo: repo() });
   assert.deepEqual(unknown.buttons, []);
   assert.deepEqual(unknown.sentences, []);
   // The activity-row derivation and its 50-row read are gone.
@@ -206,8 +209,8 @@ test('UA4 Merge appears only when accepted work is not on the branch, and is a s
   }
   assert.equal(CS.mergeModel(repo({ acceptedNotMerged: 1 })).line, '1 accepted change is not on your branch yet.');
   // The change view carries the merge only while there is something to merge.
-  assert.equal(CS.changeSetModel({ version: cset('active'), validations: allPass(), review: 'approve', repo: repo() }).merge, null);
-  assert.ok(CS.changeSetModel({ version: cset('active'), validations: allPass(), review: 'approve', repo: repo({ acceptedNotMerged: 1, canFastForward: true, reason: null }) }).merge.button);
+  assert.equal(csm({ version: cset('active'), validations: allPass(), review: 'approve', repo: repo() }).merge, null);
+  assert.ok(csm({ version: cset('active'), validations: allPass(), review: 'approve', repo: repo({ acceptedNotMerged: 1, canFastForward: true, reason: null }) }).merge.button);
   assert.equal(CS.mergedText({ branch: 'main', before: SHA, after: 'b'.repeat(40) }), 'Merged: main now holds the accepted work.');
   assert.doesNotMatch(CS.mergedText({ branch: 'main' }), /[0-9a-f]{8}/, 'no commit id in the text');
   assert.equal(CS.mergedTitle({ before: SHA, after: 'b'.repeat(40) }), 'The branch moved from aaaaaaaa to bbbbbbbb', 'the ids are for a hover only');
@@ -406,7 +409,7 @@ test('UA9 a failing cs.tests_pass never reads "passed"; the headline names every
   const validations = [validation('git.diff_nonempty', 'passed'), validation('git.paths_in_scope', 'passed'), validation('sec.secret_scan', 'passed'),
     validation('cs.tests_pass', 'failed', { summary: '1 of 4 executed test(s) failed.' }), validation('git.applies_cleanly', 'error')];
   for (const status of ['draft', 'failed']) {
-    const v = CS.changeSetModel({ version: cset(status), validations, review: null, repo: repo() });
+    const v = csm({ version: cset(status), validations, review: null, repo: repo() });
     assert.deepEqual(v.blocking.map((b) => b.id), ['cs.tests_pass', 'git.applies_cleanly']);
     assert.match(v.headline, /^Blocked: /);
     assert.match(v.headline, /own tests: failed/);
@@ -415,11 +418,11 @@ test('UA9 a failing cs.tests_pass never reads "passed"; the headline names every
     assert.deepEqual(v.buttons, []);
   }
   // A candidate whose checks disagree (cannot happen in main) offers nothing and still never says passed.
-  const odd = CS.changeSetModel({ version: cset('candidate'), validations, review: 'approve', repo: repo() });
+  const odd = csm({ version: cset('candidate'), validations, review: 'approve', repo: repo() });
   assert.deepEqual(odd.buttons, []);
   assert.doesNotMatch(JSON.stringify(odd), /passed/i);
   // A check that has not run is named too.
-  const pending = CS.changeSetModel({ version: cset('draft'), validations: allPass().slice(0, 3), review: null, repo: repo() });
+  const pending = csm({ version: cset('draft'), validations: allPass().slice(0, 3), review: null, repo: repo() });
   assert.deepEqual(pending.blocking.map((b) => b.word), ['Not run yet', 'Not run yet']);
   assert.match(pending.headline, /^Being checked: /);
   // The evidence page words the check as the change's own tests, Failed.
@@ -431,11 +434,11 @@ test('UA9 a failing cs.tests_pass never reads "passed"; the headline names every
   assert.equal(ev.headline, 'Checks failed');
   for (const id of BLOCKING) assert.doesNotMatch(EV.validatorLabel(id), /^Check |_/, `${id} has a plain label`);
   // The diff descriptor names the head the change records; no path or full hash.
-  const d = CS.changeSetModel({ version: cset('candidate'), validations: allPass(), review: null, repo: repo() }).diff;
+  const d = csm({ version: cset('candidate'), validations: allPass(), review: null, repo: repo() }).diff;
   assert.deepEqual(d, { base: null, head: 'aaaaaaaa' });
-  assert.equal(CS.diffLineKind('+added'), 'add'); assert.equal(CS.diffLineKind('-gone'), 'del'); assert.equal(CS.diffLineKind('@@ -1 +1 @@'), 'hunk');
-  assert.equal(CS.diffLineKind('diff --git a/x b/x'), 'meta'); assert.equal(CS.diffLineKind('+++ b/x'), 'meta'); assert.equal(CS.diffLineKind(' context'), 'ctx');
-  assert.equal(CS.diffLineKind('++ not a header'), 'add');
+  // The kinds come from hunk context (see R7); a plain patch reads as expected.
+  const kinds = (t) => CS.classifyDiff(t).map((l) => l.kind);
+  assert.deepEqual(kinds('diff --git a/x b/x\n--- a/x\n+++ b/x\n@@ -1 +1 @@\n-gone\n+added'), ['meta', 'meta', 'meta', 'hunk', 'del', 'add']);
 });
 
 // ---------- carries ----------
@@ -698,7 +701,7 @@ test('R4-minors copy and hygiene: merge copy, no raw ids, hashed intent keys, pl
     assert.ok(A.agentFailText({ code: 'conflict', reason: k }).endsWith(A.NEXT_STEP[k]), k);
   }
   // "Look again in a moment" only when the status simply was not read; a git or runner problem says its own sentence.
-  const unread = (reason) => CS.changeSetModel({ version: cset('candidate'), validations: allPass(), review: 'approve', repo: repo({ acceptedHead: null, reason }) }).sentences.join(' ');
+  const unread = (reason) => csm({ version: cset('candidate'), validations: allPass(), review: 'approve', repo: repo({ acceptedHead: null, reason }) }).sentences.join(' ');
   assert.equal(unread('git_missing'), E.AGENT_REASON_TEXT.git_missing);
   assert.equal(unread('branch_unknown'), E.AGENT_REASON_TEXT.branch_unknown);
   assert.match(unread(null), /Look again in a moment/);
@@ -727,7 +730,7 @@ test('R4-minors copy and hygiene: merge copy, no raw ids, hashed intent keys, pl
 // ---------- fix round 5: an approval needs the whole change shown (preview_incomplete) ----------
 
 test('R5 Approve is offered only when previewComplete === true (fail closed); Reject and Request changes stay; one fixed sentence says why, never a raw code', () => {
-  const view = (previewComplete, previewReason, o = {}) => CS.changeSetModel({ version: { ...cset('candidate'), previewComplete, previewReason }, validations: allPass(), review: null, repo: repo(), ...o });
+  const view = (previewComplete, previewReason, o = {}) => csm({ version: { ...cset('candidate'), previewComplete, previewReason }, validations: allPass(), review: null, repo: repo(), ...o });
   // Complete: the three decisions.
   const ok = view(true, null);
   assert.deepEqual(ok.buttons, ['approve', 'request_changes', 'reject']);
@@ -752,9 +755,9 @@ test('R5 Approve is offered only when previewComplete === true (fail closed); Re
   assert.equal(view(false, 'brand_new_reason').sentences[0], view(false, 'unknown').sentences[0]);
   assert.equal(new Set(['hidden_lines', 'too_large', 'truncated', 'unknown'].map((r) => view(false, r).sentences[0])).size, 4);
   // The other conditions still apply on top: Accept needs an approving review and a known branch head; a draft or failed change offers nothing.
-  assert.ok(CS.changeSetModel({ version: { ...cset('candidate'), previewComplete: true }, validations: allPass(), review: 'approve', repo: repo() }).buttons.includes('accept'));
-  assert.deepEqual(CS.changeSetModel({ version: { ...cset('draft'), previewComplete: true }, validations: allPass(), review: null, repo: repo() }).buttons, []);
-  assert.deepEqual(CS.changeSetModel({ version: { ...cset('candidate'), previewComplete: true }, validations: allPass(), review: undefined, repo: repo() }).buttons, [], 'review state unknown: no review UI');
+  assert.ok(csm({ version: { ...cset('candidate'), previewComplete: true }, validations: allPass(), review: 'approve', repo: repo() }).buttons.includes('accept'));
+  assert.deepEqual(csm({ version: { ...cset('draft'), previewComplete: true }, validations: allPass(), review: null, repo: repo() }).buttons, []);
+  assert.deepEqual(csm({ version: { ...cset('candidate'), previewComplete: true }, validations: allPass(), review: undefined, repo: repo() }).buttons, [], 'review state unknown: no review UI');
   // Main's refusal of an approval reads its own sentence, never the code.
   assert.equal(A.agentFailText({ code: 'conflict', reason: 'preview_incomplete' }), E.AGENT_REASON_TEXT.preview_incomplete);
   assert.doesNotMatch(E.AGENT_REASON_TEXT.preview_incomplete, /preview_incomplete/);
@@ -773,7 +776,7 @@ test('R5 Approve is offered only when previewComplete === true (fail closed); Re
 // ---------- fix round 6 ----------
 
 test('R6 binary_file: no Approve, its own fixed sentence; Request changes and Reject stay; hidden_lines does not say the agent added a secret', () => {
-  const v = CS.changeSetModel({ version: { ...cset('candidate'), previewComplete: false, previewReason: 'binary_file' }, validations: allPass(), review: null, repo: repo() });
+  const v = csm({ version: { ...cset('candidate'), previewComplete: false, previewReason: 'binary_file' }, validations: allPass(), review: null, repo: repo() });
   assert.ok(!v.buttons.includes('approve') && !v.buttons.includes('accept'));
   assert.deepEqual(v.buttons, ['request_changes', 'reject']);
   assert.equal(v.sentences.length, 1);
@@ -785,8 +788,8 @@ test('R6 binary_file: no Approve, its own fixed sentence; Request changes and Re
   assert.doesNotMatch(CS.previewIncompleteText('hidden_lines'), /added|wrote|contains a secret/i);
   assert.match(CS.previewIncompleteText('hidden_lines'), /^Part of this change is hidden here because it looks like a secret/);
   // Still fail closed for anything but an explicit true.
-  assert.ok(!CS.changeSetModel({ version: { ...cset('candidate'), previewComplete: undefined, previewReason: 'binary_file' }, validations: allPass(), review: null, repo: repo() }).buttons.includes('approve'));
-  assert.match(fs.readFileSync(path.join(ROOT, 'src/shared/nexus/ipc.ts'), 'utf8'), /'hidden_lines' \| 'too_large' \| 'truncated' \| 'binary_file' \| 'unknown' \| null/);
+  assert.ok(!csm({ version: { ...cset('candidate'), previewComplete: undefined, previewReason: 'binary_file' }, validations: allPass(), review: null, repo: repo() }).buttons.includes('approve'));
+  assert.match(fs.readFileSync(path.join(ROOT, 'src/shared/nexus/ipc.ts'), 'utf8'), /'hidden_lines' \| 'too_large' \| 'truncated' \| 'binary_file'[^;]*'unknown' \| null/);
 });
 
 test('R6 agent work off says what is true: build, database, held or execution; an older answer reads as the build', () => {
@@ -811,4 +814,78 @@ test('R6 agent work off says what is true: build, database, held or execution; a
     ['v8_unavailable', 'execution'], ['registry_invalid', 'execution'], ['not_started', 'execution']]) assert.equal(AS.offReasonOf(reason), word, String(reason));
   assert.match(fs.readFileSync(path.join(ROOT, 'src/main/nexusIpc/registerNexusIpc.ts'), 'utf8'), /agentSetupView\(nx, agentsOff\(nx\)\)/);
   assert.match(fs.readFileSync(path.join(ROOT, 'src/shared/nexus/ipc.ts'), 'utf8'), /offReason\?: 'build' \| 'database' \| 'held' \| 'execution' \| null;/);
+});
+
+// ---------- fix round 7 ----------
+
+test('R7-1 diff lines are classified by hunk context: an added line that looks like a header is an added line; headers only outside a hunk', () => {
+  const kinds = (t) => CS.classifyDiff(t).map((l) => [l.kind, l.text]);
+  const patch = ['diff --git a/README.md b/README.md', 'index 1111111..2222222 100644', '--- a/README.md', '+++ b/README.md', '@@ -1,2 +1,4 @@', ' keep', '-gone',
+    '+++ b/other.txt', '+--- a/x', '++ b/README.md', '\\ No newline at end of file', '@@ -9 +11 @@', '-x', '+y'].join('\n');
+  assert.deepEqual(kinds(patch).map(([k]) => k), ['meta', 'meta', 'meta', 'meta', 'hunk', 'ctx', 'del', 'add', 'add', 'add', 'ctx', 'hunk', 'del', 'add']);
+  // `+++ b/x`, `--- a/x` and `++ b/README.md` as CONTENT.
+  const content = ['@@ -1,2 +1,2 @@', '--- a/x', '+++ b/x'].join('\n');
+  assert.deepEqual(CS.classifyDiff(content).map((l) => l.kind), ['hunk', 'del', 'add'], 'a removed `-- a/x` and an added `++ b/x` are content');
+  assert.deepEqual(CS.classifyDiff('@@ -0,0 +1 @@\n++ b/README.md').map((l) => l.kind), ['hunk', 'add']);
+  assert.deepEqual(CS.classifyDiff('@@ -1 +0,0 @@\n--- a/README.md').map((l) => l.kind), ['hunk', 'del']);
+  // After the counts run out the next lines are headers again, and a malformed hunk ends at the line that does not fit.
+  assert.deepEqual(CS.classifyDiff('@@ -1 +1 @@\n-a\n+b\n+++ b/next\n@@ -1 +1 @@\n-c\n+d').map((l) => l.kind), ['hunk', 'del', 'add', 'meta', 'hunk', 'del', 'add']);
+  assert.deepEqual(CS.classifyDiff('@@ -1,3 +1,3 @@\n-a\ndiff --git a/n b/n').map((l) => l.kind), ['hunk', 'del', 'meta'], 'a line that does not fit leaves the hunk');
+  // Without a regex over the line text: no header pattern is applied inside a hunk, and every line keeps its text and its sign.
+  assert.doesNotMatch(src('project/changeSetModel.ts'), /const META\b|diffLineKind/);
+  for (const l of CS.classifyDiff(patch)) assert.equal(typeof l.text, 'string');
+  assert.equal(CS.classifyDiff('+x\r\n')[0].text, '+x\r', 'the text is kept exactly');
+  // The reader renders those kinds.
+  assert.match(src('project/ChangeSetReview.tsx'), /classifyDiff\(d\.text\)/);
+  assert.match(src('project/ChangeSetReview.tsx'), /data-k=\{l\.kind\}/);
+});
+
+test('R7-2 Approve needs the WHOLE patch loaded; a partial or failed load keeps it hidden; Request changes and Reject are unaffected', () => {
+  const m = (diffRead, o = {}) => CS.changeSetModel({ version: cset('candidate'), validations: allPass(), review: null, repo: repo(), diffRead, ...o });
+  assert.deepEqual(m({ whole: true, readBytes: 65536, totalBytes: 65536 }).buttons, ['approve', 'request_changes', 'reject']);
+  // First page of a larger patch.
+  const part = m({ whole: false, readBytes: 65536, totalBytes: 2 * 1024 * 1024 });
+  assert.deepEqual(part.buttons, ['request_changes', 'reject']);
+  assert.ok(part.sentences.includes('Load the whole change to approve it (64 KB of 2 MB loaded).'), part.sentences.join('|'));
+  assert.equal(m({ whole: false, readBytes: 1024, totalBytes: null }).sentences[0], 'Load the whole change to approve it (1 KB loaded).');
+  // A failed page keeps Approve hidden, with its own sentence.
+  const failed = m({ whole: false, readBytes: 65536, totalBytes: 200000, failed: true });
+  assert.deepEqual(failed.buttons, ['request_changes', 'reject']);
+  assert.match(failed.sentences[0], /^The whole change could not be read, so it can’t be approved from Nexus\./);
+  assert.deepEqual(m({ whole: true, readBytes: 1, totalBytes: 1, failed: true }).buttons, ['request_changes', 'reject'], 'whole but failed: still closed');
+  // Not supplied at all: fail closed.
+  assert.deepEqual(m(undefined).buttons, ['request_changes', 'reject']);
+  assert.match(m(undefined).sentences[0], /^Load the whole change to approve it\./);
+  // Never a raw code, and an incomplete preview says its own reason rather than "load more".
+  for (const x of [part, failed]) assert.doesNotMatch(x.sentences.join(' '), /_/);
+  const inc = CS.changeSetModel({ version: { ...cset('candidate'), previewComplete: false, previewReason: 'too_large' }, validations: allPass(), review: null, repo: repo(), diffRead: { whole: false, readBytes: 1, totalBytes: 9 } });
+  assert.equal(inc.sentences.filter((s) => /Load the whole change/.test(s)).length, 0, 'an incomplete preview is not cured by loading more');
+  // Accept still needs only an approving review (the approval already saw the whole change).
+  assert.ok(CS.changeSetModel({ version: cset('candidate'), validations: allPass(), review: 'approve', repo: repo(), diffRead: { whole: false, readBytes: 1, totalBytes: 9 } }).buttons.includes('accept'));
+  // The reader reports what it loaded.
+  const rv = src('project/ChangeSetReview.tsx');
+  assert.match(rv, /diffRead: \{ whole: diff\.whole, readBytes: diff\.readBytes, totalBytes: diff\.totalBytes, failed: diff\.failed \}/);
+  assert.match(rv, /whole: loaded && last !== null && last\.nextPage === null && !unread/);
+  assert.match(rv, /d\.error \? 'Try again' : 'Show more of the change'/, 'a failed page can be retried with the same control');
+});
+
+test('R7-3 new closed reasons: unsafe_characters has its own sentence, an unfamiliar reason still reads unknown', () => {
+  assert.equal(CS.previewIncompleteText('unsafe_characters'),
+    'This change contains characters that can make code look different from what it does (hidden or reordering characters), so it can’t be approved from Nexus. Review it in your own tools, or ask the agent to remove them.');
+  const v = CS.changeSetModel({ version: { ...cset('candidate'), previewComplete: false, previewReason: 'unsafe_characters' }, validations: allPass(), review: null, repo: repo(), diffRead: WHOLE });
+  assert.deepEqual(v.buttons, ['request_changes', 'reject']);
+  assert.equal(v.sentences.length, 1);
+  assert.doesNotMatch(v.sentences[0], /unsafe_characters|_/);
+  const all = ['hidden_lines', 'too_large', 'truncated', 'binary_file', 'unsafe_characters', 'unknown'].map((r) => CS.previewIncompleteText(r));
+  assert.equal(new Set(all).size, 6, 'six closed reasons, six distinct sentences');
+  assert.equal(CS.previewIncompleteText('never_heard_of_it'), CS.previewIncompleteText('unknown'));
+});
+
+test('R7-3 the accept refusal base_moved reads main\'s sentence (mirrored word for word), never its code', () => {
+  const s = 'The ground this change was made on has moved; ask the agent to redo it on your current code.';
+  assert.equal(E.AGENT_REASON_TEXT.base_moved, s);
+  assert.equal(A.agentFailText({ code: 'conflict', reason: 'base_moved' }), s);
+  assert.equal(E.errorCopy('conflict', 'base_moved').text, s);
+  assert.doesNotMatch(s, /base_moved|_/);
+  assert.equal(ENV.AGENT_REASON_MESSAGES.base_moved, s, 'main words it the same');
 });
