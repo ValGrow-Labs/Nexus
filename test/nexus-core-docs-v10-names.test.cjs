@@ -366,8 +366,8 @@ test('DOC10-16 the off reasons and their sentences, the five preview sentences a
   const block = /PREVIEW_INCOMPLETE_TEXT[^{]*\{([\s\S]*?)\}\);/.exec(cs);
   assert.ok(block, 'PREVIEW_INCOMPLETE_TEXT found');
   const sentences = [...block[1].matchAll(/^\s*(\w+):\s*'([^']*)'/gm)];
-  assert.deepEqual(sentences.map((x) => x[1]), ['hidden_lines', 'too_large', 'truncated', 'binary_file', 'unknown']);
-  assert.equal(new Set(sentences.map((x) => x[2])).size, 5, 'five distinct sentences');
+  assert.deepEqual(sentences.map((x) => x[1]).sort(), ['binary_file', 'hidden_lines', 'too_large', 'truncated', 'unknown', 'unsafe_characters']);
+  assert.equal(new Set(sentences.map((x) => x[2])).size, 6, 'six distinct sentences');
   assert.doesNotMatch(sentences[0][2], /agent (added|wrote)/i, 'hidden_lines makes no claim that the agent added a secret');
   // The vendor allow-list pins each line by hash: 17 lines in all, as the doc says.
   const v5 = /const V5_ALLOWED = \{([\s\S]*?)\n\};/.exec(read('test/nexus-core-vendor-neutral.test.cjs'));
@@ -376,4 +376,46 @@ test('DOC10-16 the off reasons and their sentences, the five preview sentences a
   assert.equal(hashes, 17);
   assert.ok(section(59).includes('each of the 17 allowed lines'));
   assert.ok(section(53).includes('each of the 17 allowed lines'));
+});
+
+test('DOC10-17 the base_moved sentence and the unsafe-character set are stated as the code has them', () => {
+  const read = (rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8');
+  // base_moved: main's fixed sentence, word for word, in the doc.
+  const env = read('src/main/nexusIpc/envelope.ts');
+  const m = /\bbase_moved: '([^']*)'/.exec(env);
+  assert.ok(m, 'base_moved found in AGENT_REASON_MESSAGES');
+  assert.ok(section(56).includes(m[1]), 'section 56 quotes the base_moved sentence');
+  // The renderer mirrors it word for word.
+  assert.ok(read('src/renderer/src/nexus/data/errorCopy.ts').includes(m[1]));
+  // The unsafe set: the doc's list equals the runner's regex class, code point for code point.
+  const git = read('src/runner/gitWrite.ts');
+  const re = /const UNSAFE_CHAR_RE = \/\[([^\]]*)\]\/g;/.exec(git);
+  assert.ok(re, 'UNSAFE_CHAR_RE found');
+  const fromCode = new Set();
+  const cls = re[1];
+  for (const x of cls.matchAll(/\\u([0-9A-Fa-f]{4})(?:-\\u([0-9A-Fa-f]{4}))?/g)) {
+    const a = parseInt(x[1], 16); const b = x[2] ? parseInt(x[2], 16) : a;
+    for (let c = a; c <= b; c++) fromCode.add(c);
+  }
+  const block = /The flagged set is exactly:\n\n```text\n([\s\S]*?)\n```/.exec(section(56));
+  assert.ok(block, 'the flagged set is listed in section 56');
+  const fromDoc = new Set();
+  for (const line of block[1].split('\n')) {
+    const r = /^U\+([0-9A-F]{4})(?:-U\+([0-9A-F]{4}))?/.exec(line);
+    assert.ok(r, `a code point range: ${line}`);
+    const a = parseInt(r[1], 16); const b = r[2] ? parseInt(r[2], 16) : a;
+    for (let c = a; c <= b; c++) fromDoc.add(c);
+    if (/except/.test(line)) for (const e of [...line.matchAll(/U\+([0-9A-F]{4})/g)].slice(2)) fromDoc.delete(parseInt(e[1], 16));
+  }
+  assert.deepEqual([...fromDoc].sort((x, y) => x - y), [...fromCode].sort((x, y) => x - y));
+  assert.ok(fromDoc.has(0x200c), 'U+200C is flagged');
+  assert.ok(!fromDoc.has(0x09) && !fromDoc.has(0x0a) && !fromDoc.has(0x0d));
+  // The two exceptions are in the code and in the doc.
+  assert.match(git, /200D/i);
+  assert.match(section(56), /U\+200D between two emoji/);
+  assert.match(section(56), /very first character of a file's first line/);
+  // A gitlink-touching change is refused with the existing code; there is no submodule_change reason.
+  assert.match(git, /diff-tree/);
+  assert.doesNotMatch(git, /submodule_change/);
+  assert.match(section(56), /There is no `submodule_change` reason/);
 });
