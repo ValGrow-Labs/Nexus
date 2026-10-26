@@ -309,3 +309,33 @@ test('DOC10-14 the consent disclosure, the new-in-this-release note and the vend
     assert.ok(PART4.includes(w), `Part IV names ${w}`);
   }
 });
+
+test('DOC10-15 the preview verdict, the integration rewrite, the refresh bound and the request_changes rule are stated as the code has them', () => {
+  const read = (rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8');
+  const part = PART4;
+  // The preview: one shared argv and transform, a closed reason list that includes binary_file.
+  const git = read('src/runner/gitWrite.ts');
+  for (const name of ['PREVIEW_DIFF_ARGS', 'previewText', 'previewHiddenLines']) {
+    assert.ok(git.includes(name), `${name} exists in gitWrite.ts`);
+    assert.ok(part.includes(name), `${name} is named in Part IV`);
+  }
+  assert.match(git, /binary_file/);
+  for (const reason of ['truncated', 'too_large', 'binary_file', 'hidden_lines', 'unknown']) assert.ok(section(56).includes('`' + reason + '`'), `section 56 names ${reason}`);
+  assert.match(section(56), /password: 'x'/);
+  assert.match(section(56), /cannot be approved from Nexus/);
+  // The rewrite: main decides, ingest re-checks.
+  assert.match(read('src/main/nexus/repo/integrationBaseline.ts'), /rewriteAllowed/);
+  for (const w of ['rewriteAllowed()', 'allowRewrite', 'integrationRewrite', 'rewrite_refused', 'rewrite: true']) assert.ok(section(56).includes(w), `section 56 names ${w}`);
+  assert.match(section(56), /`entity_id` \(the ref\)/);
+  assert.match(read('src/main/nexus/exec/executionService.ts'), /NOT_CANCELLABLE_RECIPES[^\n]*'repo\.worktree'/);
+  assert.match(section(56), /`repo\.worktree` cannot be cancelled/);
+  // The refresh bound.
+  const { MAX_AUTO_REFRESHES } = (() => { const m = /export const MAX_AUTO_REFRESHES = (\d+);/.exec(read('src/main/nexus/agents/agentService.ts')); return { MAX_AUTO_REFRESHES: m ? Number(m[1]) : NaN }; })();
+  assert.equal(MAX_AUTO_REFRESHES, 3);
+  assert.ok(section(53).includes('`MAX_AUTO_REFRESHES` (3)'));
+  assert.match(section(53), /only while a consent is live/);
+  // request_changes: no "always recorded" wording anywhere in Part IV, and the structural list is there.
+  assert.doesNotMatch(part, /always recorded|it is always recorded/);
+  assert.match(section(56), /`turn_running`/);
+  assert.match(section(56), /`no_session`/);
+});
