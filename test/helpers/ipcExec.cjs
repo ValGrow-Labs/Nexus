@@ -22,7 +22,10 @@ function ipcOver(w, o = {}) {
     platform: o.platform ?? (() => w.nx), unavailableReason: () => 'held', handoffsUnavailableReason: () => null,
     sources, log: (l) => logs.push(l),
     executionUnavailableReason: o.executionUnavailableReason ?? (() => null),
-    exec: o.exec ?? (() => (w.nx && w.dataHome ? execIpcPort(w.nx, w.dataHome) : null))
+    exec: o.exec ?? (() => (w.nx && w.dataHome ? execIpcPort(w.nx, w.dataHome) : null)),
+    // B2b Task 14: the agent deps, only when a test passes them (the B2a callers register the 41 channels as before).
+    ...(o.agentsUnavailableReason ? { agentsUnavailableReason: o.agentsUnavailableReason } : {}),
+    ...(o.confirmMerge ? { confirmMerge: o.confirmMerge } : {})
   });
   const call = (ch, ...a) => { const f = handlers.get(ch); assert.ok(f, `no handler ${ch}`); return f({ sender: {} }, ...a); };
   const ok = async (ch, ...a) => { const r = await call(ch, ...a); assert.equal(r.ok, true, `${ch}: ${JSON.stringify(r)}`); return r.data; };

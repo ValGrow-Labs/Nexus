@@ -168,3 +168,80 @@ test('no nexus:* request schema (B1 or B2a) names a folder, file, image, network
   for (const k of typeKeys) assert.ok(k === 'relPath' || !banned.test(k), k);
   assert.equal((requests.match(/\brelPath\??:/g) || []).length, 1);
 });
+
+// B2b Task 14: the agent channels #42-#51 keep the same promise: ids and small values from the renderer, everything else in main.
+test('the agent request schemas (#42-#51) name no folder, command, image, network, host, model, principal or role; each key set is exact', () => {
+  const read = (p) => fs.readFileSync(path.join(__dirname, '..', p), 'utf8');
+  const mod = read('src/main/nexusIpc/registerNexusIpc.ts');
+  const validate = read('src/main/nexusIpc/validate.ts');
+  const block = mod.slice(mod.indexOf('// ---------- B2b Task 14: the agent channels #42-#51'));
+  assert.ok(block.length > 2000);
+  const lists = [...block.matchAll(/V\.object\([^,]+,\s*\[([^\]]*)\]/g)].map((m) => m[1]);
+  assert.equal(lists.length, 5, `the agent schemas were found (${lists.length})`);
+  const keysOf = (l) => [...l.matchAll(/['"`]([^'"`]+)['"`]/g)].map((m) => m[1]);
+  const banned = /^(root|rootPath|cwd|path|dir|folder|file|image|network|argv|command|env|host|hosts|hostname|url|proxy|model|modelId|provider|runtime|principal|principalId|actor|actorId|role|token|secret|worktree)$|Path$|Root$|Dir$|File$/i;
+  for (const k of [...lists.flatMap(keysOf), ...[...validate.matchAll(/CONSENT_CAP_KEYS = \[([^\]]*)\]/g)].flatMap((m) => keysOf(m[1]))]) assert.ok(!banned.test(k), k);
+  assert.deepEqual(lists.map(keysOf).sort(), [
+    ['decision', 'comment'], ['op', 'caps'], ['branch', 'expectedAcceptedHead'], ['projectId', 'statuses'],
+    ['projectId', 'workspaceId', 'sessionId', 'skillId', 'focusVersionIds', 'message', 'intentId']
+  ].sort());
+  // The one place a destination enters a consent is the runtime probe's cache, never a request field.
+  assert.match(block, /nx\.budget!\.grant\(me, \{ runtimeKind: seen\.kind, hosts, caps: q\.caps \}\)/);
+  assert.match(block, /const hosts = probe\?\.cache\.egressHosts\(\) \?\? null;/);
+  assert.doesNotMatch(block, /\b(o|q|a)\.hosts?\b/);
+  // The request types the preload sends (B2b part): the same ban.
+  const ipc = read('src/shared/nexus/ipc.ts');
+  const b2b = ipc.slice(ipc.indexOf('// ---------- B2b requests'));
+  assert.ok(b2b.length > 300);
+  for (const k of [...b2b.matchAll(/\b([A-Za-z]+)\??:\s/g)].map((m) => m[1])) assert.ok(!banned.test(k), k);
+  // The preload takes no principal or function: each agent method forwards its ids and values and nothing else.
+  const preload = read('src/preload/index.ts');
+  for (const m of preload.matchAll(/^  (nexus(?:AgentStart|SessionsList|SessionGet|SessionEnd|SessionCancel|ReviewDecide|ChangeSetAccept|RepoStatus|RepoMergeAccepted|AgentConsent)):[^\n]*\n[^\n]*\n/gm)) {
+    assert.doesNotMatch(m[0], /principal|actor|role|=>\s*\w+\s*\(/i, m[1]);
+  }
+});
+
+test('"Merge accepted work" is confirmed only by main\'s own dialog, and only through the execution handle: one call, one dependency, Cancel by default', () => {
+  const read = (p) => fs.readFileSync(path.join(__dirname, '..', p), 'utf8');
+  const mod = read('src/main/nexusIpc/registerNexusIpc.ts');
+  // Exactly one mergeAccepted call in all of src/main (outside the service's own definition), and its confirm is the dependency.
+  const calls = [];
+  for (const f of fs.readdirSync(path.join(__dirname, '..', 'src/main'), { recursive: true }).map(String).filter((x) => x.endsWith('.ts'))) {
+    for (const m of read(path.join('src/main', f)).matchAll(/\.mergeAccepted\(([^;]*)\);/g)) calls.push([f.replace(/\\/g, '/'), m[0]]);
+  }
+  assert.equal(calls.length, 1, JSON.stringify(calls));
+  assert.equal(calls[0][0], 'nexusIpc/registerNexusIpc.ts');
+  assert.match(calls[0][1], /, confirmMerge\)/);
+  assert.match(mod, /const confirmMerge: \(info: MergeConfirmInfo\) => Promise<boolean> = deps\.confirmMerge \?\? \(async \(\) => false\);/);
+  // main wires the dependency from the execution handle and builds the dialog in one place.
+  const idx = read('src/main/index.ts');
+  assert.equal((idx.match(/confirmMerge: \(info\) =>/g) || []).length, 1);
+  assert.match(idx, /confirmMerge: \(info\) => \(nexusExecution \? nexusExecution\.confirmMerge\(info\) : Promise\.resolve\(false\)\)/);
+  assert.equal((idx.match(/mergeDialog:/g) || []).length, 1);
+  assert.equal((idx.match(/showMessageBox/g) || []).length >= 2, true);
+  assert.doesNotMatch(idx, /confirm(ed)?Via|\.accepts\b|mergeAccepted/);
+  const wiring = read('src/main/nexusExec/execWiring.ts');
+  assert.match(wiring, /async confirmMerge\(info\) \{\s*if \(!o\.mergeDialog\) return false;\s*try \{ return \(await o\.mergeDialog\(info\)\) === true;/);
+  const dlg = read('src/main/nexusExec/mergeDialog.ts');
+  assert.match(dlg, /defaultId: 0, cancelId: 0/);
+  assert.match(dlg, /MERGE_BUTTONS = \['Cancel', 'Merge'\]/);
+  // The accept service is the only place that writes `confirmedVia`, and only after an exact true.
+  const svc = read('src/main/nexus/repo/acceptService.ts');
+  assert.match(svc, /confirmed = \(await confirm\(this\.mergeInfo\(projectId, s, sha\)\)\) === true;/);
+  assert.equal((svc.match(/mergedBy: user\.id, confirmedVia: 'dialog'/g) || []).length, 1, 'the one place the merge job is told a dialog confirmed it');
+});
+
+test('the diff preview takes its commits and folder only from the stored change set and project (never from the request)', () => {
+  const read = (p) => fs.readFileSync(path.join(__dirname, '..', p), 'utf8');
+  const svc = read('src/main/nexus/repo/acceptService.ts');
+  const diff = svc.slice(svc.indexOf('async diff('), svc.indexOf('// ---------- merge accepted work'));
+  assert.ok(diff.length > 500);
+  assert.match(diff, /const storage = parse\(v\.storage_ref_json\); const meta = parse\(v\.metadata_json\);/);
+  assert.match(diff, /typeof meta\.base === 'string'/);
+  assert.match(diff, /const repoPath = this\.repoPathOf\(v\.project_id\);/);
+  assert.match(diff, /read: 'diff', repoPath, base, head, maxBytesPerSide: GIT_DIFF_MAX_BYTES_PER_SIDE/);
+  assert.match(diff, /redactSecretText\(r\.patch\)/);
+  // The wiring hands it only the principal, the version id and nothing else.
+  const wiring = read('src/main/nexusExec/execWiring.ts');
+  assert.match(wiring, /await accepts\.diff\(p, versionId\)/);
+});

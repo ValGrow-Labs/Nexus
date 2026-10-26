@@ -7,7 +7,9 @@ import type {
   SaveTextFileArgs, SendHandoffArgs, SendHandoffView, VersionDetail, VersionView,
   ActionAvailabilityView, ActionsQuery, ApprovalDecisionArg, ApprovalsListFilter, ApprovalView, BlobGcArgs, BlobGcView, DeploymentsListFilter,
   DeploymentView, DomainSpecView, EventsPageView, EventsQuery, HealthQuery, HealthView, ImageProfileArg, InlineSaveView, JobDetailView, JobLogsQuery,
-  JobsListFilter, JobStartArgs, JobStartView, JobView, LogPageView, NexusHint, PreviewQuery, PreviewView, SaveInlineArgs, ValidationResultView
+  JobsListFilter, JobStartArgs, JobStartView, JobView, LogPageView, NexusHint, PreviewQuery, PreviewView, SaveInlineArgs, ValidationResultView,
+  AcceptResultView, AgentConsentArgs, AgentSetupView, AgentStartArgs, AgentStartResultView, MergeView, RepoMergeArgs, RepoStatusView, ReviewDecideArgs,
+  ReviewResultView, SessionDetailView, SessionsListFilter, SessionView
 } from '../shared/nexus/ipc';
 
 export type { HireManifest } from '../shared/hire';
@@ -1706,6 +1708,27 @@ const api = {
     ipcRenderer.invoke('nexus:setup:prepareImage', profileId, intentId),
   nexusBlobsGc: (args: BlobGcArgs): Promise<NexusResult<BlobGcView>> =>
     ipcRenderer.invoke('nexus:blobs:gc', args),
+  // B2b Task 14: the agent channels #42-#51 (ids, enums and small values only; main resolves the user, the runtime, the network and the dialog).
+  nexusAgentStart: (args: AgentStartArgs): Promise<NexusResult<AgentStartResultView>> =>
+    ipcRenderer.invoke('nexus:agent:start', args),
+  nexusSessionsList: (filter: SessionsListFilter): Promise<NexusResult<SessionView[]>> =>
+    ipcRenderer.invoke('nexus:sessions:list', filter),
+  nexusSessionGet: (sessionId: string): Promise<NexusResult<SessionDetailView>> =>
+    ipcRenderer.invoke('nexus:session:get', sessionId),
+  nexusSessionEnd: (sessionId: string): Promise<NexusResult<SessionView>> =>
+    ipcRenderer.invoke('nexus:session:end', sessionId),
+  nexusSessionCancel: (sessionId: string): Promise<NexusResult<SessionView>> =>
+    ipcRenderer.invoke('nexus:session:cancel', sessionId),
+  nexusReviewDecide: (versionId: string, args: ReviewDecideArgs, intentId: string): Promise<NexusResult<ReviewResultView>> =>
+    ipcRenderer.invoke('nexus:review:decide', versionId, args, intentId),
+  nexusChangeSetAccept: (versionId: string, expectedIntegrationHead: string): Promise<NexusResult<AcceptResultView>> =>
+    ipcRenderer.invoke('nexus:changeSet:accept', versionId, expectedIntegrationHead),
+  nexusRepoStatus: (projectId: string): Promise<NexusResult<RepoStatusView>> =>
+    ipcRenderer.invoke('nexus:repo:status', projectId),
+  nexusRepoMergeAccepted: (projectId: string, args: RepoMergeArgs): Promise<NexusResult<MergeView>> =>
+    ipcRenderer.invoke('nexus:repo:mergeAccepted', projectId, args),
+  nexusAgentConsent: (args: AgentConsentArgs): Promise<NexusResult<AgentSetupView>> =>
+    ipcRenderer.invoke('nexus:agent:consent', args),
   /** The hint push: the newest event seq only (pull nexusEventsSince for what changed). Returns an unsubscribe. */
   onNexusHint: (cb: (hint: NexusHint) => void): (() => void) => {
     const listener = (_e: IpcRendererEvent, hint: NexusHint) => {

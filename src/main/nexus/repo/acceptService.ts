@@ -34,6 +34,7 @@
  */
 import type Database from 'better-sqlite3';
 import type { ArtifactVersion, Principal } from '../../../shared/nexus/platform';
+import { GIT_DIFF_MAX_BYTES_PER_SIDE } from '../../../shared/nexus/execution';
 import { getRecipe } from '../../../shared/nexus/recipes';
 import { integrationRefFor } from '../../../shared/nexus/changeSet';
 import { appendJobEventTx } from '../exec/events';
@@ -357,6 +358,37 @@ export class AcceptService {
     this.access.require(user, projectId, 'project.read');
     this.reconcileEnded();
     return this.readStatus(projectId, repoBranchOf(this.db, projectId));
+  }
+
+  // ---------- the diff of a change set (B2b Task 14, F19) ----------
+
+  /**
+   * The patch between a change set's RECORDED base (`metadata.base`) and head (`storage.commit`), by the runner's bounded git
+   * read (1 MiB per side) and redacted again here. Nothing the renderer sends names a commit. A change set only: any other kind
+   * is refused (`no_such_part`). A diff larger than the cap answers `too_large`; a read that fails says so in a fixed sentence.
+   */
+  async diff(user: Principal, versionId: string): Promise<{ patch: string; bytes: number }> {
+    const v = this.versionOf(versionId);
+    if (!v) { this.deps.auth.require(user, 'project.read', { type: 'platform' }); throw new PlatformError('not_found', 'version not found'); }
+    this.access.require(user, v.project_id, 'artifact.read', v.owner_workspace_id ? { workspaceId: v.owner_workspace_id } : undefined);
+    if (v.kind !== 'change_set') throw new PlatformError('invalid', `a ${v.kind} version has no diff to preview`, { reason: 'no_such_part' });
+    const storage = parse(v.storage_ref_json); const meta = parse(v.metadata_json);
+    const head = isObj(storage) && typeof storage.commit === 'string' && COMMIT_RE.test(storage.commit) ? storage.commit : null;
+    const base = isObj(meta) && typeof meta.base === 'string' && COMMIT_RE.test(meta.base) ? meta.base : null;
+    if (!head || !base) throw new PlatformError('unavailable', 'the change set records no commits to compare', { reason: 'no_commit' });
+    const repoPath = this.repoPathOf(v.project_id);
+    if (!repoPath) throw new PlatformError('unavailable', 'the project folder is not available', { reason: 'project_folder_unavailable' });
+    if (!this.deps.gitRead) throw new PlatformError('unavailable', 'the repository cannot be read right now', { reason: 'runner_unavailable' });
+    const r = await this.deps.gitRead.request({ read: 'diff', repoPath, base, head, maxBytesPerSide: GIT_DIFF_MAX_BYTES_PER_SIDE });
+    const tooLarge = (): PlatformError => new PlatformError('too_large', 'This change is too large to show here.', { versionId: v.id });
+    if (!r.ok) {
+      if (r.code === 'too_large') throw tooLarge();
+      const text = r.code === 'git_missing' ? GIT_FAILURE_TEXT.git_missing : r.code === 'unknown_ref' ? GIT_FAILURE_TEXT.unknown_commit : 'The change could not be read from the repository.';
+      throw new PlatformError('unavailable', text, { reason: r.code });
+    }
+    if (r.read !== 'diff') throw new PlatformError('unavailable', 'The change could not be read from the repository.', { reason: 'error' });
+    if (r.truncated) throw tooLarge();
+    return { patch: redactSecretText(r.patch), bytes: r.bytes };
   }
 
   // ---------- merge accepted work ----------

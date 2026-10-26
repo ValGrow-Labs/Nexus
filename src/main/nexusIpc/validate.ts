@@ -51,6 +51,9 @@ const FORBIDDEN_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
 const ACTION_ID = /^[a-z][a-z0-9_.-]{1,63}$/;
 const SLOT = /^[a-z][a-z0-9_]{0,31}$/;
 const SHA256 = /^[0-9a-f]{64}$/;
+const SKILL_ID = /^[a-z][a-z0-9_.-]{1,63}$/;
+/** A branch name's shape only (the accept service applies the strict git rule to what it records). */
+const BRANCH_SHAPE = /^[A-Za-z0-9._/-]{1,200}$/;
 /** The most job inputs a start takes (the core's MAX_START_INPUTS) and the params / inline content budgets. */
 export const MAX_JOB_INPUTS = 64;
 export const MAX_PARAMS_BYTES = 8 * 1024;
@@ -67,7 +70,13 @@ export const JOB_KINDS_ACCEPTED = ['agent.run', 'tool.run', 'validate', 'ingest'
 export const DEPLOYMENT_STATUSES_ACCEPTED = ['starting', 'healthy', 'unhealthy', 'stopped', 'failed'] as const;
 export const APPROVAL_STATUSES_ACCEPTED = ['pending', 'approved', 'denied', 'expired', 'withdrawn'] as const;
 export const IMAGE_PROFILES_ACCEPTED = ['sde-node', 'sde-python', 'nexus-fwd'] as const;
-export const PREVIEW_PARTS = ['content', 'manifest', 'discovery', 'junit_summary'] as const;
+export const PREVIEW_PARTS = ['content', 'manifest', 'discovery', 'junit_summary', 'diff'] as const;
+/** B2b: the agent session statuses a list may filter by, the message and comment bounds, and the cap names of a consent grant. */
+export const SESSION_STATUSES_ACCEPTED = ['open', 'running', 'awaiting_approval', 'completed', 'failed', 'cancelled', 'timed_out', 'interrupted'] as const;
+export const MAX_AGENT_MESSAGE_CHARS = 8000;
+export const MAX_REVIEW_COMMENT_CHARS = 4000;
+export const MAX_FOCUS_VERSIONS = 20;
+export const CONSENT_CAP_KEYS = ['turnUsdCents', 'dayUsdCents', 'turnsPerHour', 'concurrentTurns', 'turnTokens', 'toolCalls'] as const;
 export const INLINE_KINDS_ACCEPTED = ['requirement', 'problem_statement'] as const;
 
 const isPlain = (x: unknown): x is Record<string, unknown> => {
@@ -241,6 +250,61 @@ export const V = {
     const out = plainElements(x, 'states', 1, JOB_STATES.length, `must list 1 to ${JOB_STATES.length} job states`)
       .map((v, i) => V.enumOf(v, `states[${i}]`, JOB_STATES));
     if (new Set(out).size !== out.length) throw new RequestError('states', 'must not repeat a state');
+    return out;
+  },
+  /** 0..max unique platform ids (an empty list is allowed). */
+  idListOrEmpty(x: unknown, f: string, max: number): string[] {
+    const out = plainElements(x, f, 0, max, `must list at most ${max} ids`).map((v, i) => V.platformId(v, `${f}[${i}]`));
+    if (new Set(out).size !== out.length) throw new RequestError(f, 'must not repeat an id');
+    return out;
+  },
+  /** A message to the agent: 1..8000 characters with some visible text; line breaks and tabs allowed, no other control character. */
+  agentMessage(x: unknown): string {
+    const s = str(x, 'message');
+    if (s.trim().length === 0 || s.length > MAX_AGENT_MESSAGE_CHARS) throw new RequestError('message', `must be 1 to ${MAX_AGENT_MESSAGE_CHARS} characters`);
+    // eslint-disable-next-line no-control-regex
+    if (/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/.test(s)) throw new RequestError('message', 'must not contain control characters');
+    return s;
+  },
+  /** A review comment: at most 4000 characters, no NUL (the review service decides whether one is required). */
+  reviewComment(x: unknown): string | undefined {
+    if (x === undefined) return undefined;
+    const s = str(x, 'comment');
+    if (s.length > MAX_REVIEW_COMMENT_CHARS) throw new RequestError('comment', `must be at most ${MAX_REVIEW_COMMENT_CHARS} characters`);
+    if (s.includes('\0')) throw new RequestError('comment', 'must not contain NUL');
+    return s;
+  },
+  skillId(x: unknown): string {
+    const s = str(x, 'skillId');
+    if (!SKILL_ID.test(s)) throw new RequestError('skillId', 'is not a valid skill id');
+    return s;
+  },
+  branchName(x: unknown): string {
+    const s = str(x, 'branch');
+    if (!BRANCH_SHAPE.test(s)) throw new RequestError('branch', 'is not a valid branch name');
+    return s;
+  },
+  /** A full commit id (40 lowercase hex) under a field name of the caller's choosing. */
+  commitId(x: unknown, f: string): string {
+    const s = str(x, f);
+    if (!COMMIT.test(s)) throw new RequestError(f, 'must be a full 40-character commit id');
+    return s;
+  },
+  /** 1..8 unique session statuses. */
+  sessionStatuses(x: unknown): (typeof SESSION_STATUSES_ACCEPTED)[number][] {
+    const out = plainElements(x, 'statuses', 1, SESSION_STATUSES_ACCEPTED.length, `must list 1 to ${SESSION_STATUSES_ACCEPTED.length} session statuses`)
+      .map((v, i) => V.enumOf(v, `statuses[${i}]`, SESSION_STATUSES_ACCEPTED));
+    if (new Set(out).size !== out.length) throw new RequestError('statuses', 'must not repeat a status');
+    return out;
+  },
+  /**
+   * The caps of a consent grant: only the six the consent stores, each a whole number of 1 or more (a larger one is lowered to
+   * the D-B4 ceiling by the service, never refused). There is no key for a destination: a host is never the renderer's to choose.
+   */
+  consentCaps(x: unknown): Partial<Record<(typeof CONSENT_CAP_KEYS)[number], number>> {
+    const o = V.object(x, CONSENT_CAP_KEYS, CONSENT_CAP_KEYS);
+    const out: Partial<Record<(typeof CONSENT_CAP_KEYS)[number], number>> = {};
+    for (const k of CONSENT_CAP_KEYS) if (o[k] !== undefined) out[k] = V.int(o[k], k, 1, Number.MAX_SAFE_INTEGER);
     return out;
   },
   /** An approval answer: once or deny. 'always' does not exist (every approval is for one attempt). */

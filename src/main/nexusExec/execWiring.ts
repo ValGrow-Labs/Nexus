@@ -110,6 +110,12 @@ export interface ExecutionHandle extends ExecIpcPort {
    * or when it throws, it answers false (a merge is never confirmed on the user's behalf).
    */
   confirmMerge(info: MergeConfirmInfo): Promise<boolean>;
+  /**
+   * B2b Task 14: one scheduler pass soon (deferred out of the caller's own work, so never inside its transaction): called when
+   * a service queued a job (an accept, a merge, an agent turn), so it does not wait for the next 1 s tick. Only once the
+   * scheduler ticks (never before the first reconcile); a no-op after `stop`.
+   */
+  tickSoon(): void;
   /** App quit, bounded at 5 s. */
   stop(): Promise<void>;
 }
@@ -324,9 +330,28 @@ export function execIpcPort(platform: NexusPlatform, home: HomeReads, opts: { re
     },
     async preview(p, versionId, q) {
       const queries = platform.queries ?? execOff(platform);
-      const src = queries.previewSource(p, versionId, q.part);
       const max = Number.isSafeInteger(q.maxBytes) && q.maxBytes > 0 ? Math.min(q.maxBytes, MAX_LOG_PAGE) : MAX_LOG_PAGE;
       const base = { part: q.part, versionId };
+      const textPage = (raw: Buffer): PreviewPage => {
+        const page = Number.isSafeInteger(q.page) && q.page! >= 0 ? q.page! : 0;
+        // The WHOLE content is redacted first, then paged (fix round 1): a cut can never split a secret into two pages that
+        // each pass the redactor. It is redacted once per content (fix round 2: redactOnce), so later pages cost a hash.
+        const all = redactOnce(raw);
+        const total = all.length;
+        // Fixed page boundaries, each snapped back to a code point (a character is never split between two pages).
+        const s = snapToCodePoint(all, Math.min(page * max, total));
+        const e = snapToCodePoint(all, Math.min((page + 1) * max, total));
+        return { ...base, text: all.subarray(s, Math.max(s, e)).toString('utf8'), rows: null, page, nextPage: (page + 1) * max < total ? page + 1 : null,
+          fromRow: null, nextRow: null, totalRows: null, totalBytes: total };
+      };
+      if (q.part === 'diff') {
+        // B2b Task 14 (F19): a change set's patch between its RECORDED base and head, by the runner's bounded git read (1 MiB per
+        // side), only through the accept service (which refuses every other kind); the renderer names no commit.
+        const accepts = platform.accepts ?? (() => { throw new PlatformError('invalid', 'there is no diff to preview', { reason: 'no_such_part' }); })();
+        const d = await accepts.diff(p, versionId);
+        return textPage(Buffer.from(d.patch, 'utf8'));
+      }
+      const src = queries.previewSource(p, versionId, q.part);
       if (src.type === 'rows') {
         // A row cursor (fix round 1): the next page starts at the first row this one did not return.
         const from = Number.isSafeInteger(q.fromRow) && q.fromRow! >= 0 ? q.fromRow! : 0;
@@ -342,10 +367,7 @@ export function execIpcPort(platform: NexusPlatform, home: HomeReads, opts: { re
         return { ...base, text: null, rows, page: null, nextPage: null, fromRow: from, nextRow: end < src.rows.length ? end : null,
           totalRows: src.rows.length, totalBytes: null };
       }
-      const page = Number.isSafeInteger(q.page) && q.page! >= 0 ? q.page! : 0;
-      // The WHOLE content is redacted first, then paged (fix round 1): a cut can never split a secret into two pages that
-      // each pass the redactor. Text is at most PREVIEW_MAX_OBJECT_BYTES, and it is redacted once per content (fix round 2:
-      // redactOnce), so later pages of the same text cost a hash, not a redaction.
+      // Text is at most PREVIEW_MAX_OBJECT_BYTES.
       let raw: Buffer;
       if (src.type === 'text') raw = Buffer.from(src.text, 'utf8');
       else {
@@ -355,13 +377,7 @@ export function execIpcPort(platform: NexusPlatform, home: HomeReads, opts: { re
         if (r.includes(0)) throw new PlatformError('invalid', 'the stored content is not text', { reason: 'binary_content' });
         raw = r;
       }
-      const all = redactOnce(raw);
-      const total = all.length;
-      // Fixed page boundaries, each snapped back to a code point (a character is never split between two pages).
-      const s = snapToCodePoint(all, Math.min(page * max, total));
-      const e = snapToCodePoint(all, Math.min((page + 1) * max, total));
-      return { ...base, text: all.subarray(s, Math.max(s, e)).toString('utf8'), rows: null, page, nextPage: (page + 1) * max < total ? page + 1 : null,
-        fromRow: null, nextRow: null, totalRows: null, totalBytes: total };
+      return textPage(raw);
     },
     async blobsGc(p, q) {
       const blobs = platform.blobs ?? execOff(platform);
@@ -498,6 +514,10 @@ export async function startExecution(o: { platform: NexusPlatform; userData: str
     async confirmMerge(info) {
       if (!o.mergeDialog) return false;
       try { return (await o.mergeDialog(info)) === true; } catch (e) { log(`[nexus] the merge dialog failed (${(e as Error)?.name ?? 'error'}); nothing was merged`); return false; }
+    },
+    tickSoon() {
+      if (!ticking || stopped) return;
+      timers.setTimeout(() => { if (ticking && !stopped) { exec.tick(now()); hint.poke(); } }, 0);
     },
     async stop() {
       if (stopped) return;

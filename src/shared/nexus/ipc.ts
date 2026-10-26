@@ -28,7 +28,12 @@ export type ExecutionUnavailableSubReason = 'held' | 'auto_held' | 'backup_faile
  * timeout; nothing was written and the same request may be sent again. 'execution_unavailable' (B2a): the channel
  * needs schema v9 execution, which is off (with its sub-reason); the B1 channels and #22/#23 still answer.
  */
-export type UnavailableReason = PlatformUnavailableReason | 'handoffs_unavailable' | 'execution_unavailable' | 'busy';
+export type UnavailableReason = PlatformUnavailableReason | 'handoffs_unavailable' | 'execution_unavailable' | 'agents_unavailable' | 'busy';
+/**
+ * Why the agents part (schema v10) is off while the platform is up: the sub-reason of 'agents_unavailable' (B2b). The same
+ * words as the execution sub-reasons (`not_enabled` while v10 is not turned on; execution's own reason while execution is off).
+ */
+export type AgentsUnavailableSubReason = ExecutionUnavailableSubReason;
 
 export type NexusErrorCode = PlatformErrorCode | 'internal';
 
@@ -36,7 +41,9 @@ export type NexusErrorCode = PlatformErrorCode | 'internal';
 export type NexusErrorDetailKey = 'currentVersionId' | 'handoffId' | 'versionId' | 'participationId' | 'liveJobs'
   | 'liveSessions' | 'openHandoffs' | 'existingId' | 'limit'
   // B2a Task 13: the records a refusal names, and the numbers of a setup:* answer (the disk gate).
-  | 'jobId' | 'approvalId' | 'deploymentId' | 'setup' | 'freeBytes' | 'requiredBytes';
+  | 'jobId' | 'approvalId' | 'deploymentId' | 'setup' | 'freeBytes' | 'requiredBytes'
+  // B2b Task 14: a refused accept names the integration head it found (`current`, 40 hex) and says when its rollback is still owed.
+  | 'current' | 'rollbackOwed';
 
 export type NexusOk<T> = { ok: true; data: T; truncated?: boolean };
 export type NexusFail = {
@@ -47,7 +54,7 @@ export type NexusFail = {
   subReason?: string;
   /** With reason 'bad_request': the request field that was refused. */
   field?: string;
-  detail?: Partial<Record<NexusErrorDetailKey, string | number | null>>;
+  detail?: Partial<Record<NexusErrorDetailKey, string | number | boolean | null>>;
 };
 /**
  * Every nexus:* channel answers with this; it never rejects. `truncated` is set on list
@@ -168,6 +175,8 @@ export interface HealthView {
   problems: string[];
   gpu: { detected: boolean; model?: string; supported: false };
   checkedAt: number | null;
+  /** B2b: the agent setup row, from main's cache (hosts are never in it; its label is for the setup row only). */
+  agent: AgentSetupView;
 }
 /**
  * An action as the user may see it now. `reason` when not available: `planned` (a later sub-phase), `future` (its
@@ -235,10 +244,12 @@ export interface ValidationResultView {
   /** Every row recorded for this validator on the version, blocking and advisory. */
   history: number;
 }
-export type PreviewPart = 'content' | 'manifest' | 'discovery' | 'junit_summary';
+export type PreviewPart = 'content' | 'manifest' | 'discovery' | 'junit_summary' | 'diff';
 export interface PreviewView {
   part: PreviewPart; versionId: VersionId;
   /**
+   * `diff` (B2b, change sets only): the patch between the change set's recorded base and head, redacted whole and paged like
+   * `content`; a diff larger than 1 MiB per side answers `too_large`.
    * A page of text (redacted whole, then paged: `page` / `nextPage`; a cut never splits a character), or of rows
    * (manifest files, discovered tests, the JUnit table: counts, then failed cases, then errored ones) paged by a row
    * cursor: `fromRow` / `nextRow` (the first row not returned; null at the end).
@@ -328,7 +339,9 @@ export interface RepoStatusView {
   projectId: ProjectId;
   /** The checked-out branch, its head and whether the working tree has uncommitted changes (null when unknown). */
   branch: string | null; head: string | null; dirty: boolean | null;
-  integrationRef: string | null; acceptedHead: string | null;
+  integrationRef: string | null;
+  /** The integration ref's head: the commit #48 expects and #50 shows (equal to the newest accept's commit once something was accepted). */
+  acceptedHead: string | null;
   /** Accepted commits not yet on the branch. */
   acceptedNotMerged: number;
   /** True when "Merge accepted work" can fast-forward now. */
@@ -386,7 +399,7 @@ export interface JobStartArgs {
 export interface JobsListFilter { projectId?: ProjectId; workspaceId?: WorkspaceId; states?: JobState[]; jobKind?: JobKind; limit?: number }
 export interface JobLogsQuery { attempt: number; fromOffset: number; maxBytes: number }
 export interface EventsQuery { sinceSeq: number; projectId?: ProjectId; limit?: number }
-/** `page` for the text part (`content`), `fromRow` for the row parts; never both. */
+/** `page` for the text parts (`content`, `diff`), `fromRow` for the row parts; never both. */
 export interface PreviewQuery { part: PreviewPart; page?: number; fromRow?: number; maxBytes: number }
 export interface SaveInlineArgs {
   projectId: ProjectId; workspaceId: WorkspaceId; kind: 'requirement' | 'problem_statement'; target: SaveTargetArg;
@@ -400,3 +413,21 @@ export type ImageProfileArg = 'sde-node' | 'sde-python' | 'nexus-fwd';
 export type BlobGcArgs = { apply: false } | { apply: true; expectedCandidatesHash: string };
 /** The nexus:hint push: only the newest event seq (pull #31 for what changed). */
 export interface NexusHint { lastSeq: number }
+
+// ---------- B2b requests (channels #42-#51): ids, enums and bounded values; the renderer never names a host, a model, a
+// principal or a location. Hosts of the agent's network permission come from main's runtime probe.
+export interface AgentStartArgs {
+  projectId: ProjectId; workspaceId: WorkspaceId; sessionId: SessionId | null; skillId?: string;
+  focusVersionIds: VersionId[]; message: string; intentId: string;
+}
+export interface SessionsListFilter { projectId: ProjectId; statuses?: AgentSessionStatus[] }
+export interface ReviewDecideArgs { decision: ReviewDecision; comment?: string }
+export interface RepoMergeArgs { branch: string; expectedAcceptedHead: string }
+/** The caps a grant may ask for: each is clamped to the D-B4 ceiling in main (a larger value is lowered, never refused). */
+export interface AgentConsentCaps {
+  turnUsdCents?: number; dayUsdCents?: number; turnsPerHour?: number; concurrentTurns?: number; turnTokens?: number; toolCalls?: number;
+}
+export type AgentConsentArgs = { op: 'get' } | { op: 'revoke' } | { op: 'grant'; caps?: AgentConsentCaps };
+export interface AgentStartResultView { session: SessionView; job: JobView }
+export interface ReviewResultView { review: ReviewView; job: JobView | null }
+export interface AcceptResultView { version: VersionView; accept: ChangeSetAcceptView }

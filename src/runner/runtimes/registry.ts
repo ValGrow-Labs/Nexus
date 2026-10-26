@@ -16,6 +16,7 @@
 import type { AgentRuntime, RuntimeKind } from '../../shared/nexus/runtime';
 import { CLI_AGENT_KIND, createCliAgentAdapter, type Preflight, type TurnCaps } from './cliAgent/adapter';
 import { sanitizeOverlay } from './cliAgent/testSeam';
+import type { RuntimeProbeAdapter } from './probe';
 import { SCRIPTED_KIND, ScriptedRuntime, type ScriptedStep } from './scripted';
 
 export { CLI_AGENT_KIND, SCRIPTED_KIND };
@@ -61,4 +62,9 @@ export function runtimeFor(kind: RuntimeKind, ctx: RuntimeTurnContext): AgentRun
     });
   }
   throw new Error(`no runtime is registered for ${String(kind)}`);
+}
+
+/** The adapters the runner's probe reports (production: the `cli-agent` adapter, sharing the preflight cache with turns). Runs nothing by itself. */
+export function probeAdapters(): RuntimeProbeAdapter[] {
+  return [createCliAgentAdapter({ preflightCache: PREFLIGHT_CACHE })];
 }

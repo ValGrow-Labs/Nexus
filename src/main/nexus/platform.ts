@@ -63,7 +63,8 @@ import { ExecQueries } from './exec/execQueries';
 import { registryProblems } from './registryImpl';
 import { v10ShapeProblem } from './db/schemaV10';
 import { TokenService } from './agents/tokenService';
-import { BudgetService } from './agents/budgetService';
+import { BudgetService, hostsSha256 } from './agents/budgetService';
+import { RuntimeHealthCache, type AgentRuntimeProbe } from './agents/runtimeHealth';
 import { ContextResolver } from './agents/contextResolver';
 import { Skills } from './agents/skills';
 import { McpGateway } from './agents/mcpGateway';
@@ -142,6 +143,8 @@ export interface NexusPlatform {
   reviews: ReviewService | null;
   /** B2b Task 9: accept (merge-tree, CAS, rollback), the integration-ref status and "Merge accepted work"; null unless agents are available. */
   accepts: AcceptService | null;
+  /** B2b Task 14: the cached health of the agent runtime (from the runner's probe) and the refresh trigger; null unless agents are available. */
+  agentProbe: AgentRuntimeProbe | null;
   startup(): NexusStartupReport;
 }
 
@@ -208,6 +211,13 @@ export interface NexusPlatformOptions {
    * is refused at start and a queued one waits `waiting:runtime`.
    */
   runtimeHealth?: RuntimeHealthProvider;
+  /**
+   * B2b Task 14: called after a job was queued by the agent, worktree, accept or merge services (main: a deferred scheduler
+   * tick, so the job does not wait for the next 1 s tick). Never called inside a transaction's own work.
+   */
+  onQueued?: () => void;
+  /** Tests only: how long a cached runtime health stays fresh (default 5 minutes). */
+  runtimeHealthTtlMs?: number;
 }
 
 /**
@@ -282,7 +292,9 @@ export function createNexusPlatform(db: Database.Database, opts?: NexusPlatformO
     ingest, validation, appVersion: opts?.appVersion ?? null, findGit: opts?.findGit ?? null
   });
   validation?.setSender((msg) => exec.sendToRunner(msg));
-  const queries = executionAvailable ? new ExecQueries(db, { auth, artifacts, exec }) : null;
+  // B2b Task 14: the agent flow actions of #24 answer by whether the agent services are composed (decided below).
+  let agentsOn = false;
+  const queries = executionAvailable ? new ExecQueries(db, { auth, artifacts, exec, agentsAvailable: () => agentsOn }) : null;
   approvals?.bindExecution(exec);
   deployments?.bindExecution(exec);
   repo?.bindExecution(exec);
@@ -290,6 +302,7 @@ export function createNexusPlatform(db: Database.Database, opts?: NexusPlatformO
   const bootId = opts?.bootId ?? newId(now());
   // B2b: the agent services, only with execution on and the exact v10 shape (agents stay off by default).
   const agentsAvailable = (opts?.agents ?? false) && executionAvailable && v10ShapeProblem(db, true) === null;
+  agentsOn = agentsAvailable;
   if ((opts?.agents ?? false) && !agentsAvailable) log('[nexus] agents unavailable: execution or the schema v10 shape is not in place');
   const tokens = agentsAvailable ? new TokenService(db, { auth, now, randomBytes: opts?.randomBytes }) : null;
   const budget = agentsAvailable ? new BudgetService(db, { auth, now }) : null;
@@ -305,10 +318,13 @@ export function createNexusPlatform(db: Database.Database, opts?: NexusPlatformO
       system: principals.system(), now, log })
     : null;
   exec.bindMcpGateway(mcpGateway);
-  const worktrees = agentsAvailable ? new WorktreeService(db, { jobs, now, dataHomeRoot: opts?.dataHome?.root ?? '', acceptFsRoot: opts?.acceptFsRoot ?? null }) : null;
+  const worktrees = agentsAvailable ? new WorktreeService(db, { jobs, now, dataHomeRoot: opts?.dataHome?.root ?? '', acceptFsRoot: opts?.acceptFsRoot ?? null,
+    onQueued: opts?.onQueued }) : null;
+  // B2b Task 14: the runtime health cache the runner's probe fills; it feeds AgentService's gate unless a test passes its own provider.
+  const runtimeCache = agentsAvailable ? new RuntimeHealthCache({ now, ttlMs: opts?.runtimeHealthTtlMs }) : null;
   const agents = agentsAvailable && tokens && budget && contextResolver && skills && worktrees
     ? new AgentService(db, { auth, principals, jobs, sessions, tokens, budget, contextResolver, skills, worktrees, exec, system: principals.system(), now, log,
-      runtimeHealth: opts?.runtimeHealth, dataHome: opts?.dataHome ?? null })
+      runtimeHealth: opts?.runtimeHealth ?? (runtimeCache ? () => runtimeCache.healthEntry() : undefined), dataHome: opts?.dataHome ?? null, onQueued: opts?.onQueued })
     : null;
   exec.bindAgents(agents);
   // B2b Task 9: the git reads (status for the accept service, diffs for the viewer) go through the runner; its answers are
@@ -319,21 +335,54 @@ export function createNexusPlatform(db: Database.Database, opts?: NexusPlatformO
   };
   const reviews = agentsAvailable ? new ReviewService(db, { auth, principals, turns, now }) : null;
   const accepts = agentsAvailable && validation
-    ? new AcceptService(db, { auth, principals, artifacts, jobs, validation, gitRead, system: principals.system(), now, acceptFsRoot: opts?.acceptFsRoot ?? null })
+    ? new AcceptService(db, { auth, principals, artifacts, jobs, validation, gitRead, system: principals.system(), now, acceptFsRoot: opts?.acceptFsRoot ?? null,
+      onQueued: opts?.onQueued, log: (line) => log(line) })
     : null;
   // What the gateway keeps in memory for a turn (retried-call replies, call count, pending execs) goes with its tokens.
   if (tokens && mcpGateway) tokens.onRevoked((jobId) => { if (jobId === null) mcpGateway.evictAll(); else mcpGateway.evictJob(jobId); });
-  if (tokens || gitRead) {
+  // B2b Task 14: the runtime probe. The live consent's hash rides on every `probe` main sends (only a hash that verifies against
+  // its own hosts), so the runner checks the engine under the allow-list proxy only after a live consent. Each `probe.result`
+  // fills the health cache; a newly attached runner is unknown until its own probe answers (and an entry never outlives its TTL).
+  let probePort: RunnerPort | null = null;
+  const consentHash = (): string | null => {
+    try {
+      const c = budget?.live();
+      if (!c || c.hosts.length === 0) return null;
+      const hosts = c.hosts.map((h) => { const m = /^(.+):(\d{1,5})$/.exec(h); if (!m) throw new Error('bad host'); return { host: m[1], port: Number(m[2]) }; });
+      return hostsSha256(hosts) === c.hostsSha256 ? c.hostsSha256 : null;
+    } catch { return null; }
+  };
+  const agentProbe: AgentRuntimeProbe | null = runtimeCache ? {
+    cache: runtimeCache,
+    refresh(): boolean {
+      if (!probePort) return false;
+      try { probePort.send({ op: 'probe' }); return true; } catch { return false; }
+    },
+    async refreshAndWait(timeoutMs: number): Promise<boolean> {
+      const since = now();
+      if (!this.refresh()) return false;
+      try { return await runtimeCache.whenRecorded(since, timeoutMs); } catch { return false; }
+    }
+  } : null;
+  if (tokens || gitRead || runtimeCache) {
     // Every runner `ready` is a new runner process (it answers the one `hello` of its port): its MCP server is new, and
     // no token of an earlier runner may reach it. The revocation runs before the execution core sees the message.
     const attach = exec.attachRunner.bind(exec);
     exec.attachRunner = (port: RunnerPort | null, boot: string): void => {
-      if (!port) { attach(port, boot); return; }
+      if (!port) { probePort = null; runtimeCache?.clear(); attach(port, boot); return; }
+      runtimeCache?.clear();
       const wrapped: RunnerPort = {
         state: () => port.state(),
-        send: (m) => port.send(m),
+        send: (m) => {
+          if (m.op === 'probe' && runtimeCache) { const h = consentHash(); port.send(h ? { op: 'probe', consentHostsSha256: h } : { op: 'probe' }); return; }
+          port.send(m);
+        },
         onMessage: (fn) => port.onMessage((raw) => {
           const op = (raw as { op?: unknown } | null)?.op;
+          if (op === 'probe.result' && runtimeCache) {
+            const m = parseRunnerMessage(raw);
+            if (m && m.op === 'probe.result') runtimeCache.record(m.runtimes);
+          }
           // B2b Task 9: a `git.read.result` answers a waiting read; the execution core never sees it.
           if (op === 'git.read.result' && gitRead) {
             const m = parseRunnerMessage(raw);
@@ -350,13 +399,14 @@ export function createNexusPlatform(db: Database.Database, opts?: NexusPlatformO
           fn(raw);
         })
       };
+      probePort = wrapped;
       attach(wrapped, boot);
     };
   }
   return {
     principals, auth, activity, workspaces, projects, artifacts, lineage, jobs, sessions, handoffs, handoffsAvailable, executionAvailable,
     exec, blobs, validation, approvals, deployments, repo, queries, registry: { valid: registryValid, problems: problems.length }, bootId,
-    agentsAvailable, tokens, budget, mcpGateway, contextResolver, skills, gitRead, agents, worktrees, changeSets, reviews, accepts,
+    agentsAvailable, tokens, budget, mcpGateway, contextResolver, skills, gitRead, agents, worktrees, changeSets, reviews, accepts, agentProbe,
     startup(): NexusStartupReport {
       // The seeded principals must resolve; a missing one throws platform_unavailable.
       principals.localUser();

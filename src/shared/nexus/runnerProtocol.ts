@@ -21,7 +21,12 @@ export type CancelReason = 'user' | 'timeout' | 'parent' | 'shutdown';
 export type MainToRunner =
   /** `home`: this install's `nexus.home` (homeLabel.ts of `dataHome`; '' without a data home), for every resource label. */
   | { op: 'hello'; bootId: string; dataHome: string; home: string; profiles: SandboxProfile[] }
-  | { op: 'probe' }
+  /**
+   * `consentHostsSha256` (B2b): the hash of the live consent's hosts, when one exists. The runner then runs the agent
+   * runtime's health under its allow-list proxy (only when the hash is the adapter's own host list); without it, under
+   * the deny-all proxy: nothing the engine does can leave the machine before the user's permission exists.
+   */
+  | { op: 'probe'; consentHostsSha256?: string }
   | { op: 'attempt.start'; attemptId: string; plan: AttemptPlan }
   | { op: 'attempt.cancel'; attemptId: string; graceMs: number; reason: CancelReason }
   | { op: 'attempt.adopt'; attemptId: string; containerId: string; logPath: string }      // recovery

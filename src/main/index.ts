@@ -56,6 +56,7 @@ import { createNexusPlatform, type NexusPlatform } from './nexus/platform';
 import { registerNexusIpc } from './nexusIpc/registerNexusIpc';
 import { createSourcePorts } from './nexusIpc/sources';
 import { startExecution, type ExecutionHandle } from './nexusExec/execWiring';
+import { confirmMergeWith } from './nexusExec/mergeDialog';
 import { resolveDataHome } from './nexusExec/dataHome';
 import { imagesDirFor, loadImageProfiles } from './nexusExec/profiles';
 import { readAgentUsage, readContextTokens, seedSessionTranscript, resolveSessionCwd } from './transcript';
@@ -397,6 +398,8 @@ let nexusUnavailableReason: NexusUnavailableReason | null = 'not_open';
 let handoffsUnavailableReason: HandoffsUnavailableReason | null = null;
 /** Why execution (schema v9) is off, for the execution channels (#24-#41); null once it is on. */
 let executionUnavailableReason: string | null = 'not_enabled';
+/** Why the agents part (schema v10) is off, for the agent channels (#42-#51); null once it is on. */
+let agentsUnavailableReason: string | null = 'not_enabled';
 /** Main's execution wiring (runner host, data home readers); null until startExecution resolves. */
 let nexusExecution: ExecutionHandle | null = null;
 
@@ -3083,7 +3086,11 @@ registerNexusIpc(ipcMain, {
   sources: createSourcePorts({ acceptFsRoot, getProject: (id) => projectManager.getProject(id) }),
   log: nexusMainLog,
   executionUnavailableReason: () => executionUnavailableReason,
-  exec: () => nexusExecution
+  exec: () => nexusExecution,
+  agentsUnavailableReason: () => agentsUnavailableReason,
+  // "Merge accepted work" is confirmed ONLY by main's own dialog, through the execution handle (startExecution's mergeDialog below);
+  // with the wiring not running, a merge is cancelled.
+  confirmMerge: (info) => (nexusExecution ? nexusExecution.confirmMerge(info) : Promise.resolve(false))
 });
 
 // ─── IPC: clipboard ─────────────────────────────────────────────────────────
@@ -5736,16 +5743,26 @@ app.whenReady().then(() => {
         acceptFsRoot,
         isRepository: repositoryCheck,
         resolveCommit,
-        appVersion: app.getVersion()
+        appVersion: app.getVersion(),
+        // B2b Task 14: the agent services (v10 on, execution on), their skill files, and a deferred scheduler tick for queued work.
+        agents: persist.agentsAvailable,
+        skillsResourcesDir: app.isPackaged ? process.resourcesPath : join(app.getAppPath(), 'resources'),
+        onQueued: () => { nexusExecution?.tickSoon(); }
       })
       : null;
     nexusPlatform?.startup();
     executionUnavailableReason = persist.executionAvailable ? null : (persist.executionUnavailableReason ?? 'not_enabled');
+    agentsUnavailableReason = persist.agentsAvailable ? null : (persist.agentsUnavailableReason ?? 'not_enabled');
     // B2a Task 11: after `[nexus] platform ready`, once: the runner utilityProcess and the execution wiring.
     if (nexusPlatform && persist.executionAvailable) {
       void startExecution({ platform: nexusPlatform, userData: app.getPath('userData'),
         log: (line) => nexusMainLog(`${new Date().toISOString()} ${line}`),
-        hintTargets: () => [...allWindows].map((win) => (win.isDestroyed() ? null : win.webContents)) })
+        hintTargets: () => [...allWindows].map((win) => (win.isDestroyed() ? null : win.webContents)),
+        // The native confirmation of "Merge accepted work" (Cancel is the default button); the only way a merge is ever confirmed.
+        mergeDialog: (info) => confirmMergeWith((o) => {
+          const win = BrowserWindow.getFocusedWindow() ?? mainWindow;
+          return win && !win.isDestroyed() ? dialog.showMessageBox(win, o) : dialog.showMessageBox(o);
+        }, info) })
         .then((h) => { nexusExecution = h; })
         .catch((e) => nexusMainLog(`${new Date().toISOString()} [nexus] execution did not start error=${e instanceof Error ? e.name : typeof e}`));
     }

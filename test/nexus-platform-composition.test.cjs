@@ -62,6 +62,16 @@ const NEXUS_CHANNEL_LIST = [
 const NEXUS_PUSH = ['nexus:hint'];
 // Task 7: every channel is registered and exposed (the read channels came in Task 6, the writes in Task 7).
 const NEXUS_REGISTERED = [...NEXUS_CHANNEL_LIST];
+// B2b Task 14 (pinned-test extension): the ten agent channels #42-#51, registered when main passes the agent deps, and their preload methods.
+const NEXUS_AGENT_LIST = [
+  'nexus:agent:start', 'nexus:sessions:list', 'nexus:session:get', 'nexus:session:end', 'nexus:session:cancel', 'nexus:review:decide',
+  'nexus:changeSet:accept', 'nexus:repo:status', 'nexus:repo:mergeAccepted', 'nexus:agent:consent'
+];
+const NEXUS_EVERY = [...NEXUS_CHANNEL_LIST, ...NEXUS_AGENT_LIST];
+const NEXUS_AGENT_METHODS = [
+  'nexusAgentStart', 'nexusSessionsList', 'nexusSessionGet', 'nexusSessionEnd', 'nexusSessionCancel', 'nexusReviewDecide',
+  'nexusChangeSetAccept', 'nexusRepoStatus', 'nexusRepoMergeAccepted', 'nexusAgentConsent'
+];
 const NEXUS_PRELOAD_METHODS = [
   'nexusParticipationsList', 'nexusParticipationAttach', 'nexusParticipationWithdraw',
   'nexusArtifactsList', 'nexusArtifactsByProject', 'nexusArtifactGet', 'nexusVersionGet', 'nexusLineageGet',
@@ -94,23 +104,29 @@ test('nexus:* channels: one module, the exact list, the exact preload surface', 
   const { NEXUS_CHANNELS, NEXUS_EXEC_CHANNELS, NEXUS_ALL_CHANNELS, registerNexusIpc } = loadTs('src/main/nexusIpc/registerNexusIpc.ts');
   assert.deepEqual([...NEXUS_CHANNELS, ...NEXUS_EXEC_CHANNELS], NEXUS_CHANNEL_LIST);
   assert.deepEqual([...NEXUS_ALL_CHANNELS], NEXUS_CHANNEL_LIST);
-  assert.deepEqual(sorted(literals(mod)), sorted([...NEXUS_CHANNEL_LIST, ...NEXUS_PUSH]));
+  assert.deepEqual(sorted(literals(mod)), sorted([...NEXUS_EVERY, ...NEXUS_PUSH]));
   // The channels actually registered (a fake registrar, with main's execution deps) equal the preload's literals and the full list (41).
   const registered = [];
   registerNexusIpc({ handle: (c) => registered.push(c) }, { platform: () => null, unavailableReason: () => 'not_open',
     sources: { projectRoot: async () => null, readFile: async () => ({ error: 'not_found' }), resolveCommit: async () => ({ error: 'not_a_commit' }) },
     log: () => {}, executionUnavailableReason: () => null });
   assert.deepEqual(sorted(registered), sorted(NEXUS_REGISTERED));
-  assert.deepEqual(sorted(literals(preload)), sorted([...NEXUS_REGISTERED, ...NEXUS_PUSH]));
-  for (const c of registered) assert.ok(NEXUS_CHANNEL_LIST.includes(c), c);
+  // With main's agent deps as well (B2b Task 14) the ten agent channels join: 51 in all.
+  const registeredAll = [];
+  registerNexusIpc({ handle: (c) => registeredAll.push(c) }, { platform: () => null, unavailableReason: () => 'not_open',
+    sources: { projectRoot: async () => null, readFile: async () => ({ error: 'not_found' }), resolveCommit: async () => ({ error: 'not_a_commit' }) },
+    log: () => {}, executionUnavailableReason: () => null, agentsUnavailableReason: () => null });
+  assert.deepEqual(sorted(registeredAll), sorted(NEXUS_EVERY));
+  assert.deepEqual(sorted(literals(preload)), sorted([...NEXUS_EVERY, ...NEXUS_PUSH]));
+  for (const c of registeredAll) assert.ok(NEXUS_EVERY.includes(c), c);
   // The exact preload methods, each invoking its own channel once.
   const methods = (preload.match(/^\s{2}(nexus[A-Z][A-Za-z]*):/gm) || []).map((x) => x.trim().slice(0, -1));
-  assert.deepEqual(methods, NEXUS_PRELOAD_METHODS);
+  assert.deepEqual(methods, [...NEXUS_PRELOAD_METHODS, ...NEXUS_AGENT_METHODS]);
   // B2a Task 13 (pinned-test extension): one more, exactly one ipcRenderer.on of the hint push.
-  assert.equal((preload.match(/ipcRenderer\.(invoke|send|sendSync|on)\(\s*['"`]nexus:/g) || []).length, NEXUS_REGISTERED.length + 1);
+  assert.equal((preload.match(/ipcRenderer\.(invoke|send|sendSync|on)\(\s*['"`]nexus:/g) || []).length, NEXUS_EVERY.length + 1);
   assert.equal((preload.match(/ipcRenderer\.on\(\s*['"`]nexus:/g) || []).length, 1);
   assert.equal((preload.match(/ipcRenderer\.on\('nexus:hint'/g) || []).length, 1);
-  assert.equal((preload.match(/ipcRenderer\.invoke\(\s*['"`]nexus:/g) || []).length, NEXUS_REGISTERED.length);
+  assert.equal((preload.match(/ipcRenderer\.invoke\(\s*['"`]nexus:/g) || []).length, NEXUS_EVERY.length);
   assert.match(preload, /^import type \{[^}]*NexusResult[^}]*\} from '\.\.\/shared\/nexus\/ipc';/m);
   // No nexus: literal anywhere else under src/main.
   for (const f of walkTs('src/main')) {

@@ -35,6 +35,7 @@ import type {
 } from '../../shared/nexus/ipc';
 import type { NexusPlatform } from '../nexus/platform';
 import type { ExecIpcPort } from '../nexusExec/execWiring';
+import type { MergeConfirmInfo } from '../nexus/repo/acceptService';
 import { MAX_LIST_LIMIT } from '../nexus/artifact/artifactService';
 import { UserSaves, type SaveResult, type SourcePorts } from '../nexus/commands/userSaves';
 import { PlatformError } from '../nexus/errors';
@@ -45,13 +46,14 @@ import { getUserAction } from '../../shared/nexus/actions';
 import { DOMAINS } from '../../shared/nexus/domains/index';
 import { fail, ok, unavailable } from './envelope';
 import {
-  APPROVAL_STATUSES_ACCEPTED, DEPLOYMENT_STATUSES_ACCEPTED, PREVIEW_PARTS, RequestError, V
+  APPROVAL_STATUSES_ACCEPTED, DEPLOYMENT_STATUSES_ACCEPTED, MAX_FOCUS_VERSIONS, PREVIEW_PARTS, RequestError, V
 } from './validate';
 import {
-  actionView, activityView, approvalView, artifactView, deploymentView, domainView, edgeView, eventView, gcView, handoffDetailView,
-  handoffSummaryView, healthView, jobDetailView, jobView, lineageNodeView, logPageView, participationView, previewView, summaryView,
-  validationView, versionDetail, versionView
+  acceptResultView, actionView, activityView, approvalView, artifactView, deploymentView, domainView, edgeView, eventView, gcView, handoffDetailView,
+  handoffSummaryView, healthView, jobDetailView, jobView, lineageNodeView, logPageView, mergeView, participationView, previewView, repoStatusUnavailable,
+  repoStatusView, reviewResultView, sessionDetailView, sessionViewOf, summaryView, validationView, versionDetail, versionView
 } from './dto';
+import { agentSetupView } from './agentSetup';
 
 /** All 21 nexus:* channels of B1, in the order of the IPC surface table. */
 export const NEXUS_CHANNELS: readonly string[] = Object.freeze([
@@ -106,8 +108,30 @@ export const NEXUS_EXEC_CHANNELS: readonly string[] = Object.freeze([
   'nexus:setup:prepareImage',
   'nexus:blobs:gc'
 ]);
-/** Every nexus:* channel (41): B1's 21 and B2a's 20. */
+/** Every B1 and B2a nexus:* channel (41): B1's 21 and B2a's 20. */
 export const NEXUS_ALL_CHANNELS: readonly string[] = Object.freeze([...NEXUS_CHANNELS, ...NEXUS_EXEC_CHANNELS]);
+/**
+ * B2b Task 14: the ten agent channels #42-#51, through the same wrapper, registered when main passes the agent deps
+ * (`agentsUnavailableReason` or `confirmMerge`, on top of the execution deps). While the agents part is off (schema v10 not
+ * on) each answers platform_unavailable with reason 'agents_unavailable' and its sub-reason; #1-#41 are unaffected.
+ */
+export const NEXUS_AGENT_CHANNELS: readonly string[] = Object.freeze([
+  'nexus:agent:start',
+  'nexus:sessions:list',
+  'nexus:session:get',
+  'nexus:session:end',
+  'nexus:session:cancel',
+  'nexus:review:decide',
+  'nexus:changeSet:accept',
+  'nexus:repo:status',
+  'nexus:repo:mergeAccepted',
+  'nexus:agent:consent'
+]);
+/** Every nexus:* channel main can register (51). */
+export const NEXUS_EVERY_CHANNEL: readonly string[] = Object.freeze([...NEXUS_ALL_CHANNELS, ...NEXUS_AGENT_CHANNELS]);
+const AGENT_CHANNELS: ReadonlySet<string> = new Set(NEXUS_AGENT_CHANNELS);
+/** How long #42 and a #51 grant wait for a fresh runtime probe when the cached health is stale. */
+export const RUNTIME_REFRESH_WAIT_MS = 10_000;
 /** The one push of the family (main -> renderer): `{ lastSeq }` only. */
 export const NEXUS_HINT_CHANNEL = 'nexus:hint';
 
@@ -152,6 +176,17 @@ export interface NexusIpcDeps {
   executionUnavailableReason?: () => string | null;
   /** B2a: main's execution wiring (logs, previews, blob GC through the data home); null until it runs (`not_started`). */
   exec?: () => ExecIpcPort | null;
+  /**
+   * B2b Task 14: why the agents part is off as main's store says (null when it is on); read at call time. With this (or
+   * `confirmMerge`) given, the agent channels #42-#51 are registered; the platform's own state applies when this says null.
+   */
+  agentsUnavailableReason?: () => string | null;
+  /**
+   * B2b Task 14: the ONE confirmation of "Merge accepted work": main's own dialog, from the execution handle's `confirmMerge`
+   * (index.ts passes it from `startExecution({ mergeDialog })`). It is handed to the accept service as its `confirm` and
+   * nowhere else; omitted, every merge is cancelled (a merge is never confirmed on the user's behalf).
+   */
+  confirmMerge?: (info: MergeConfirmInfo) => Promise<boolean>;
 }
 
 /** A renderer the nexus:hint push goes to (main passes its live web contents). */
@@ -193,6 +228,18 @@ export function registerNexusIpc(registrar: IpcRegistrar, deps: NexusIpcDeps): v
     if (main) return main;
     return nx.executionAvailable ? null : (nx.exec.unavailableReason ?? 'not_enabled');
   };
+  const agentsRegistered = execution && (deps.agentsUnavailableReason !== undefined || deps.confirmMerge !== undefined);
+  /** The refusing confirmation used when main wired no dialog: a merge is cancelled, never confirmed by default. */
+  const confirmMerge: (info: MergeConfirmInfo) => Promise<boolean> = deps.confirmMerge ?? (async () => false);
+  /** Why the agents part is off now (main's store, then execution's, then the platform's own state), or null while it is on. */
+  const agentsOff = (nx: NexusPlatform): string | null => {
+    let main: string | null;
+    try { const r = deps.agentsUnavailableReason?.(); main = typeof r === 'string' && r.length > 0 ? r : null; } catch { main = 'not_enabled'; }
+    if (main) return main;
+    const ex = executionOff(nx);
+    if (ex !== null) return ex;
+    return nx.agentsAvailable && nx.agents && nx.reviews && nx.accepts && nx.budget ? null : 'not_enabled';
+  };
   const portOf = (): ExecIpcPort => {
     let port: ExecIpcPort | null = null;
     try { port = deps.exec?.() ?? null; } catch { port = null; }
@@ -209,6 +256,7 @@ export function registerNexusIpc(registrar: IpcRegistrar, deps: NexusIpcDeps): v
   const handler = <A>(channel: string, parse: (args: unknown[]) => A, run: Run<A>) => {
     const needsHandoffs = HANDOFF_CHANNELS.has(channel);
     const needsExecution = EXECUTION_CHANNELS.has(channel);
+    const needsAgents = AGENT_CHANNELS.has(channel);
     return async (_evt: unknown, ...args: unknown[]): Promise<NexusResult<unknown>> => {
       try {
         const nx = deps.platform();
@@ -217,6 +265,10 @@ export function registerNexusIpc(registrar: IpcRegistrar, deps: NexusIpcDeps): v
         if (needsExecution) {
           const off = executionOff(nx);
           if (off !== null) return unavailable('execution_unavailable', off);
+        }
+        if (needsAgents) {
+          const off = agentsOff(nx);
+          if (off !== null) return unavailable('agents_unavailable', off);
         }
         let a: A;
         // A renderer value whose read throws anything but a RequestError (an exotic object) is a bad request (fix round 1).
@@ -230,7 +282,7 @@ export function registerNexusIpc(registrar: IpcRegistrar, deps: NexusIpcDeps): v
   };
   const seen = new Set<string>();
   const reg = <A>(channel: string, parse: (args: unknown[]) => A, run: Run<A>): void => {
-    if (!NEXUS_ALL_CHANNELS.includes(channel) || seen.has(channel)) throw new Error(`nexus ipc: unexpected channel ${channel}`);
+    if (!NEXUS_EVERY_CHANNEL.includes(channel) || seen.has(channel)) throw new Error(`nexus ipc: unexpected channel ${channel}`);
     seen.add(channel);
     registrar.handle(channel, handler(channel, parse, run));
   };
@@ -445,7 +497,7 @@ export function registerNexusIpc(registrar: IpcRegistrar, deps: NexusIpcDeps): v
     nx.auth.require(me, 'platform.health', PLATFORM, { entityType: 'platform' });
     if (q.probe) nx.exec.requestProbe();
     const off = executionOff(nx);
-    return ok(healthView(nx.exec.health(), { handoffs: nx.handoffsAvailable, execution: off === null, registry: nx.registry, subReason: off }));
+    return ok(healthView(nx.exec.health(), { handoffs: nx.handoffsAvailable, execution: off === null, registry: nx.registry, subReason: off }, agentSetupView(nx)));
   });
 
   // #24 the domain's actions with whether each can run now and why not.
@@ -550,8 +602,9 @@ export function registerNexusIpc(registrar: IpcRegistrar, deps: NexusIpcDeps): v
     const versionId = V.platformId(args[0], 'versionId');
     const o = V.object(args[1], ['part', 'page', 'fromRow', 'maxBytes'] as const, ['page', 'fromRow'] as const);
     const part = V.enumOf(o.part, 'part', PREVIEW_PARTS);
-    if (part === 'content' && o.fromRow !== undefined) throw new RequestError('fromRow', 'pages the row parts only');
-    if (part !== 'content' && o.page !== undefined) throw new RequestError('page', 'pages the content part only');
+    const textPart = part === 'content' || part === 'diff';
+    if (textPart && o.fromRow !== undefined) throw new RequestError('fromRow', 'pages the row parts only');
+    if (!textPart && o.page !== undefined) throw new RequestError('page', 'pages the text parts only');
     return { versionId, part, page: o.page === undefined ? 0 : V.int(o.page, 'page', 0, MAX_PREVIEW_PAGE),
       fromRow: o.fromRow === undefined ? 0 : V.int(o.fromRow, 'fromRow', 0, MAX_PREVIEW_ROW), maxBytes: V.int(o.maxBytes, 'maxBytes', 1, MAX_READ_PAGE) };
   }, async (nx, me, q) => ok(previewView(await portOf().preview(me, q.versionId, { part: q.part, page: q.page, fromRow: q.fromRow, maxBytes: q.maxBytes }))));
@@ -625,6 +678,132 @@ export function registerNexusIpc(registrar: IpcRegistrar, deps: NexusIpcDeps): v
     if (o.apply !== true) throw new RequestError('apply', 'must be true or false');
     return { apply: true as const, expectedCandidatesHash: V.sha256(o.expectedCandidatesHash, 'expectedCandidatesHash') };
   }, async (nx, me, q) => ok(gcView(await portOf().blobsGc(me, q))));
+
+  // ---------- B2b Task 14: the agent channels #42-#51 (registered when main passes the agent deps) ----------
+  if (!agentsRegistered) return;
+
+  // #42 start an agent turn (or continue a conversation). Ids, the message, the focus versions and the intent only: the
+  // runner, the runtime, the network, the model and every folder are main's. A stale runtime health is refreshed first.
+  reg('nexus:agent:start', (args) => {
+    V.arity(args, 1);
+    const o = V.object(args[0], ['projectId', 'workspaceId', 'sessionId', 'skillId', 'focusVersionIds', 'message', 'intentId'] as const, ['skillId'] as const);
+    const q = {
+      projectId: V.projectId(o.projectId), workspaceId: V.workspaceId(o.workspaceId), sessionId: V.idOrNull(o.sessionId, 'sessionId'),
+      focusVersionIds: V.idListOrEmpty(o.focusVersionIds, 'focusVersionIds', MAX_FOCUS_VERSIONS), message: V.agentMessage(o.message), intentId: V.intentId(o.intentId)
+    };
+    return o.skillId === undefined ? q : { ...q, skillId: V.skillId(o.skillId) };
+  }, async (nx, me, q) => {
+    // The cached health is bounded in age: a stale one is refreshed (bounded wait) before the start is judged.
+    if (nx.agentProbe && nx.agentProbe.cache.isStale()) await nx.agentProbe.refreshAndWait(RUNTIME_REFRESH_WAIT_MS);
+    const r = nx.agents!.start(me, q);
+    const detail = await nx.agents!.get(me, r.session.id);
+    return ok({ session: sessionViewOf(detail), job: jobView(nx.exec.get(me, r.job.id)) });
+  });
+
+  // #43 a project's agent conversations (newest first), from the database only.
+  reg('nexus:sessions:list', (args) => {
+    V.arity(args, 1);
+    const o = V.object(args[0], ['projectId', 'statuses'] as const, ['statuses'] as const);
+    return { projectId: V.projectId(o.projectId), statuses: o.statuses === undefined ? undefined : V.sessionStatuses(o.statuses) };
+  }, (nx, me, q) => {
+    const rows = nx.agents!.list(me, q.projectId);
+    return ok(q.statuses === undefined ? rows : rows.filter((s) => q.statuses!.includes(s.status)), false);
+  });
+
+  // #44 one conversation: turns, display-only messages, tool calls (name and size), registered versions, approvals.
+  reg('nexus:session:get', (args) => { V.arity(args, 1); return V.platformId(args[0], 'sessionId'); },
+    async (nx, me, sessionId) => ok(sessionDetailView(await nx.agents!.get(me, sessionId))));
+
+  // #45 end the conversation (a live turn is cancelled first).
+  reg('nexus:session:end', (args) => { V.arity(args, 1); return V.platformId(args[0], 'sessionId'); }, async (nx, me, sessionId) => {
+    const s = nx.agents!.end(me, sessionId);
+    return ok(sessionViewOf(await nx.agents!.get(me, s.id)));
+  });
+
+  // #46 cancel the conversation's live turn (the conversation stays open).
+  reg('nexus:session:cancel', (args) => { V.arity(args, 1); return V.platformId(args[0], 'sessionId'); }, async (nx, me, sessionId) => {
+    nx.agents!.cancel(me, sessionId);
+    return ok(sessionViewOf(await nx.agents!.get(me, sessionId)));
+  });
+
+  // #47 a review decision on a change set candidate; a request for changes starts the next turn in the same transaction.
+  reg('nexus:review:decide', (args) => {
+    V.arity(args, 3);
+    const o = V.object(args[1], ['decision', 'comment'] as const, ['comment'] as const);
+    const decision = V.enumOf(o.decision, 'decision', ['approve', 'request_changes', 'reject'] as const);
+    const comment = V.reviewComment(o.comment);
+    return { versionId: V.platformId(args[0], 'versionId'), decision, comment, intentId: V.intentId(args[2]) };
+  }, (nx, me, q) => {
+    const r = nx.reviews!.decide(me, q.versionId, q.comment === undefined ? { decision: q.decision, intentId: q.intentId }
+      : { decision: q.decision, comment: q.comment, intentId: q.intentId });
+    return ok(reviewResultView(r.review, r.job ? jobView(nx.exec.get(me, r.job.id)) : null));
+  });
+
+  // #48 accept an approved change set into the integration ref (never the user's branch); compare-and-set on the head the user saw.
+  reg('nexus:changeSet:accept', (args) => {
+    V.arity(args, 2);
+    return { versionId: V.platformId(args[0], 'versionId'), expectedIntegrationHead: V.commitId(args[1], 'expectedIntegrationHead') };
+  }, async (nx, me, q) => {
+    const r = await nx.accepts!.accept(me, q.versionId, q.expectedIntegrationHead);
+    return ok(acceptResultView(versionView(r.version), r.accept));
+  });
+
+  // #49 the repository as the accept and merge flows see it. A repository that cannot be read answers a status that says why.
+  reg('nexus:repo:status', (args) => { V.arity(args, 1); return V.projectId(args[0]); }, async (nx, me, projectId) => {
+    try {
+      return ok(repoStatusView(projectId, await nx.accepts!.status(me, projectId), Date.now()));
+    } catch (e) {
+      const reason = e instanceof PlatformError && e.code === 'unavailable' && e.detail && typeof e.detail.reason === 'string' ? e.detail.reason : null;
+      if (reason === null) throw e;
+      return ok(repoStatusUnavailable(projectId, reason, Date.now()));
+    }
+  });
+
+  // #50 "Merge accepted work": a dialog-confirmed fast-forward. The ONLY confirmation is main's own dialog (`confirmMerge`, from
+  // main's execution handle); nothing the renderer sends can stand in for it, and with no dialog wired every merge is cancelled.
+  reg('nexus:repo:mergeAccepted', (args) => {
+    V.arity(args, 2);
+    const o = V.object(args[1], ['branch', 'expectedAcceptedHead'] as const);
+    return { projectId: V.projectId(args[0]), branch: V.branchName(o.branch), expectedAcceptedHead: V.commitId(o.expectedAcceptedHead, 'expectedAcceptedHead') };
+  }, async (nx, me, q) => {
+    const r = await nx.accepts!.mergeAccepted(me, q.projectId, { branch: q.branch, expectedAcceptedHead: q.expectedAcceptedHead }, confirmMerge);
+    return ok(mergeView(r.merge));
+  });
+
+  // #51 the agent's network permission. `grant` carries caps only (clamped to the D-B4 ceilings by the service); the destinations
+  // come from the runtime's own probe, never from the renderer. Owner role (the service checks); `revoke` ends it.
+  reg('nexus:agent:consent', (args) => {
+    V.arity(args, 1);
+    const o = V.object(args[0], ['op', 'caps'] as const, ['caps'] as const);
+    const op = V.enumOf(o.op, 'op', ['get', 'grant', 'revoke'] as const);
+    if (op !== 'grant') {
+      if (o.caps !== undefined) throw new RequestError('caps', 'is sent only with grant');
+      return { op };
+    }
+    return { op, caps: o.caps === undefined ? {} : V.consentCaps(o.caps) };
+  }, async (nx, me, q) => {
+    const probe = nx.agentProbe;
+    if (q.op === 'get') {
+      nx.auth.require(me, 'platform.health', PLATFORM, { entityType: 'platform' });
+      if (probe && probe.cache.isStale()) probe.refresh();
+      return ok(agentSetupView(nx));
+    }
+    if (q.op === 'revoke') {
+      nx.budget!.revoke(me);
+      probe?.refresh();
+      return ok(agentSetupView(nx));
+    }
+    // The hosts and the kind are the adapter's own, as the runner's probe reported them (refreshed first when stale).
+    if (probe && probe.cache.isStale()) await probe.refreshAndWait(RUNTIME_REFRESH_WAIT_MS);
+    const seen = probe?.cache.fresh() ?? null;
+    const hosts = probe?.cache.egressHosts() ?? null;
+    if (!seen || !hosts || hosts.length === 0) {
+      throw new PlatformError('unavailable', 'the agent has not been checked on this computer yet', { reason: 'runtime_unknown' });
+    }
+    nx.budget!.grant(me, { runtimeKind: seen.kind, hosts, caps: q.caps });
+    probe?.refresh();
+    return ok(agentSetupView(nx));
+  });
 }
 
 /**

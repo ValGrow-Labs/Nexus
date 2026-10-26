@@ -12,9 +12,10 @@ import type {
   PrincipalKind, ProjectWorkspace, VersionStatus
 } from '../../shared/nexus/platform';
 import type {
-  ActionAvailabilityView, ActivityDetailsView, ActivityView, ApprovalView, ArtifactSummaryView, ArtifactView, BlobGcView, DeploymentView, DiskGate,
-  DomainSpecView, EdgeView, EventView, HandoffDetailView, HandoffSummaryView, HealthView, JobDetailView, JobView, LineageNodeView, LogPageView,
-  ParticipationView, PreviewView, ValidationResultView, VersionContent, VersionDetail, VersionView
+  AcceptResultView, ActionAvailabilityView, ActivityDetailsView, ActivityView, AgentSetupView, ApprovalView, ArtifactSummaryView, ArtifactView, BlobGcView,
+  ChangeSetAcceptView, DeploymentView, DiskGate, DomainSpecView, EdgeView, EventView, HandoffDetailView, HandoffSummaryView, HealthView, JobDetailView, JobView,
+  LineageNodeView, LogPageView, MergeView as MergeViewOut, ParticipationView, PreviewView, RepoStatusView, ReviewResultView, ReviewView as ReviewViewOut,
+  SessionDetailView, SessionView, ValidationResultView, VersionContent, VersionDetail, VersionView
 } from '../../shared/nexus/ipc';
 import type { DomainSpec } from '../../shared/nexus/domainSpec';
 import { DELIVERED_SUB_PHASE, isAtOrBefore, isExecutableEndToEnd } from '../../shared/nexus/domainSpec';
@@ -25,6 +26,9 @@ import type { ActionAvailability, ValidatorSummary } from '../nexus/exec/execQue
 import type { ApprovalView as ServiceApprovalView } from '../nexus/approvals/approvalService';
 import type { DeploymentView as ServiceDeploymentView } from '../nexus/deployments/deploymentService';
 import type { GcPage, LogPage, PreviewPage } from '../nexusExec/execWiring';
+import type { AcceptStatus, AcceptView, MergeView as ServiceMergeView } from '../nexus/repo/acceptService';
+import type { ReviewView as ServiceReviewView } from '../nexus/review/reviewService';
+import { redactSecretText } from '../nexus/activity/redact';
 import { SYSTEM_ID as SYSTEM_PRINCIPAL } from '../nexus/auth/principals';
 import { EXECUTION_SUB_REASONS, scrubMessage } from './envelope';
 
@@ -101,7 +105,9 @@ export const ACTIVITY_DETAIL_KEYS: readonly string[] = Object.freeze([
   // B2a (final review C1): what the execution rows' sentences read. Each is a scalar main writes from a fixed set
   // (an approval's reason and decision, an image build's or a failed recovery's status, a deployment stop's job
   // effect, a recovery decision) or a count (`requested`); like every key here it is scrubbed and capped.
-  'reason', 'decision', 'status', 'job', 'requested'
+  'reason', 'decision', 'status', 'job', 'requested',
+  // B2b Task 14: the consent row's `op` (grant or revoke) and whether a job's worktree was reused (a flag, never a path).
+  'op', 'reused'
 ]);
 const MAX_DETAIL_STRING = 64;
 
@@ -162,8 +168,15 @@ export function domainView(d: DomainSpec): DomainSpecView {
 
 const gateProblem = (p: { id: string; profile?: unknown }): string => (typeof p.profile === 'string' ? `${p.id}:${p.profile}` : p.id);
 
+/** The agent setup row before anything is known (the default of `healthView`, and what a build without agents shows). */
+export const UNKNOWN_AGENT: AgentSetupView = Object.freeze({
+  state: 'unknown', label: null, version: null, signedIn: 'unknown', flagsOk: null,
+  consent: Object.freeze({ live: false, caps: null, hostsCount: 0, grantedAt: null }),
+  usageToday: Object.freeze({ usdCents: 0, turns: 0, estimated: false })
+}) as AgentSetupView;
+
 export function healthView(h: HealthSnapshot, platform: { handoffs: boolean; execution: boolean; registry: { valid: boolean; problems: number };
-  subReason: string | null }): HealthView {
+  subReason: string | null }, agent: AgentSetupView = UNKNOWN_AGENT): HealthView {
   const gate = h.gate;
   const free = h.disk.freeBytes;
   const diskGate: DiskGate = free === null ? 'unknown' : free < REQUIRED_FREE_BYTES ? 'below_required' : free < RECOMMENDED_FREE_BYTES ? 'below_recommended' : 'ok';
@@ -185,7 +198,8 @@ export function healthView(h: HealthSnapshot, platform: { handoffs: boolean; exe
     disk: { dataHomeFreeBytes: free, requiredBytes: REQUIRED_FREE_BYTES, recommendedBytes: RECOMMENDED_FREE_BYTES, leaseFloorBytes: h.disk.leaseFloorBytes, gate: diskGate },
     problems: gate ? gate.problems.map(gateProblem) : [],
     gpu: { detected: h.gpu?.detected === true, ...(typeof h.gpu?.model === 'string' ? { model: text(h.gpu.model, 80) } : {}), supported: false },
-    checkedAt: h.checkedAt
+    checkedAt: h.checkedAt,
+    agent
   };
 }
 
@@ -313,4 +327,71 @@ export function approvalView(a: ServiceApprovalView): ApprovalView {
 export function gcView(g: GcPage): BlobGcView {
   return { candidates: g.candidates, bytes: g.bytes, candidatesHash: /^[0-9a-f]{64}$/.test(g.candidatesHash) ? g.candidatesHash : '', removed: g.removed,
     fileDeleteFailed: g.fileDeleteFailed };
+}
+
+// ---------- B2b Task 14: the agent views (channels #42-#51) ----------
+// Field by field again. Never sent: a principal id (acceptedBy, mergedBy, reviewer ids), a token, a path, a host, a worktree, a
+// job id of the runner's own, an engine word. Text a person wrote (a review comment) is redacted and capped; commits and refs
+// are ids Nexus itself recorded.
+
+/** A session as the list shows it, from a detail (the detail's lists are not sent here). */
+export function sessionViewOf(d: SessionView): SessionView {
+  return { id: d.id, projectId: d.projectId, workspaceId: d.workspaceId, status: d.status, turns: d.turns, liveJobId: d.liveJobId, createdAt: d.createdAt, updatedAt: d.updatedAt };
+}
+
+const COMMIT = /^[0-9a-f]{40}$/;
+const commitOrNull = (c: unknown): string | null => (typeof c === 'string' && COMMIT.test(c) ? c : null);
+
+export function sessionDetailView(d: SessionDetailView): SessionDetailView {
+  return { ...sessionViewOf(d),
+    turnHistory: d.turnHistory.map((t) => ({ jobId: t.jobId, state: t.state, headline: t.headline, outcome: label(t.outcome), error: errorView(t.error), usage: t.usage,
+      createdAt: t.createdAt, startedAt: t.startedAt, finishedAt: t.finishedAt })),
+    // Display-only lines the agent wrote: redacted again, never evidence.
+    messages: d.messages.map((m) => ({ seq: m.seq, ts: m.ts, from: m.from === 'user' ? 'user' : 'agent', text: redactSecretText(String(m.text)).slice(0, 4000), displayOnly: true })),
+    toolCalls: d.toolCalls.map((t) => ({ seq: t.seq, ts: t.ts, jobId: t.jobId, tool: label(t.tool) ?? 'tool', ok: t.ok, resultBytes: t.resultBytes })),
+    versions: d.versions.map((v) => ({ versionId: v.versionId, kind: label(v.kind) ?? 'artifact', status: v.status })),
+    approvals: d.approvals.map((a) => ({ id: a.id, status: a.status, reason: label(a.reason) ?? 'approval', expiresAt: a.expiresAt })) };
+}
+
+export function reviewViewOf(r: ServiceReviewView, jobId: string | null): ReviewViewOut {
+  return { id: r.id, versionId: r.versionId, decision: r.decision, comment: r.comment === null ? null : redactSecretText(r.comment).slice(0, 4000),
+    reviewerKind: 'user', createdAt: r.createdAt, jobId };
+}
+
+export function reviewResultView(r: ServiceReviewView, job: JobView | null): ReviewResultView {
+  return { review: reviewViewOf(r, job ? job.id : null), job };
+}
+
+export function changeSetAcceptView(a: AcceptView): ChangeSetAcceptView {
+  return { versionId: a.versionId, integrationRef: a.integrationRef, refBefore: a.refBefore, refAfter: a.refAfter, mergeCommit: a.mergeCommit, acceptedAt: a.acceptedAt };
+}
+
+export function acceptResultView(version: VersionView, a: AcceptView): AcceptResultView {
+  return { version, accept: changeSetAcceptView(a) };
+}
+
+/** Why "Merge accepted work" cannot run now, in the order the merge itself refuses (null when it can). */
+export function mergeBlockReason(s: AcceptStatus): string | null {
+  if (!s.integrationConsistent) return 'integration_unexpected';
+  if (s.lastAcceptedHead === null || s.acceptedNotMerged === 0 || s.head === s.integrationHead) return 'nothing_to_merge';
+  if (s.checkedOutBranch !== s.branch) return 'branch_mismatch';
+  if (!s.userTreeClean) return 'tree_dirty';
+  if (!s.fastForward) return 'not_fast_forward';
+  return null;
+}
+
+export function repoStatusView(projectId: string, s: AcceptStatus, checkedAt: number): RepoStatusView {
+  const reason = mergeBlockReason(s);
+  return { projectId, branch: s.checkedOutBranch, head: commitOrNull(s.head), dirty: !s.userTreeClean, integrationRef: s.integrationRef,
+    acceptedHead: commitOrNull(s.integrationHead), acceptedNotMerged: s.acceptedNotMerged, canFastForward: reason === null, reason, checkedAt };
+}
+
+/** A status the repository could not give (git missing, the runner away, no branch recorded yet): a view that says why, never an error. */
+export function repoStatusUnavailable(projectId: string, reason: string, checkedAt: number): RepoStatusView {
+  return { projectId, branch: null, head: null, dirty: null, integrationRef: null, acceptedHead: null, acceptedNotMerged: 0, canFastForward: false,
+    reason: label(reason) ?? 'error', checkedAt };
+}
+
+export function mergeView(m: ServiceMergeView): MergeViewOut {
+  return { projectId: m.projectId, branch: text(m.branch, 200), before: commitOrNull(m.before) ?? '', after: commitOrNull(m.after) ?? '', mergedAt: m.mergedAt };
 }

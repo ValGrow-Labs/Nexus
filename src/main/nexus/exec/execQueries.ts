@@ -37,7 +37,8 @@ export interface ActionAvailability {
   actionId: string; label: string; stepId: string | null; available: boolean; reason: string | null;
   inputs: { slot: string; kinds: string[]; min: number; max: number }[]; needsApproval: boolean;
 }
-export type PreviewPartId = 'content' | 'manifest' | 'discovery' | 'junit_summary';
+/** `diff` (B2b Task 14) is read through the accept service (the runner's bounded git read), not through `previewSource`. */
+export type PreviewPartId = 'content' | 'manifest' | 'discovery' | 'junit_summary' | 'diff';
 export interface PreviewRow { name: string; detail: string | null; bytes: number | null; outcome: string | null }
 /** What a preview page reads: text main holds, a stored object (read in the wiring), or rows. */
 export type PreviewSource =
@@ -89,7 +90,7 @@ export class ExecQueries {
       versionKind = (this.db.prepare('SELECT a.kind FROM artifacts a WHERE a.id = ?').get(v.artifactId) as { kind: string }).kind;
     }
     const scope = { type: 'project' as const, projectId: pw.project_id, workspaceId: pw.workspace_id };
-    const can = (action: 'job.create' | 'artifact.create' | 'deployment.stop'): boolean =>
+    const can = (action: 'job.create' | 'artifact.create' | 'deployment.stop' | 'agent.start' | 'review.decide' | 'changeset.accept' | 'repo.merge'): boolean =>
       pw.status === 'active' && this.deps.auth.authorize(p, action, scope).allowed;
     const usable = (kind: string, statuses: readonly VersionStatus[]): boolean => !!this.db.prepare(`SELECT 1 FROM artifact_versions v
       JOIN artifacts a ON a.id = v.artifact_id WHERE a.project_id = ? AND a.kind = ? AND a.status = 'active'
@@ -115,7 +116,7 @@ export class ExecQueries {
   }
 
   private reasonFor(action: NonNullable<ReturnType<typeof getUserAction>>, step: { status: string; subPhase: Parameters<typeof isAtOrBefore>[0] } | null,
-    versionKind: string | null, can: (a: 'job.create' | 'artifact.create' | 'deployment.stop') => boolean,
+    versionKind: string | null, can: (a: 'job.create' | 'artifact.create' | 'deployment.stop' | 'agent.start' | 'review.decide' | 'changeset.accept' | 'repo.merge') => boolean,
     usable: (kind: string, statuses: readonly VersionStatus[]) => boolean, producedBy: (kind: string) => string, projectId: string,
     participation: string): string | null {
     if (!isAtOrBefore(action.subPhase)) return 'planned';
@@ -130,7 +131,10 @@ export class ExecQueries {
       let agents = false;
       try { agents = this.deps.agentsAvailable?.() === true; } catch { agents = false; }
       if (!agents) return 'agents_unavailable';
-      return can('job.create') ? null : 'permission';
+      // Each flow is judged by its own platform action (not by job.create): starting a turn, deciding a review, accepting, merging.
+      const needs = run.flow === 'agent.turn' ? 'agent.start' : run.flow === 'review.decide' ? 'review.decide'
+        : run.flow === 'changeset.accept' ? 'changeset.accept' : 'repo.merge';
+      return can(needs) ? null : 'permission';
     }
     if ('inlineKind' in run) {
       if (!can('artifact.create')) return 'permission';
@@ -196,6 +200,7 @@ export class ExecQueries {
     const kind = (this.db.prepare('SELECT kind FROM artifacts WHERE id = ?').get(v.artifactId) as { kind: string }).kind;
     const none = (): never => { throw new PlatformError('invalid', `a ${kind} version has no ${part} to preview`, { reason: 'no_such_part' }); };
     const s = v.storage;
+    if (part === 'diff') return none();
     if (part === 'content') {
       if (s.kind === 'inline') return { type: 'text', text: JSON.stringify(s.json, null, 2) ?? '' };
       if (s.kind === 'git') return { type: 'text', text: [`commit ${s.commit}`, ...(s.ref ? [`ref ${s.ref}`] : [])].join('\n') };

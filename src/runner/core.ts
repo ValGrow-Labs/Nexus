@@ -72,6 +72,7 @@ import { startHostEgressProxy } from './hostEgressProxy';
 import type { AgentRuntime } from '../shared/nexus/runtime';
 import type { ScriptedStep } from './runtimes/scripted';
 import { runtimeFor } from './runtimes/registry';
+import { RuntimeProber, type RuntimeProbeAdapter } from './runtimes/probe';
 import { DEPS_VOLUME_RE, DockerError, SpecError } from './sandbox/dockerDriver';
 import type { DockerRunner } from './sandbox/dockerCli';
 import { DU_ARGV, GUARD_POLL_MS, guardDecision, parseDuKib, WORKSPACE_MAX_BYTES, type GuardTrip } from './sandbox/sizeGuard';
@@ -132,6 +133,12 @@ export interface RunnerDeps {
   onShutdown?: () => void;
   /** The git resolver (tests inject one); default: src/main/gitBinary.ts (a found binary is kept, a miss asked again). */
   resolveGit?: () => Promise<string | null>;
+  /**
+   * B2b Task 14: the adapters whose health `probe.result.runtimes` reports (the runner entry passes the real ones). Without
+   * it the runner reports none, so a test never runs an engine. Their health runs under a deny-all proxy before consent and
+   * the allow-list proxy only after it (runtimes/probe.ts).
+   */
+  runtimeProbe?: { adapters: () => readonly RuntimeProbeAdapter[]; startProxy?: typeof startHostEgressProxy; timeoutMs?: number; ttlMs?: number };
   /**
    * B2b Tasks 11 and 13: how an agent turn's runtime is built. Production sets none of this: the `cli-agent` adapter
    * resolves the engine's native executable itself and builds its environment from an allow-list. Tests use
@@ -305,7 +312,7 @@ export class RunnerCore {
       switch (m.op) {
         case 'hello': return await this.onHello(m);
         case 'mcp.reply': this.onMcpReply(m); return;
-        case 'probe': return await this.onProbe();
+        case 'probe': return await this.onProbe(typeof m.consentHostsSha256 === 'string' ? m.consentHostsSha256 : null);
         case 'attempt.start': return await this.onStart(m.attemptId as string, m.plan as AttemptPlan);
         case 'attempt.cancel': return await this.onCancel(m.attemptId as string, m.graceMs as number, m.reason as CancelReason);
         case 'attempt.adopt': return await this.onAdopt(m.attemptId as string, m.containerId as string, m.logPath as string);
@@ -466,7 +473,9 @@ stderr: ${r.stderr}` : ''}`
     return { ok: true, value: { exit: r.exit, stdout: redactSecretText(r.stdout), stderr: redactSecretText(r.stderr), truncated: r.truncated } };
   }
 
-  private async onProbe(): Promise<void> {
+  private runtimeProber: RuntimeProber | null = null;
+
+  private async onProbe(consentHostsSha256: string | null = null): Promise<void> {
     const gpu = { detected: false, usableInContainers: false as const };
     let probe: SandboxProbe;
     try { probe = await this.driver.probe(); } catch { probe = { docker: 'stopped', gpu }; }
@@ -481,7 +490,17 @@ stderr: ${r.stderr}` : ''}`
         ...(typeof info.versions === 'string' && info.versions.length <= 300 && IMAGE_VERSIONS_RE.test(info.versions) ? { versions: info.versions } : {}) });
     }
     const free = this.paths ? await this.freeBytes(this.paths.root) : null;
-    this.post({ op: 'probe.result', probe, images, freeBytes: free !== null && Number.isSafeInteger(Math.floor(free)) && free >= 0 ? Math.floor(free) : null, runtimes: [] });
+    this.post({ op: 'probe.result', probe, images, freeBytes: free !== null && Number.isSafeInteger(Math.floor(free)) && free >= 0 ? Math.floor(free) : null,
+      runtimes: await this.probeRuntimes(consentHostsSha256) });
+  }
+
+  /** `probe.result.runtimes`: the adapters' health through a deny-all proxy (no consent) or the allow-list proxy (after consent). */
+  private async probeRuntimes(consentHostsSha256: string | null): Promise<Awaited<ReturnType<RuntimeProber['probe']>>> {
+    const rp = this.deps.runtimeProbe;
+    if (!rp) return [];
+    this.runtimeProber ??= new RuntimeProber({ adapters: rp.adapters, now: this.now, log: this.log, imagesDir: this.deps.imagesDir,
+      startProxy: rp.startProxy ?? this.deps.agentRuntime?.startProxy, timeoutMs: rp.timeoutMs, ttlMs: rp.ttlMs });
+    try { return await this.runtimeProber.probe(consentHostsSha256); } catch { return []; }
   }
 
   // ---------- attempt state ----------

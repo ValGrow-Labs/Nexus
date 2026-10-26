@@ -7,6 +7,7 @@
 import * as fsp from 'node:fs/promises';
 import * as path from 'node:path';
 import { RunnerCore } from './core';
+import { probeAdapters } from './runtimes/registry';
 import { dockerCli } from './sandbox/dockerCli';
 import { DockerDriver } from './sandbox/dockerDriver';
 import type { RunnerTransport } from './types';
@@ -40,7 +41,7 @@ if (!parentPort) {
     const cli = dockerCli(fsp);
     const core = new RunnerCore(transport, {
       driver: new DockerDriver(cli, { now: Date.now }), now: Date.now, fs: fsp, docker: cli, imagesDir: imagesDir(),
-      onShutdown: () => process.exit(0)
+      onShutdown: () => process.exit(0), runtimeProbe: { adapters: probeAdapters }
     });
     port.on('close', () => { void core.shutdown().finally(() => process.exit(0)); });
     port.start();
