@@ -28,6 +28,7 @@ export const PREVIEW_INCOMPLETE_TEXT: Readonly<Record<string, string>> = Object.
   hidden_lines: 'Part of this change is hidden here because it looks like a secret, so it can’t be approved from Nexus. Review it in your own tools, or ask the agent to rewrite it.',
   too_large: 'This change is too large to show here, so it can’t be approved from Nexus. Review it in your own tools, or ask the agent to split it up.',
   truncated: 'This change is too large to show here in full, so it can’t be approved from Nexus. Review it in your own tools, or ask the agent to split it up.',
+  binary_file: 'A file in this change is binary, so it can’t be shown here and can’t be approved from Nexus. Review it in your own tools, or ask the agent to leave it out.',
   unknown: 'Nexus could not confirm that the whole change can be shown here, so it can’t be approved from Nexus. Review it in your own tools, or ask the agent to rewrite it.'
 });
 export function previewIncompleteText(reason: unknown): string {

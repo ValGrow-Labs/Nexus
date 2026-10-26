@@ -31,9 +31,18 @@ export function agentConsentView(nx: NexusPlatform): AgentConsentView {
   return { ...base, consent: { ...base.consent, hosts: hosts.map((h) => scrubMessage(h).slice(0, 260)).slice(0, 16) } };
 }
 
-export function agentSetupView(nx: NexusPlatform): AgentSetupView {
+/** Main's reason agent work is off (`agentsUnavailableReason`'s vocabulary, then execution's) as the view's four words. */
+export function offReasonOf(reason: string | null | undefined): NonNullable<AgentSetupView['offReason']> {
+  if (reason === undefined || reason === null || reason === 'not_enabled') return 'build';
+  if (reason === 'held' || reason === 'auto_held' || reason === 'backup_failed') return 'held';
+  if (reason === 'failed' || reason === 'shape') return 'database';
+  return 'execution';
+}
+
+/** `offReason`: main's reason for agent work being off (only read when it is off). */
+export function agentSetupView(nx: NexusPlatform, offReason?: string | null): AgentSetupView {
   if (!nx.agentsAvailable || !nx.budget) {
-    return { ...UNKNOWN_AGENT, state: 'off', consent: { live: false, caps: null, hostsCount: 0, grantedAt: null }, usageToday: { usdCents: 0, turns: 0, estimated: false } };
+    return { ...UNKNOWN_AGENT, state: 'off', offReason: offReasonOf(offReason), consent: { live: false, caps: null, hostsCount: 0, grantedAt: null }, usageToday: { usdCents: 0, turns: 0, estimated: false } };
   }
   const entry = nx.agentProbe?.cache.fresh() ?? null;
   const live = nx.budget.live();

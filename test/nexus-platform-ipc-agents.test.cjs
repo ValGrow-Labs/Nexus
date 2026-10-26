@@ -914,7 +914,7 @@ test('I3 #51 names the destination in its consent row (hosts, `host:port`, the a
   assert.equal((setup.match(/hosts/g) || []).length > 0, true);
   const mod = read('src/main/nexusIpc/registerNexusIpc.ts');
   assert.equal((mod.match(/agentConsentView\(nx\)/g) || []).length, 3, 'get, grant and revoke of #51 only');
-  assert.match(mod, /agentSetupView\(nx\)\)\);/, '#23 keeps the plain setup row');
+  assert.match(mod, /agentSetupView\(nx, agentsOff\(nx\)\)\)\);/, '#23 keeps the plain setup row (plus, only while agents are off, why)');
   const dto = read('src/main/nexusIpc/dto.ts');
   assert.doesNotMatch(dto, /hosts\??\s*:|\.hosts|egressHosts/, 'dto.ts builds no view from a host list');
 });

@@ -189,6 +189,21 @@ export const ROLLBACK_OWED_TEXT = 'Nexus still owes an undo of the accepted bran
 /** Agent work is not turned on: no check or setup can change it (so no "check again" advice). */
 export const AGENT_OFF_TEXT = 'Agent work is not available because it is not turned on in this build.';
 
+/** Why agent work is off, from the setup view's `offReason`. An older answer without it reads as the build (what it always said). */
+export const AGENT_OFF_REASON_TEXT: Readonly<Record<string, string>> = Object.freeze({
+  build: AGENT_OFF_TEXT,
+  database: 'Agent work needs the newer database format, which is not applied on this computer yet.',
+  held: 'Agent work is paused on this computer: the database upgrade it needs is on hold.',
+  execution: 'Agent work needs running jobs, which are not available right now.'
+});
+/** The one sentence for agent work being off. `executionText`: the execution-unavailable sentence, used for the `execution` reason. */
+export function agentOffText(reason: string | null | undefined, executionText?: string): string {
+  if (reason === 'execution' && executionText) return executionText;
+  return typeof reason === 'string' && Object.prototype.hasOwnProperty.call(AGENT_OFF_REASON_TEXT, reason) ? AGENT_OFF_REASON_TEXT[reason] : AGENT_OFF_TEXT;
+}
+/** An agent flow action unavailable because agent work is off (its view has no reason, so the sentence does not name one). */
+export const AGENT_ACTION_OFF_TEXT = 'Agent work is not available on this computer right now. Open Setup to see why.';
+
 /** Agent work off: the same sub-reasons as execution say why. */
 export function agentsNotice(subReason: string | null | undefined): string {
   if (subReason === 'not_enabled') return AGENT_OFF_TEXT;

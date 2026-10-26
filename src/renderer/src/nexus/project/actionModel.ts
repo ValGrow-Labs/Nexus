@@ -8,7 +8,7 @@ import type { DeploymentStatus } from '@shared/nexus/platform';
 import { USER_ACTIONS, getUserAction } from '@shared/nexus/actions';
 import { getDomain } from '@shared/nexus/domains';
 import { isAtOrBefore } from '@shared/nexus/domainSpec';
-import { AGENT_OFF_TEXT, setupText } from '../data/errorCopy';
+import { AGENT_ACTION_OFF_TEXT, setupText } from '../data/errorCopy';
 import { gb, type ExecAvailability } from '../data/executionModel';
 import { livePreviewsOf, type PreviewSubject } from '../runs/jobRunModel';
 
@@ -55,7 +55,7 @@ export function reasonSentence(a: Pick<ActionAvailabilityView, 'label' | 'reason
   if (r.startsWith('setup:')) return `${a.label}: ${setupText(r)}`;
   if (r.startsWith('blocked_by_step:')) return `${a.label}: needs a ready version from the ${stepLabel(workspaceId, r.slice(16))} step first.`;
   // B2b: an agent flow while agent work is off says why in the one agent-off sentence (not "not available right now").
-  if (r === 'agents_unavailable') return `${a.label}: ${AGENT_OFF_TEXT}`;
+  if (r === 'agents_unavailable') return `${a.label}: ${AGENT_ACTION_OFF_TEXT}`;
   if (r === 'permission') return `${a.label}: you do not have permission to do that here.`;
   if (r === 'withdrawn' || r === 'complete') return `${a.label}: this project no longer takes part in this workspace.`;
   if (r === 'not_applicable') return null;

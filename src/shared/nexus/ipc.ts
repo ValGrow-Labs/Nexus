@@ -368,6 +368,12 @@ export type AgentSetupState = 'ready' | 'not_installed' | 'not_signed_in' | 'ver
 /** The agent setup row (#23's `agent` and #51). */
 export interface AgentSetupView {
   state: AgentSetupState;
+  /**
+   * Only with state `off`: why agent work is not in place, in the words of main's own reasons: `build` (not turned on in this
+   * build), `database` (the newer database format is not applied), `held` (that upgrade is on hold), `execution` (running jobs is
+   * not available). Absent or null otherwise; an older answer without it reads as `build`.
+   */
+  offReason?: 'build' | 'database' | 'held' | 'execution' | null;
   /** The engine's display name: shown on the setup row only. */
   label: string | null;
   version: string | null;

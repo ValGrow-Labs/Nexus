@@ -7,7 +7,7 @@
 import type {
   AgentSetupView, AgentStartArgs, AgentUsageView, HealthView, JobView, SessionDetailView, SessionView
 } from '@shared/nexus/ipc';
-import { AGENT_OFF_TEXT, AGENT_REASON_TEXT, ROLLBACK_OWED_TEXT, errorCopy } from '../data/errorCopy';
+import { AGENT_REASON_TEXT, ROLLBACK_OWED_TEXT, agentOffText, agentsNotice, errorCopy } from '../data/errorCopy';
 import { noticeFor, sizeLabel, type ExecAvailability } from '../data/executionModel';
 import { agentTurnHeadline, waitPhaseText } from '../runs/jobRunModel';
 import { kindLabel, statusLabel } from '../project/artifactModel';
@@ -138,7 +138,7 @@ export function agentPanelModel(i: AgentPanelInput): AgentPanelView {
     return { kind: 'off', lead: i.availability.text, blockers: [], canAsk: false, setup: false, ...empty };
   }
   // Agent work is not in place in this build or on this database: one sentence, nothing to check and nothing to grant.
-  if (i.health?.agent?.state === 'off') return { kind: 'off', lead: AGENT_OFF_TEXT, blockers: [], canAsk: false, setup: false, ...empty };
+  if (i.health?.agent?.state === 'off') return { kind: 'off', lead: agentOffText(i.health.agent.offReason, i.health.db.subReason ? agentsNotice(i.health.db.subReason) : undefined), blockers: [], canAsk: false, setup: false, ...empty };
   const blockers: string[] = [];
   const exec = noticeFor(i.availability);
   if (i.availability.kind !== 'ready' && exec) blockers.push(exec.text);

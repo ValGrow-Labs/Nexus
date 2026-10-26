@@ -271,8 +271,8 @@ test('HA-B2b the agent flow actions answer agents_unavailable while the agents p
       assert.deepEqual(bar.buttons, [], `${state} / ${version ? `${version.kind}:${version.status}` : 'project'}`);
       for (const s of bar.sentences) {
         sentences++;
-        // Round 4 (final review I2): the one agent-off sentence, not "not available right now".
-        assert.match(s.text, /: Agent work is not available because it is not turned on in this build\.$/, s.text);
+        // Round 4 (final review I2) and round 6: one agent-off sentence that names no cause it cannot know (the action view carries no reason).
+        assert.match(s.text, /: Agent work is not available on this computer right now\. Open Setup to see why\.$/, s.text);
         assert.doesNotMatch(s.text, /agents_unavailable/, 'never a raw code');
       }
     }

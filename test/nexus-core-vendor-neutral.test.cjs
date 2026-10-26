@@ -102,19 +102,47 @@ test('V4 the runner protocol accepts any well-formed runtime kind and favours no
  */
 const V5_DIRS = ['src/main/nexus', 'src/main/nexusIpc', 'src/main/nexusExec', 'src/runner', 'src/renderer/src/nexus', 'src/shared/nexus'];
 const V5_SKIP = (rel) => rel.startsWith('src/runner/runtimes/cliAgent/') || rel === 'src/shared/nexus/runtime.ts';
-/** file -> exact number of lines that carry an engine word. */
+/**
+ * file -> the sha256 (first 16 hex) of each trimmed line that carries an engine word, in file order. A word that moves to another
+ * line, or a new line with one, changes the hashes and fails; the comment after each hash is the line's start, for the reader.
+ * Why each is allowed: the schema comments name an example runtime kind; the `.claude` rule excludes the agent CLI's own per-worktree
+ * settings folder from every change (its folder name is the only way to name it); the legacy lead-agent workbench and its assistant
+ * port have the provider choice of the old app as their subject.
+ */
 const V5_ALLOWED = {
-  // A comment in the database layout naming the example runtime kind of two columns (the value itself is free text).
-  'src/main/nexus/db/schemaV7.ts': 2,
-  // The agent CLI's own per-worktree settings folder is never part of a change: its folder name is the only way to exclude it.
-  'src/main/nexus/validation/validators/pathsInScope.ts': 3,
-  'src/runner/gitWrite.ts': 2,
-  // The legacy lead-agent workbench (Agents page) and its assistant port: their subject is the provider choice of the old app.
-  'src/renderer/src/nexus/agents/agentList.ts': 1,
-  'src/renderer/src/nexus/agents/workbench/TeamSection.tsx': 4,
-  'src/renderer/src/nexus/agents/workbench/useFleetRoster.ts': 2,
-  'src/renderer/src/nexus/agents/workbench/useRestartAgent.ts': 2,
-  'src/renderer/src/nexus/assistant/port.ts': 1
+  'src/main/nexus/db/schemaV7.ts': [
+    'cd03605e9d5fc7be',  // runtime_kind        TEXT,                                         -- provider/ru
+    'f790d5404ba40cba',  // runtime_kind        TEXT,                          -- e.g. 'claude-cli'; provide
+  ],
+  'src/main/nexus/validation/validators/pathsInScope.ts': [
+    '8077bba16c26f4c0',  // /** A `.claude` path segment at any depth (case-insensitive: the folder name is 
+    '59d5d704efbd649a',  // export const AGENT_CONFIG_SEGMENT_RE = /(?:^|\/)\.claude[. ]*(?:\/|$)/i;
+    '6c88bf0372babb77',  // // The agent CLI's own per-worktree settings folder (`.claude/`): never part of 
+  ],
+  'src/runner/gitWrite.ts': [
+    'e86d7c5f197d5a45',  // * `<worktree>/.claude/` (Task 0), which must never be staged or committed.
+    '869a23fdbe8a3bc9',  // ':(glob,icase,exclude).claude', ':(glob,icase,exclude).claude/**', ':(glob,icase
+  ],
+  'src/renderer/src/nexus/agents/agentList.ts': [
+    'c8a3e331ed1dd9ae',  // provider: a.provider ?? 'claude',
+  ],
+  'src/renderer/src/nexus/agents/workbench/TeamSection.tsx': [
+    '680d683e33d505f1',  // const canResume = agentProvider === 'claude' || !!agentPreset.resumeFlag || !!ag
+    'dd1cf86422eeaa8c',  // // `defaultModel` is a Claude model id, so it can only mark an entry in the Clau
+    'f86313423c3e2803',  // const isAppDefault = p.id === 'claude' && !!defaultModel && model.id === default
+    'f6f04d3c0947309f',  // <option key={p.id} value={p.id}>{p.label}{p.id === 'claude' ? ' (recommended)' :
+  ],
+  'src/renderer/src/nexus/agents/workbench/useFleetRoster.ts': [
+    '596d5e6300ee0425',  // const [engineProvider, setEngineProvider] = useState<AgentProvider>('claude');
+    '2fd101ca13ceeba9',  // setEngineProvider(c.godProvider ?? 'claude');
+  ],
+  'src/renderer/src/nexus/agents/workbench/useRestartAgent.ts': [
+    '3f05adc1e15d8f95',  // // Restart an agent's PTY in place. `resume:true` reattaches its prior Claude
+    '9d7eafb71835a524',  // } else if (provider === 'claude' && !(await window.cth.resolveSessionCwd(resumeS
+  ],
+  'src/renderer/src/nexus/assistant/port.ts': [
+    '2d17b6acd073bf07',  // *  agent. A future provider (e.g. Hermes) implements this same interface and
+  ]
 };
 const v5Files = () => V5_DIRS.flatMap((d) => (fs.existsSync(path.join(ROOT, d)) ? walkShared(d, /\.(ts|tsx|cjs|js|mjs|json|md)$/) : [])).filter((rel) => !V5_SKIP(rel));
 
@@ -122,7 +150,9 @@ test('V5 no engine name outside the cliAgent adapter except an explicit, exact a
   const files = v5Files();
   assert.ok(files.length > 300, `the walk sees the Nexus code (${files.length})`);
   const found = {};
-  for (const rel of files) { const n = hits(read(rel)).length; if (n > 0) found[rel] = n; }
+  const sha = (l) => require('node:crypto').createHash('sha256').update(l, 'utf8').digest('hex').slice(0, 16);
+  for (const rel of files) { const ls = hits(read(rel)).map(([, l]) => sha(l.trim())); if (ls.length > 0) found[rel] = ls; }
+  // Compare the hashes only (the comments in V5_ALLOWED are for the reader).
   assert.deepEqual(found, V5_ALLOWED);
   // The boundary exists and is where the engine is named.
   assert.ok(fs.existsSync(path.join(ROOT, 'src/runner/runtimes/cliAgent')), 'the adapter folder');

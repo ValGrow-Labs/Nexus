@@ -5,7 +5,7 @@
 import type { AgentConsentView, AgentSetupView, EventView, HealthView, NexusResult } from '@shared/nexus/ipc';
 import { GIB, MIN_DOCKER_CPUS, MIN_DOCKER_MEMORY } from '@shared/nexus/resourceGate';
 import { AGENT_DEFAULTS } from '@shared/nexus/agentPolicy';
-import { agentsNotice, errorCopy, executionNotice, unavailableNotice } from './errorCopy';
+import { agentOffText, agentsNotice, errorCopy, executionNotice, unavailableNotice } from './errorCopy';
 
 /**
  * Sizes in GB as Windows Explorer shows them (binary: 1 GB = 2^30 bytes), which is also how the resource gate
@@ -250,7 +250,7 @@ export function setupSheet(h: HealthView, ctx: { estimates?: ReadonlyMap<string,
   rows.push(h.runner.attached
     ? row('runner', 'Execution runner', 'ok', h.runner.restarts > 0 ? `Running (restarted ${h.runner.restarts} times).` : 'Running.')
     : row('runner', 'Execution runner', 'problem', 'Not running.', 'Restart the app; the runner starts with it.'));
-  if (h.agent) rows.push(...agentSetupRows(h.agent, { hosts: ctx.hosts ?? null, offText: agentsNotice(h.db.execution ? 'not_enabled' : h.db.subReason) }));
+  if (h.agent) rows.push(...agentSetupRows(h.agent, { hosts: ctx.hosts ?? null, offText: h.db.subReason ? agentsNotice(h.db.subReason) : undefined }));
   rows.push(row('gpu', 'GPU', 'ok', gpuLine(h.gpu)));
   // The GPU line is a fact, not a requirement: it is never a problem and never offered.
   rows[rows.length - 1].word = h.gpu.detected ? 'Not used' : 'Not needed';
@@ -300,7 +300,7 @@ const dollars = (cents: number): string => `$${Math.floor(cents / 100)}.${String
 export function agentSetupRows(a: AgentSetupView, o: { hosts?: readonly string[] | null; fmt?: (t: number) => string; offText?: string } = {}): SetupRow[] {
   const fmt = o.fmt ?? ((t: number) => new Date(t).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }));
   // Agent work is not in place: one row, one sentence. Nothing to check, nothing to grant, no "check again".
-  if (a.state === 'off') return [row('agent', 'Agent', 'off', o.offText ?? agentsNotice('not_enabled'))];
+  if (a.state === 'off') return [row('agent', 'Agent', 'off', agentOffText(a.offReason, o.offText))];
   const rows: SetupRow[] = [];
   const label = a.label ?? 'Agent';
   const version = a.version ? ` (version ${a.version})` : '';

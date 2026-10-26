@@ -630,7 +630,7 @@ test('R4-I2 agent work off is its own state: one sentence, no check-again advice
   const p = A.agentPanelModel({ health: health({ agent: off }), availability: READY, sessions: null, sessionsFail: null });
   assert.deepEqual([p.kind, p.canAsk, p.setup, p.lead], ['off', false, false, E.AGENT_OFF_TEXT]);
   const flow = AM.reasonSentence({ label: 'Ask the agent', reason: 'agents_unavailable' }, 'sde');
-  assert.equal(flow, `Ask the agent: ${E.AGENT_OFF_TEXT}`);
+  assert.equal(flow, `Ask the agent: ${E.AGENT_ACTION_OFF_TEXT}`);
   assert.equal(AM.reasonSentence({ label: 'X', reason: 'weird' }, 'sde'), 'X: not available right now.');
   // main's #23 says `off` when the agents part is not in place.
   assert.match(fs.readFileSync(path.join(ROOT, 'src/main/nexusIpc/agentSetup.ts'), 'utf8'), /state: 'off'/);
@@ -768,4 +768,47 @@ test('R5 Approve is offered only when previewComplete === true (fail closed); Re
   assert.match(src('project/ChangeSetReview.tsx'), /diffHasRedaction\(d\.text\) && /);
   // No vendor, host or code in the new copy (UA2 and UA11 also scan changeSetModel.ts and ChangeSetReview.tsx line by line).
   for (const t of Object.values(CS.PREVIEW_INCOMPLETE_TEXT)) assert.doesNotMatch(t, VENDOR);
+});
+
+// ---------- fix round 6 ----------
+
+test('R6 binary_file: no Approve, its own fixed sentence; Request changes and Reject stay; hidden_lines does not say the agent added a secret', () => {
+  const v = CS.changeSetModel({ version: { ...cset('candidate'), previewComplete: false, previewReason: 'binary_file' }, validations: allPass(), review: null, repo: repo() });
+  assert.ok(!v.buttons.includes('approve') && !v.buttons.includes('accept'));
+  assert.deepEqual(v.buttons, ['request_changes', 'reject']);
+  assert.equal(v.sentences.length, 1);
+  assert.equal(v.sentences[0], 'A file in this change is binary, so it can’t be shown here and can’t be approved from Nexus. Review it in your own tools, or ask the agent to leave it out.');
+  assert.doesNotMatch(v.sentences[0], /binary_file|_/);
+  // Five distinct sentences for the five closed reasons; the old claim is not made.
+  const said = ['hidden_lines', 'too_large', 'truncated', 'binary_file', 'unknown'].map((r) => CS.previewIncompleteText(r));
+  assert.equal(new Set(said).size, 5);
+  assert.doesNotMatch(CS.previewIncompleteText('hidden_lines'), /added|wrote|contains a secret/i);
+  assert.match(CS.previewIncompleteText('hidden_lines'), /^Part of this change is hidden here because it looks like a secret/);
+  // Still fail closed for anything but an explicit true.
+  assert.ok(!CS.changeSetModel({ version: { ...cset('candidate'), previewComplete: undefined, previewReason: 'binary_file' }, validations: allPass(), review: null, repo: repo() }).buttons.includes('approve'));
+  assert.match(fs.readFileSync(path.join(ROOT, 'src/shared/nexus/ipc.ts'), 'utf8'), /'hidden_lines' \| 'too_large' \| 'truncated' \| 'binary_file' \| 'unknown' \| null/);
+});
+
+test('R6 agent work off says what is true: build, database, held or execution; an older answer reads as the build', () => {
+  const off = (offReason) => agentView({ state: 'off', offReason, label: null, version: null, consent: { live: false, caps: null, hostsCount: 0, grantedAt: null } });
+  const text = (offReason, h = {}) => X.setupSheet(health({ agent: off(offReason), ...h })).find((r) => r.id === 'agent').text;
+  assert.equal(text('build'), 'Agent work is not available because it is not turned on in this build.');
+  assert.equal(text(undefined), 'Agent work is not available because it is not turned on in this build.');
+  assert.equal(text('database'), 'Agent work needs the newer database format, which is not applied on this computer yet.');
+  assert.equal(text('held'), 'Agent work is paused on this computer: the database upgrade it needs is on hold.');
+  assert.equal(text('execution'), 'Agent work needs running jobs, which are not available right now.');
+  assert.equal(text('execution', { db: { version: 9, platform: true, handoffs: true, execution: false, subReason: 'held' } }), E.agentsNotice('held'));
+  assert.equal(new Set(['build', 'database', 'held', 'execution'].map((r) => text(r))).size, 4);
+  for (const r of ['build', 'database', 'held', 'execution']) assert.doesNotMatch(text(r), /check again|Check again|_/i);
+  // The panel's lead says the same; the off state is never askable.
+  for (const r of ['database', 'held']) {
+    const p = A.agentPanelModel({ health: health({ agent: off(r) }), availability: READY, sessions: null, sessionsFail: null });
+    assert.deepEqual([p.kind, p.canAsk, p.lead], ['off', false, text(r)]);
+  }
+  // main: the view carries the reason, mapped from its own vocabulary; #23 passes it.
+  const AS = loadTs('src/main/nexusIpc/agentSetup.ts');
+  for (const [reason, word] of [['not_enabled', 'build'], [null, 'build'], ['held', 'held'], ['auto_held', 'held'], ['backup_failed', 'held'], ['failed', 'database'], ['shape', 'database'],
+    ['v8_unavailable', 'execution'], ['registry_invalid', 'execution'], ['not_started', 'execution']]) assert.equal(AS.offReasonOf(reason), word, String(reason));
+  assert.match(fs.readFileSync(path.join(ROOT, 'src/main/nexusIpc/registerNexusIpc.ts'), 'utf8'), /agentSetupView\(nx, agentsOff\(nx\)\)/);
+  assert.match(fs.readFileSync(path.join(ROOT, 'src/shared/nexus/ipc.ts'), 'utf8'), /offReason\?: 'build' \| 'database' \| 'held' \| 'execution' \| null;/);
 });

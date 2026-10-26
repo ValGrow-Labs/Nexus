@@ -508,7 +508,7 @@ export function registerNexusIpc(registrar: IpcRegistrar, deps: NexusIpcDeps): v
       nx.agentProbe?.refresh();
     }
     const off = executionOff(nx);
-    return ok(healthView(nx.exec.health(), { handoffs: nx.handoffsAvailable, execution: off === null, registry: nx.registry, subReason: off }, agentSetupView(nx)));
+    return ok(healthView(nx.exec.health(), { handoffs: nx.handoffsAvailable, execution: off === null, registry: nx.registry, subReason: off }, agentSetupView(nx, agentsOff(nx))));
   });
 
   // #24 the domain's actions with whether each can run now and why not.
