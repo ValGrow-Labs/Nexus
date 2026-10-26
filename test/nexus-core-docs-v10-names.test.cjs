@@ -345,3 +345,35 @@ test('DOC10-15 the preview verdict, the integration rewrite, the refresh bound a
   assert.match(section(56), /`turn_running`/);
   assert.match(section(56), /`no_session`/);
 });
+
+test('DOC10-16 the off reasons and their sentences, the five preview sentences and the 17 hashed allow-list lines are stated as the code has them', () => {
+  const read = (rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8');
+  const copy = read('src/renderer/src/nexus/data/errorCopy.ts');
+  const s54 = section(54);
+  const quoted = (name) => {
+    const reasons = /AGENT_OFF_REASON_TEXT[^{]*\{([\s\S]*?)\}\);/.exec(copy);
+    assert.ok(reasons, 'AGENT_OFF_REASON_TEXT found');
+    const m = new RegExp(`${name} = '([^']*)'`).exec(copy) || new RegExp(`\\b${name}: '([^']*)'`).exec(reasons[1]);
+    assert.ok(m, `${name} found in errorCopy.ts`);
+    return m[1];
+  };
+  for (const name of ['AGENT_OFF_TEXT', 'database', 'held', 'AGENT_ACTION_OFF_TEXT']) assert.ok(s54.includes(quoted(name)), `section 54 quotes ${name}`);
+  assert.match(read('src/shared/nexus/ipc.ts'), /offReason\?: 'build' \| 'database' \| 'held' \| 'execution' \| null;/);
+  assert.match(read('src/main/nexusIpc/agentSetup.ts'), /export function offReasonOf/);
+  assert.ok(s54.includes('`AgentSetupView.offReason`'));
+  // The five preview sentences: five distinct fixed sentences, one per closed reason, and the doc names the five reasons.
+  const cs = read('src/renderer/src/nexus/project/changeSetModel.ts');
+  const block = /PREVIEW_INCOMPLETE_TEXT[^{]*\{([\s\S]*?)\}\);/.exec(cs);
+  assert.ok(block, 'PREVIEW_INCOMPLETE_TEXT found');
+  const sentences = [...block[1].matchAll(/^\s*(\w+):\s*'([^']*)'/gm)];
+  assert.deepEqual(sentences.map((x) => x[1]), ['hidden_lines', 'too_large', 'truncated', 'binary_file', 'unknown']);
+  assert.equal(new Set(sentences.map((x) => x[2])).size, 5, 'five distinct sentences');
+  assert.doesNotMatch(sentences[0][2], /agent (added|wrote)/i, 'hidden_lines makes no claim that the agent added a secret');
+  // The vendor allow-list pins each line by hash: 17 lines in all, as the doc says.
+  const v5 = /const V5_ALLOWED = \{([\s\S]*?)\n\};/.exec(read('test/nexus-core-vendor-neutral.test.cjs'));
+  assert.ok(v5);
+  const hashes = [...v5[1].matchAll(/^\s*'[0-9a-f]{16}'/gm)].length;
+  assert.equal(hashes, 17);
+  assert.ok(section(59).includes('each of the 17 allowed lines'));
+  assert.ok(section(53).includes('each of the 17 allowed lines'));
+});
