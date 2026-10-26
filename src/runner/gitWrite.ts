@@ -52,6 +52,31 @@ export const GIT_EOL_CONFIG: readonly string[] = Object.freeze(['-c', 'core.auto
 export const MERGE_CONFIG_ARGV: readonly string[] = Object.freeze(['config', '--name-only', '--get-regexp', '^merge\\.']);
 /** Diff options on every diff Nexus runs: no external diff driver, no textconv, no submodule content. */
 export const SAFE_DIFF_ARGS: readonly string[] = Object.freeze(['--no-ext-diff', '--no-textconv', '--ignore-submodules=all', '--no-color']);
+/**
+ * THE preview's patch: the one argv (and, below, the one text transform) behind the diff the user reviews. gitRead's
+ * `diff` read runs exactly this and `previewText` over its output (acceptService then applies redactSecretText once more);
+ * collect runs the same argv and judges completeness on the same text, so what is decided is what is shown. Change it in
+ * one place only.
+ */
+export const PREVIEW_DIFF_ARGS: readonly string[] = Object.freeze(['diff', ...SAFE_DIFF_ARGS, '--no-renames']);
+/** A surrogate half with no partner (a valid astral character is a PAIR and is kept). */
+const LONE_SURROGATE_RE = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/g;
+/** What the preview does to the raw patch text before it leaves the runner. */
+export function previewText(raw: string): string { return redactSecretText(raw).replace(LONE_SURROGATE_RE, '\uFFFD'); }
+/**
+ * How many lines of the preview's text differ from the raw patch once the preview's own transforms have run (the runner's
+ * `previewText`, then acceptService's second redactSecretText). 0 = the user sees every character of the change. The redactors
+ * work on the WHOLE text (a quoted value, a private-key block and an unterminated key run across newlines), so this is judged
+ * on the whole patch, context and removed lines included, never line by line. A count of changed lines only, never text.
+ */
+export function previewHiddenLines(raw: string): number {
+  const seen = redactSecretText(previewText(raw));
+  if (seen === raw) return 0;
+  const a = raw.split(String.fromCharCode(10)); const b = seen.split(String.fromCharCode(10));
+  let pre = 0; while (pre < a.length && pre < b.length && a[pre] === b[pre]) pre++;
+  let suf = 0; while (suf < a.length - pre && suf < b.length - pre && a[a.length - 1 - suf] === b[b.length - 1 - suf]) suf++;
+  return Math.max(1, a.length - pre - suf, b.length - pre - suf);
+}
 /** D-B8: the agent's commits, and accept merges. */
 export const AGENT_IDENTITY = Object.freeze({ name: 'Nexus agent', email: 'agent@nexus.invalid' });
 export const ACCEPT_IDENTITY = Object.freeze({ name: 'Nexus', email: 'agent@nexus.invalid' });
@@ -383,11 +408,12 @@ export interface CollectFacts {
   scanTruncated: boolean;
   /**
    * Whether the user can review the WHOLE change in Nexus's own diff preview (A1). Counts and a closed code only, never
-   * line text: `hidden_lines` = added lines the preview's own redaction alters (the user would see `[redacted]`, yet
-   * sec.secret_scan does not block them), `too_large` = the preview's patch would exceed its cap, `truncated` = the
-   * secret scan itself was cut. Main stores it in the version's metadata; absent counts as NOT complete.
+   * line text: `hidden_lines` = lines of the preview's text (context and removed lines too, multi-line spans included) that
+   * its own redaction alters (the user would see `[redacted]`, yet sec.secret_scan does not block them; `hiddenLines` counts
+   * the changed lines), `too_large` = the preview's patch would exceed its cap, `binary_file` = the preview shows a file
+   * only as "Binary files differ" (the scan reads it as text, the user cannot), `truncated` = the secret scan itself was cut. Main stores it in the version's metadata; absent counts as NOT complete.
    */
-  preview: { complete: boolean; reason?: 'hidden_lines' | 'too_large' | 'truncated'; hiddenLines: number; patchBytes: number };
+  preview: { complete: boolean; reason?: 'hidden_lines' | 'too_large' | 'truncated' | 'binary_file'; hiddenLines: number; patchBytes: number };
 }
 /** The most hits of each kind a collect reports (the count itself, and every `location` evidence item, stay bounded). */
 export const COLLECT_MAX_HITS = 500;
@@ -406,9 +432,8 @@ export const COLLECT_ALWAYS_EXCLUDE: readonly string[] = Object.freeze([
  * and, outside a lockfile, `looksSecret` (advisory). Only the path and the 1-based line number of a hit are kept: the
  * line's text is read here and discarded; it is never returned, logged or stored (D-B14).
  */
-export function scanAddedLines(patch: string): { secretHits: CollectFacts['secretHits']; entropyHits: CollectFacts['entropyHits']; hiddenLines: number } {
+export function scanAddedLines(patch: string): { secretHits: CollectFacts['secretHits']; entropyHits: CollectFacts['entropyHits'] } {
   const secretHits: CollectFacts['secretHits'] = [];
-  const added: string[] = [];                                  // every added line, as the preview shows it (with its +)
   const entropyHits: CollectFacts['entropyHits'] = [];
   let currentPath: string | null = null;
   let newLine = 0;
@@ -423,7 +448,6 @@ export function scanAddedLines(patch: string): { secretHits: CollectFacts['secre
       if (line.startsWith('+') && newLeft > 0) {
         newLeft--;
         const text = line.slice(1);
-        added.push(line);
         const at = newLine++;
         const path = currentPath;
         if (!path) continue;
@@ -447,12 +471,7 @@ export function scanAddedLines(patch: string): { secretHits: CollectFacts['secre
       if (m) { oldLeft = m[1] === undefined ? 1 : Number(m[1]); newLeft = m[3] === undefined ? 1 : Number(m[3]); newLine = Number(m[2]); }
     }
   }
-  // The preview redacts the patch with redactSecretText (the SAME function: acceptService and gitRead). Count the added lines it
-  // would change; the whole text first (the usual case is zero, and one pass is cheap), then line by line.
-  const joined = added.join(String.fromCharCode(10));
-  let hiddenLines = 0;
-  if (added.length > 0 && redactSecretText(joined) !== joined) hiddenLines = added.filter((l) => redactSecretText(l) !== l).length;
-  return { secretHits, entropyHits, hiddenLines };
+  return { secretHits, entropyHits };
 }
 
 /** A `---`/`+++` header's path: git's C-style quoting undone, a trailing tab (a name with a space) dropped, the prefix removed; null for /dev/null. */
@@ -556,9 +575,13 @@ export async function collect(g: HardenedGit, t: { repoPath: string; worktreePat
   const diffstat = { files: 0, insertions: 0, deletions: 0 };
   const paths: string[] = [];
   let pathsTruncated = ns.truncated;
+  let binaryFiles = 0;
   for (const rec of ns.stdout.split('\0')) {
     const m = /^(\d+|-)\t(\d+|-)\t(.+)$/s.exec(rec);
     if (!m) continue;
+    // Without --text, git reports a file it treats as binary (a NUL byte, a -diff/binary attribute) as `-	-`: the preview
+    // shows it only as "Binary files differ".
+    if (m[1] === '-' && m[2] === '-') binaryFiles++;
     diffstat.files++;
     diffstat.insertions += m[1] === '-' ? 0 : Number(m[1]);
     diffstat.deletions += m[2] === '-' ? 0 : Number(m[2]);
@@ -568,14 +591,18 @@ export async function collect(g: HardenedGit, t: { repoPath: string; worktreePat
   // patch text is read only here, inside this function, and discarded; `scanAddedLines` returns path:line only.
   const patch = must(await g.run(repo, ['-c', 'core.quotePath=false', 'diff', ...SAFE_DIFF_ARGS, '--no-renames', '--src-prefix=a/', '--dst-prefix=b/', '--text', '-U0', base, head],
     { neutral: n, signal: o.signal, maxStdout: o.patchMaxBytes ?? COLLECT_PATCH_MAX_BYTES }), 'diff -U0');
-  const { secretHits, entropyHits, hiddenLines } = scanAddedLines(patch.stdout);
-  // The preview's own patch (gitRead 'diff': default context, at most 2 x GIT_DIFF_MAX_BYTES_PER_SIDE): larger than that, the
-  // user is shown only "too large". A failed read is not a verdict either: it counts as an incomplete preview.
+  const { secretHits, entropyHits } = scanAddedLines(patch.stdout);
+  // The preview's own patch: PREVIEW_DIFF_ARGS (what gitRead runs: default context, at most 2 x GIT_DIFF_MAX_BYTES_PER_SIDE).
+  // Larger than that the user is shown only "too large". A failed read is not a verdict either: incomplete.
   const previewMax = GIT_DIFF_MAX_BYTES_PER_SIDE * 2;
-  const pd = await g.run(repo, ['diff', ...SAFE_DIFF_ARGS, '--no-renames', base, head], { neutral: n, signal: o.signal, maxStdout: previewMax + 4 });
-  const previewTooLarge = pd.code !== 0 || pd.truncated || pd.stdoutBytes > previewMax;
+  const pd = await g.run(repo, [...PREVIEW_DIFF_ARGS, base, head], { neutral: n, signal: o.signal, maxStdout: previewMax + 4 });
+  const previewTooLarge = pd.code !== 0 || pd.truncated || pd.stdoutBytes > previewMax || ns.truncated;
   const scanTruncated = patch.truncated === true;
-  const reason = scanTruncated || pd.code !== 0 ? 'truncated' as const : previewTooLarge ? 'too_large' as const : hiddenLines > 0 ? 'hidden_lines' as const : undefined;
+  // Completeness is decided on the preview's OWN text (the whole patch, as the user is shown it), never on the scan's lines.
+  const binaryInPreview = binaryFiles > 0 || (pd.code === 0 && /^Binary files .* differ$/m.test(pd.stdout));
+  const hiddenLines = pd.code === 0 && !previewTooLarge ? previewHiddenLines(pd.stdout) : 0;
+  const reason = scanTruncated || pd.code !== 0 ? 'truncated' as const : previewTooLarge ? 'too_large' as const
+    : binaryInPreview ? 'binary_file' as const : hiddenLines > 0 ? 'hidden_lines' as const : undefined;
   const preview: CollectFacts['preview'] = { complete: reason === undefined, ...(reason ? { reason } : {}), hiddenLines, patchBytes: pd.code === 0 ? pd.stdoutBytes : 0 };
   // `--text` renders every file as text, overriding a NUL byte and any `-diff`/`binary` attribute: otherwise such a file
   // is "Binary files differ" and never scanned, and a secret could hide in it. The cost is that a huge real binary now

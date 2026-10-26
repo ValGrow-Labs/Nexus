@@ -406,7 +406,7 @@ export class IngestService implements IngestPort {
     const scanTruncated = !(isObj(f) && f.scanTruncated === false);
     // Preview completeness (A1), fail closed: absent or malformed facts are NOT complete. Only counts and a closed code.
     const pv = isObj(f) && isObj(f.preview) ? f.preview : null;
-    const pvReasonOk = pv !== null && (pv.reason === undefined || pv.reason === 'hidden_lines' || pv.reason === 'too_large' || pv.reason === 'truncated');
+    const pvReasonOk = pv !== null && (pv.reason === undefined || pv.reason === 'hidden_lines' || pv.reason === 'too_large' || pv.reason === 'truncated' || pv.reason === 'binary_file');
     const pvValid = pv !== null && typeof pv.complete === 'boolean' && pvReasonOk && Number.isSafeInteger(pv.hiddenLines) && (pv.hiddenLines as number) >= 0
       && Number.isSafeInteger(pv.patchBytes) && (pv.patchBytes as number) >= 0;
     const previewComplete = pvValid && pv!.complete === true && pv!.reason === undefined && !scanTruncated;

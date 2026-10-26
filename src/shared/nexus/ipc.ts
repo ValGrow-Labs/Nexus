@@ -97,7 +97,7 @@ export interface VersionView {
    * refused (`preview_incomplete`) unless this is true; asking for changes and rejecting never are.
    */
   previewComplete?: boolean;
-  previewReason?: 'hidden_lines' | 'too_large' | 'truncated' | 'unknown' | null;
+  previewReason?: 'hidden_lines' | 'too_large' | 'truncated' | 'binary_file' | 'unknown' | null;
 }
 /** What a version holds: the commit of a git version, the text of a saved text file, a receipt's handoff. */
 export type VersionContent =

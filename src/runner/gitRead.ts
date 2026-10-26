@@ -13,9 +13,8 @@
 import type { GitReadTask } from '../shared/nexus/execution';
 import { GIT_DIFF_MAX_BYTES_PER_SIDE } from '../shared/nexus/execution';
 import type { GitReadResult } from '../shared/nexus/runnerProtocol';
-import { redactSecretText } from '../main/nexus/activity/redact';
 import { COMMIT_RE } from './git';
-import { BRANCH_RE, GitFailure, SAFE_DIFF_ARGS, type HardenedGit } from './gitWrite';
+import { BRANCH_RE, GitFailure, PREVIEW_DIFF_ARGS, previewText, type HardenedGit } from './gitWrite';
 
 const fail = (code: 'git_missing' | 'not_a_repository' | 'unknown_ref' | 'too_large' | 'error', message: string): GitReadResult => ({ ok: false, code, message });
 
@@ -62,12 +61,12 @@ export async function gitRead(g: HardenedGit, task: GitReadTask, o: { signal?: A
       }
       const max = task.maxBytesPerSide * 2;
       const chunks: Buffer[] = [];
-      const d = await g.run(repo, ['diff', ...SAFE_DIFF_ARGS, '--no-renames', task.base, task.head], { neutral: n, signal: o.signal, maxStdout: max + 4 });
+      const d = await g.run(repo, [...PREVIEW_DIFF_ARGS, task.base, task.head], { neutral: n, signal: o.signal, maxStdout: max + 4 });
       if (d.code !== 0) return fail('error', 'diff failed');
       chunks.push(Buffer.from(d.stdout, 'utf8'));
       const raw = cutUtf8(Buffer.concat(chunks), max);
       const truncated = d.truncated || d.stdoutBytes > max;
-      const patch = redactSecretText(raw.toString('utf8')).replace(/[\uD800-\uDFFF]/g, '�');
+      const patch = previewText(raw.toString('utf8'));
       const capped = cutUtf8(Buffer.from(patch, 'utf8'), max).toString('utf8');
       return { ok: true, read: 'diff', base: task.base, head: task.head, patch: capped, bytes: d.stdoutBytes, truncated };
     }

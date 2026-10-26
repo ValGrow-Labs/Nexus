@@ -569,6 +569,15 @@ test('B1: a session that continues an interrupted one registers on the recorded 
   }
 });
 
+test('A1: the version view carries binary_file as its own closed reason', async () => {
+  const { versionViewOfKind } = loadTs('src/main/nexusIpc/dto.ts');
+  const w = newWorld();
+  const turn = openRunningTurn(w.db, w.nx);
+  const a = await collectWith(w, turn, css(w), { title: 'Binary', summary: '' }, factsFor(turn, { preview: { complete: false, reason: 'binary_file', hiddenLines: 0, patchBytes: 40 } }));
+  const view = versionViewOfKind('change_set', w.nx.artifacts.getVersion(w.me, a.versionId));
+  assert.deepEqual([view.previewComplete, view.previewReason], [false, 'binary_file']);
+});
+
 test('A1: the version records whether its preview is complete (counts and a closed code only); absent or malformed facts are NOT complete', async () => {
   const meta = async (previewFacts) => {
     const w = newWorld();
@@ -584,6 +593,8 @@ test('A1: the version records whether its preview is complete (counts and a clos
   assert.deepEqual([hidden.previewComplete, hidden.previewReason, hidden.previewHiddenLines], [false, 'hidden_lines', 3]);
   const big = await meta({ complete: false, reason: 'too_large', hiddenLines: 0, patchBytes: 3_000_000 });
   assert.deepEqual([big.previewComplete, big.previewReason], [false, 'too_large']);
+  const bin = await meta({ complete: false, reason: 'binary_file', hiddenLines: 0, patchBytes: 40 });
+  assert.deepEqual([bin.previewComplete, bin.previewReason], [false, 'binary_file'], 'a closed reason of its own, never folded into unknown');
   const old = await meta(undefined);
   assert.deepEqual([old.previewComplete, old.previewReason, old.previewHiddenLines], [false, 'unknown', 0], 'old runner facts without a preview');
   const junk = await meta({ complete: 'yes', hiddenLines: -1 });
