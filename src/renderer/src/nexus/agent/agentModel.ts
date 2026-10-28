@@ -8,7 +8,8 @@ import type {
   AgentSetupView, AgentStartArgs, AgentUsageView, HealthView, JobView, SessionDetailView, SessionView
 } from '@shared/nexus/ipc';
 import { AGENT_REASON_TEXT, ROLLBACK_OWED_TEXT, agentOffText, agentsNotice, errorCopy } from '../data/errorCopy';
-import { noticeFor, sizeLabel, type ExecAvailability } from '../data/executionModel';
+import { LOCAL_MODEL_KIND } from '@shared/nexus/localModel';
+import { LOCAL_PROBLEM_TEXT, noticeFor, sizeLabel, type ExecAvailability } from '../data/executionModel';
 import { agentTurnHeadline, waitPhaseText } from '../runs/jobRunModel';
 import { kindLabel, statusLabel } from '../project/artifactModel';
 
@@ -106,6 +107,11 @@ export interface AgentPanelInput {
 }
 
 function runtimeBlocker(a: AgentSetupView): string | null {
+  // The local-model runtime words its own server and model problems.
+  if (a.kind === LOCAL_MODEL_KIND) {
+    if (a.state === 'not_installed') return AGENT_REASON_TEXT.local_model_server_down;
+    if (a.state === 'ready' && a.problem) return LOCAL_PROBLEM_TEXT[a.problem];
+  }
   switch (a.state) {
     case 'ready': return null;
     case 'not_installed': return AGENT_REASON_TEXT.runtime_not_installed;

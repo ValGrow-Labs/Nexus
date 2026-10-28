@@ -769,6 +769,62 @@ test('EGRESS a decision after the turn ended is never reported', async () => {
   assert.equal(w.of('attempt.event', plan.attemptId).length, before);
 });
 
+// ---------- the local-model runtime's endpoint (Track B): a loopback address, the consented one, only for that kind ----------
+
+test('ENDPOINT the run request endpoint is accepted only for the local-model kind, as a loopback address that is one of the consented hosts; anything else is refused bad_plan', async () => {
+  const w = await world();
+  const LOCAL = [{ host: '127.0.0.1', port: 11434 }];
+  const hash = 'a'.repeat(64);
+  const make = (o = {}) => {
+    const plan = agentPlan(w, { kind: o.kind ?? 'local-model', egress: o.egress ?? { allow: LOCAL, consentHostsSha256: hash } });
+    if (o.endpoint !== undefined) plan.runtime.request.endpoint = o.endpoint;
+    return plan;
+  };
+  const problem = (plan) => w.core.agentPlanProblemOf(plan.attemptId, plan);
+  // Accepted: the consented loopback address, spelled as the settings reader writes it (the localhost spelling is already normalised in main).
+  assert.equal(problem(make({ endpoint: { host: '127.0.0.1', port: 11434 } })), null);
+  assert.equal(problem(make()), null, 'no endpoint: the adapter default');
+  assert.equal(problem(make({ endpoint: { host: 'localhost', port: 11434 } })), null, 'localhost is the same loopback destination');
+  // Refused: a remote host, another port than the consented one, a host that is not in the consent, another runtime kind, or a malformed value.
+  const REFUSED = 'the runtime endpoint is not the consented loopback address';
+  for (const endpoint of [{ host: 'example.com', port: 11434 }, { host: '10.0.0.5', port: 11434 }, { host: '127.0.0.1', port: 9999 }, { host: '127.0.0.1', port: 0 },
+    { host: '127.0.0.1' }, { port: 11434 }, 'http://127.0.0.1:11434', 7, null, []]) {
+    assert.equal(problem(make({ endpoint })), REFUSED, JSON.stringify(endpoint));
+  }
+  assert.equal(problem(make({ endpoint: { host: '127.0.0.1', port: 11434 }, egress: { allow: [{ host: 'api.example.com', port: 443 }], consentHostsSha256: hash } })), REFUSED, 'not one of the consented hosts');
+  assert.equal(problem(make({ endpoint: { host: '127.0.0.1', port: 11434 }, egress: { allow: [] } })), REFUSED, 'no consented host at all');
+  assert.equal(problem(make({ kind: 'cli-agent', endpoint: { host: '127.0.0.1', port: 11434 } })), REFUSED, 'only the local-model kind takes an endpoint');
+  assert.equal(problem(make({ kind: 'scripted', endpoint: { host: '127.0.0.1', port: 11434 } })), REFUSED);
+  // Through the real start path: the refusal is a bad_plan and nothing is created.
+  const refused = await startRefused(w, make({ endpoint: { host: 'example.com', port: 11434 } }));
+  assert.equal(refused.reason, 'bad_plan');
+  assert.ok(!w.driver.ops().includes('create'));
+});
+
+test('LOCALEGRESS a local-model turn starts no host egress proxy (its adapter dials the loopback endpoint itself); the runner checks the loopback consent hash directly', async () => {
+  const LOCAL = [{ host: '127.0.0.1', port: 11434 }];
+  const hash = require('node:crypto').createHash('sha256').update(JSON.stringify(['127.0.0.1:11434']), 'utf8').digest('hex');
+  let proxies = 0;
+  const fake = () => ({ kind: 'local-model', async health() { return { ok: true, version: '1' }; }, async describe() { return {}; }, async cancel() {},
+    async *start() { yield { t: 'run.started', runRef: 'r1', at: 1 }; yield { t: 'run.completed', at: 2, stopReason: 'end_turn' }; } });
+  const w = await world({ agentRuntime: { makeRuntime: fake, startProxy: async () => { proxies++; throw new Error('no proxy may start'); } } });
+  const good = agentPlan(w, { kind: 'local-model', egress: { allow: LOCAL, consentHostsSha256: hash } });
+  good.runtime.request.endpoint = { host: '127.0.0.1', port: 11434 };
+  await startAgent(w, good);
+  await w.waitOp('attempt.exited', good.attemptId, 'exited');
+  assert.equal(proxies, 0);
+  assert.deepEqual(w.of('attempt.runtime', good.attemptId).map((m) => m.event.t), ['run.started', 'run.completed']);
+  // A hash that is not the loopback list's own fails the turn consent_mismatch; so does a non-loopback host in the list. No proxy either way.
+  for (const egress of [{ allow: LOCAL, consentHostsSha256: 'b'.repeat(64) }, { allow: [{ host: 'api.example.com', port: 443 }], consentHostsSha256: hash }]) {
+    const bad = agentPlan(w, { kind: 'local-model', egress });
+    await startAgent(w, bad);
+    await w.waitOp('attempt.exited', bad.attemptId, 'exited');
+    const failed = w.of('attempt.runtime', bad.attemptId).map((m) => m.event).find((e) => e.t === 'run.failed');
+    assert.equal(failed.message, 'failed: consent_mismatch');
+  }
+  assert.equal(proxies, 0);
+});
+
 // ---------- the posture pin this task adds (sanity: taskkill is resolved, never a bare command) ----------
 
 test('taskkill is launched only by its resolved absolute path', () => {

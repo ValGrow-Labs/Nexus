@@ -2,10 +2,11 @@
 // what main last observed (HealthView, #23) and from how the execution channels
 // answered. No React, so tests load it directly. Every number shown here comes
 // from the HealthView or an approval; nothing is estimated in the renderer.
-import type { AgentConsentView, AgentSetupView, EventView, HealthView, NexusResult } from '@shared/nexus/ipc';
+import type { AgentConsentView, AgentRuntimeOptionView, AgentRuntimeProblem, AgentSetupView, EventView, HealthView, NexusResult } from '@shared/nexus/ipc';
+import { LOCAL_MODEL_KIND } from '@shared/nexus/localModel';
 import { GIB, MIN_DOCKER_CPUS, MIN_DOCKER_MEMORY } from '@shared/nexus/resourceGate';
 import { AGENT_DEFAULTS } from '@shared/nexus/agentPolicy';
-import { agentOffText, agentsNotice, errorCopy, executionNotice, unavailableNotice } from './errorCopy';
+import { AGENT_REASON_TEXT, agentOffText, agentsNotice, errorCopy, executionNotice, unavailableNotice } from './errorCopy';
 
 /**
  * Sizes in GB as Windows Explorer shows them (binary: 1 GB = 2^30 bytes), which is also how the resource gate
@@ -296,6 +297,27 @@ const capsText = (c: { turnUsdCents: number; dayUsdCents: number; turnsPerHour: 
   + `${Math.round(c.turnTokens / 1000)}k tokens, ${c.toolCalls} tool calls, ${Math.max(1, Math.round(c.wallClockMs / 60_000))} minutes and ${c.childJobs} child jobs per turn`;
 const dollars = (cents: number): string => `$${Math.floor(cents / 100)}.${String(Math.round(cents) % 100).padStart(2, '0')}`;
 
+/** Said once, on the permission row of the local-model runtime: where it runs and what Nexus never does with it. */
+export const LOCAL_MODEL_DISCLOSURE = 'The local model runs on this computer. Nexus talks to it only at the address you grant, which is on this computer, '
+  + 'and sends nothing to another computer. Every command the agent runs goes into a sandbox with no network. '
+  + 'Which files it may touch is a rule of Nexus’s file tools, which stay inside the agent’s own working copy.';
+
+/** The sentence for why a chosen local model cannot be used (the fixed sentences main words for the same reasons). */
+export const LOCAL_PROBLEM_TEXT: Readonly<Record<AgentRuntimeProblem, string>> = Object.freeze({
+  model_not_chosen: AGENT_REASON_TEXT.local_model_not_chosen,
+  address_not_local: AGENT_REASON_TEXT.local_model_endpoint,
+  model_missing: AGENT_REASON_TEXT.local_model_missing,
+  model_no_tools: AGENT_REASON_TEXT.local_model_no_tools
+});
+
+/** The local-model runtime's program row for the states it words itself; null leaves the generic row to speak. */
+function localProgramRow(a: Pick<AgentSetupView, 'state' | 'problem'>, label: string, version: string): SetupRow | null {
+  if (a.state === 'not_installed') return row('agent', label, 'problem', AGENT_REASON_TEXT.local_model_server_down, 'Start it, then check again.');
+  if (a.state !== 'ready') return null;
+  if (a.problem) return row('agent', label, 'problem', LOCAL_PROBLEM_TEXT[a.problem], 'Choose a model in the runtime list, then check again.');
+  return row('agent', label, 'ok', `The local model server is running and the chosen model can use tools${version}.`);
+}
+
 /** The agent's setup rows: the program (its label from the adapter), the network permission, and today's usage. */
 export function agentSetupRows(a: AgentSetupView, o: { hosts?: readonly string[] | null; fmt?: (t: number) => string; offText?: string } = {}): SetupRow[] {
   const fmt = o.fmt ?? ((t: number) => new Date(t).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }));
@@ -304,7 +326,10 @@ export function agentSetupRows(a: AgentSetupView, o: { hosts?: readonly string[]
   const rows: SetupRow[] = [];
   const label = a.label ?? 'Agent';
   const version = a.version ? ` (version ${a.version})` : '';
-  switch (a.state) {
+  const local = a.kind === LOCAL_MODEL_KIND;
+  const localRow = local ? localProgramRow(a, label, version) : null;
+  if (localRow) rows.push(localRow);
+  else switch (a.state) {
     case 'ready':
       // `ready` only means the program answered and did not say it is signed out: a sign-in that could not be read is said so.
       if (a.signedIn === 'yes') rows.push(row('agent', label, 'ok', `The agent program is installed and signed in${version}.`));
@@ -325,20 +350,22 @@ export function agentSetupRows(a: AgentSetupView, o: { hosts?: readonly string[]
   }
   const hosts = o.hosts && o.hosts.length > 0 ? o.hosts : null;
   const dest = hosts ? hosts.join(', ') : a.consent.hostsCount === 1 ? 'one network destination' : `${a.consent.hostsCount} network destinations`;
+  const disclosure = local ? LOCAL_MODEL_DISCLOSURE : AGENT_STATE_DISCLOSURE;
+  const grants = local ? 'Nexus may use the local model only at' : 'Nexus’s proxy allows the agent only';
   if (a.consent.live) {
     const c = a.consent.caps;
     const caps = c ? ` Limits: ${capsText(c)}.` : '';
     const when = a.consent.grantedAt !== null ? ` at ${fmt(a.consent.grantedAt)}` : '';
-    rows.push({ ...row('agent-consent', 'Agent network permission', 'ok', `Granted${when}. Nexus’s proxy allows the agent only ${dest}.${caps}`, AGENT_STATE_DISCLOSURE),
+    rows.push({ ...row('agent-consent', 'Agent network permission', 'ok', `Granted${when}. ${grants} ${dest}.${caps}`, disclosure),
       consent: { op: 'revoke', label: 'Revoke permission' } });
   } else if (a.state === 'ready' && hosts) {
-    rows.push({ ...row('agent-consent', 'Agent network permission', 'problem', `Not granted. Granting lets Nexus’s proxy allow the agent only ${dest}. Agent turns need it. Limits if you grant it: ${capsText(AGENT_DEFAULTS)}.`, AGENT_STATE_DISCLOSURE),
+    rows.push({ ...row('agent-consent', 'Agent network permission', 'problem', `Not granted. Granting lets ${local ? 'Nexus use the local model' : 'Nexus’s proxy allow the agent'} only ${local ? 'at ' : ''}${dest}. Agent turns need it. Limits if you grant it: ${capsText(AGENT_DEFAULTS)}.`, disclosure),
       consent: { op: 'grant', label: 'Grant permission' } });
   } else if (a.state === 'ready') {
     rows.push(row('agent-consent', 'Agent network permission', 'problem', 'Not granted. The destination to grant is shown here once Nexus has read it from the agent program.',
-      `${AGENT_STATE_DISCLOSURE} Check again to read it.`));
+      `${disclosure} Check again to read it.`));
   } else {
-    rows.push(row('agent-consent', 'Agent network permission', 'problem', 'Not granted. It can be granted once the agent program is ready.', AGENT_STATE_DISCLOSURE));
+    rows.push(row('agent-consent', 'Agent network permission', 'problem', 'Not granted. It can be granted once the agent program is ready.', disclosure));
   }
   const u = a.usageToday;
   const usage = u.turns === 0 && u.usdCents === 0 ? 'No agent turn has started today.'
@@ -347,6 +374,61 @@ export function agentSetupRows(a: AgentSetupView, o: { hosts?: readonly string[]
   rows.push(row('agent-usage', 'Agent use today', 'ok', usage));
   rows[rows.length - 1].word = 'Today';
   return rows;
+}
+
+// ---------- the runtime picker (B2b: the agent program, or the local model) ----------
+
+export interface RuntimeChoice {
+  kind: string; label: string; selected: boolean; state: SetupState; word: string; text: string;
+  /** The destinations a permission for this runtime covers (the picker row names them before anything is granted). */
+  destination: string | null;
+  /** Only the runtime that serves models: its choices (a model that cannot use tools is listed, but cannot be picked). */
+  models: { name: string; label: string; disabled: boolean }[] | null;
+  /** The model in force or preselected (a name from `models`), null when none. */
+  model: string | null;
+  /** What the row's button does: use this runtime when no permission is live, switch to it when another is; null for the one in use. */
+  action: { op: 'grant' | 'switch'; label: string; disabled: boolean } | null;
+}
+
+const runtimeWord = (o: AgentRuntimeOptionView): { word: string; text: string; ok: boolean } => {
+  const local = o.kind === LOCAL_MODEL_KIND;
+  switch (o.state) {
+    case 'ready':
+      if (local) return o.problem ? { word: 'Needs attention', text: LOCAL_PROBLEM_TEXT[o.problem], ok: false }
+        : { word: 'Ready', text: 'The local model server is running and the chosen model can use tools.', ok: o.model !== null };
+      return o.signedIn === 'yes' ? { word: 'Ready', text: 'The agent program is installed and signed in.', ok: true }
+        : { word: 'Not checked', text: 'The agent program is installed. Nexus could not confirm that it is signed in.', ok: false };
+    case 'not_installed': return { word: 'Needs attention', text: local ? AGENT_REASON_TEXT.local_model_server_down : AGENT_REASON_TEXT.runtime_not_installed, ok: false };
+    case 'not_signed_in': return { word: 'Needs attention', text: AGENT_REASON_TEXT.runtime_not_authenticated, ok: false };
+    case 'version_unsupported': return { word: 'Needs attention', text: AGENT_REASON_TEXT.runtime_version_unsupported, ok: false };
+    case 'unavailable': return { word: 'Not checked', text: AGENT_REASON_TEXT.runtime_error, ok: false };
+    default: return { word: 'Not checked', text: AGENT_REASON_TEXT.runtime_unknown, ok: false };
+  }
+};
+
+/**
+ * The picker's rows from #51's runtimes. Empty unless the probe reported more than one runtime (or one that serves models): with a
+ * single runtime the sheet is as it always was. `chosen`: the model the person picked per runtime in the open sheet.
+ */
+export function runtimeChoices(view: Pick<AgentConsentView, 'runtimes' | 'consent'> | null | undefined, chosen: Readonly<Record<string, string>> = {}): RuntimeChoice[] {
+  const list = view && Array.isArray(view.runtimes) ? view.runtimes : [];
+  if (list.length === 0 || (list.length < 2 && list.every((r) => r.models === null))) return [];
+  const live = view!.consent.live;
+  return list.map((o): RuntimeChoice => {
+    const w = runtimeWord(o);
+    const models = o.models ? o.models.map((m) => ({ name: m.name, label: m.tools ? m.name : `${m.name} (cannot use tools)`, disabled: !m.tools })) : null;
+    const pick = chosen[o.kind];
+    const model = models ? (pick !== undefined && models.some((m) => m.name === pick && !m.disabled) ? pick : o.model) : null;
+    const destination = o.hosts.length > 0 ? o.hosts.join(', ') : null;
+    // A runtime that serves models is usable once the server is up, its address is on this computer and a model that can use tools is picked.
+    const picked = models !== null && model !== null && models.some((m) => m.name === model && !m.disabled);
+    const serverOk = o.state === 'ready' && o.problem !== 'address_not_local';
+    const usable = models === null ? w.ok : serverOk && picked;
+    const text = models !== null && !o.selected && serverOk && picked ? 'The local model server is running and the chosen model can use tools.' : w.text;
+    return { kind: o.kind, label: o.label ?? 'Agent runtime', selected: o.selected, state: usable || (o.selected && w.ok) ? 'ok' : w.word === 'Not checked' ? 'unknown' : 'problem', word: o.selected && w.ok ? 'In use' : usable && !w.ok ? 'Ready' : w.word,
+      text: o.selected ? `In use. ${w.text}` : text, destination, models, model,
+      action: o.selected ? null : { op: live ? 'switch' : 'grant', label: live ? 'Switch to this runtime' : 'Use this runtime', disabled: !usable } };
+  });
 }
 
 /** The sheet's lead line: "Jobs can run" only when execution is ready AND every row is fine. */

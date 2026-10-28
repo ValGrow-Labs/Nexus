@@ -2,7 +2,7 @@
 // are dropped, lists are read again on the jobs tick (agent turns are jobs), the validations tick and the platform revision.
 // Nothing here polls in the background. The setup sheet alone re-asks while it is open.
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { AgentConsentView, JobView, NexusResult, RepoStatusView, SessionDetailView, SessionView, ValidationResultView } from '@shared/nexus/ipc';
+import type { AgentConsentArgs, AgentConsentView, JobView, NexusResult, RepoStatusView, SessionDetailView, SessionView, ValidationResultView } from '@shared/nexus/ipc';
 import { nexusClient } from './nexusClient';
 import { usePlatform } from './platformStore';
 import { useExecStore, useHints, useRead, useJobs, type Read } from './useExecution';
@@ -56,7 +56,10 @@ export const CONSENT_REASK_MS = 45_000;
  */
 export function useAgentConsent(open: boolean): {
   view: AgentConsentView | null; fail: Extract<NexusResult<AgentConsentView>, { ok: false }> | null; loaded: boolean;
-  act: (op: 'grant' | 'revoke') => Promise<NexusResult<AgentConsentView>>; reload: () => void; reloadAfter: (ms: number) => void;
+  act: (op: 'grant' | 'revoke') => Promise<NexusResult<AgentConsentView>>;
+  /** Any #51 request (grant a runtime, switch runtime, change the model); answers the new row or the failure. */
+  send: (args: AgentConsentArgs) => Promise<NexusResult<AgentConsentView>>;
+  reload: () => void; reloadAfter: (ms: number) => void;
 } {
   const [state, setState] = useState<{ view: AgentConsentView | null; fail: Extract<NexusResult<AgentConsentView>, { ok: false }> | null; loaded: boolean }>(
     { view: null, fail: null, loaded: false });
@@ -82,12 +85,13 @@ export function useAgentConsent(open: boolean): {
     const t = setInterval(() => read(0), CONSENT_REASK_MS);
     return () => { alive = false; clearInterval(t); if (again) clearTimeout(again); };
   }, [open, attempt]);
-  const act = useCallback(async (op: 'grant' | 'revoke') => {
-    const r = await nexusClient.agentConsent({ op });
+  const send = useCallback(async (args: AgentConsentArgs) => {
+    const r = await nexusClient.agentConsent(args);
     if (r.ok) setState({ view: r.data, fail: null, loaded: true });
     // The permission changed: the shared health (the panel's facts) is read again.
     useExecStore.getState().bump(['health', 'jobs']);
     return r;
   }, []);
-  return { view: state.view, fail: state.fail, loaded: state.loaded, act, reload, reloadAfter };
+  const act = useCallback((op: 'grant' | 'revoke') => send({ op }), [send]);
+  return { view: state.view, fail: state.fail, loaded: state.loaded, act, send, reload, reloadAfter };
 }

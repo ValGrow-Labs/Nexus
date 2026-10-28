@@ -23,6 +23,7 @@
 import { USER_ACTIONS } from '../../shared/nexus/actions';
 import type { ParamField } from '../../shared/nexus/domainSpec';
 import { JOB_STATES } from '../nexus/jobs/jobRules';
+import { isModelName } from '../../shared/nexus/localModel';
 
 export class RequestError extends Error {
   /** `bad_request` (the shape) or `bad_params` (an action's own parameter schema). */
@@ -277,6 +278,18 @@ export const V = {
   skillId(x: unknown): string {
     const s = str(x, 'skillId');
     if (!SKILL_ID.test(s)) throw new RequestError('skillId', 'is not a valid skill id');
+    return s;
+  },
+  /** A runtime kind as the runner's probe names one (checked against main's own probe cache before it is used). */
+  runtimeKind(x: unknown): string {
+    const s = str(x, 'runtime');
+    if (!/^[a-z][a-z0-9_.-]{0,31}$/.test(s)) throw new RequestError('runtime', 'is not a runtime kind');
+    return s;
+  },
+  /** A model name (checked against the models main's own probe listed before it is used). */
+  modelName(x: unknown): string {
+    const s = str(x, 'model');
+    if (!isModelName(s)) throw new RequestError('model', 'is not a model name');
     return s;
   },
   branchName(x: unknown): string {

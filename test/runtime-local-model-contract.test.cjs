@@ -583,7 +583,9 @@ test('LM20 the probe: not running, model missing, no tool support, ok; fixed sen
     let a = mk(up.port, MODEL);
     let c = await a.check();
     assert.deepEqual(c.health, { ok: true, version: '0.5.7' });
-    assert.deepEqual(c.setup, { signedIn: 'yes', flagsOk: true, label: ADAPTER_LABEL, egressHosts: [{ host: '127.0.0.1', port: up.port }] });
+    // The setup row also lists the installed models with their tool support (main offers them as the model choices).
+    assert.deepEqual(c.setup, { signedIn: 'yes', flagsOk: true, label: ADAPTER_LABEL, egressHosts: [{ host: '127.0.0.1', port: up.port }],
+      models: [{ name: MODEL, tools: true }, { name: 'plain:1b', tools: false }, { name: 'old:7b', tools: true }, { name: 'older:7b', tools: false }] });
     assert.equal((await mk(up.port, 'old:7b').health()).ok, true, 'an older server: the template names tools');
     // model missing
     c = await mk(up.port, 'absent:1b').check();

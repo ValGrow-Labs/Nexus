@@ -34,6 +34,7 @@ import type {
   AgentUsageView, SessionDetailView, SessionMessageView, SessionToolCallView, SessionTurnView, SessionView
 } from '../../../shared/nexus/ipc';
 import type { RuntimeEvent, RuntimeHealth } from '../../../shared/nexus/runtime';
+import { LOCAL_MODEL_KIND, LOCAL_MODEL_PROVIDER, modelProblem, type LocalModelReason, type RuntimeModelInfo } from '../../../shared/nexus/localModel';
 import { turnLimitReached } from '../../../shared/nexus/agentPolicy';
 import { MCP_TOOLS } from '../../../shared/nexus/mcpTools';
 import { SKILLS } from '../../../shared/nexus/capabilities';
@@ -57,6 +58,7 @@ import type { SessionService } from '../sessions/sessionService';
 import type { WorktreeService } from '../repo/worktreeService';
 import { canonicalHostsJson, hostsSha256, type BudgetService, type EgressHost, type LiveConsent } from './budgetService';
 import type { ContextResolver } from './contextResolver';
+import { readLocalModelSettings, type LocalServerConfig } from './localModelSettings';
 import type { Skills } from './skills';
 import type { TokenService } from './tokenService';
 import { TOKEN_DEFAULT_TTL_MS } from './tokenService';
@@ -86,8 +88,11 @@ export interface RuntimeHealthEntry {
    * treated as unknown (the runtime is not ready).
    */
   egressHosts?: { host: string; port: number }[];
+  /** The models the runtime's probe listed (the local-model runtime): the chosen model must be one of them, and report tool support. */
+  models?: RuntimeModelInfo[];
 }
-export type RuntimeHealthProvider = () => RuntimeHealthEntry | null;
+/** `kind`: the runtime whose entry is wanted (the live consent's); none: the default one. A provider that ignores it answers its one entry. */
+export type RuntimeHealthProvider = (kind?: string | null) => RuntimeHealthEntry | null;
 
 export interface AgentServiceDeps {
   auth: AuthService;
@@ -114,6 +119,11 @@ export interface AgentServiceDeps {
    * not at app start, nothing with agents off. Bound after construction (`bindRuntimeRefresh`).
    */
   refreshRuntime?: () => boolean;
+  /**
+   * The user's local-server settings as the legacy config keeps them (main passes `readConfig`); read ONLY for a turn of the
+   * local-model runtime, through `localModelSettings.ts`. Omitted: that runtime's turns are refused ("no model is chosen").
+   */
+  localModelConfig?: () => LocalServerConfig | null | undefined;
 }
 
 /** A turn held by `waiting:runtime` asks for a fresh probe at most this often. */
@@ -144,6 +154,15 @@ const RUNTIME_PROBLEMS: Record<string, string> = {
   runtime_version_unsupported: 'the installed agent runtime is not a supported version',
   runtime_error: 'the agent runtime could not be checked',
   runtime_mismatch: 'the agent runtime is not the one that was given permission'
+};
+
+/** The sentences the local-model runtime's own problems are told in (main's AGENT_REASON_MESSAGES words them the same). */
+const LOCAL_MODEL_PROBLEMS: Record<LocalModelReason, string> = {
+  local_model_not_chosen: 'no local model is chosen yet',
+  local_model_endpoint: 'the local model address is not on this computer, or is not the one that was given permission',
+  local_model_missing: 'the chosen local model is not installed on this computer',
+  local_model_no_tools: 'the chosen local model cannot use tools, which agent turns need',
+  local_model_server_down: 'the local model server is not running on this computer'
 };
 
 export class AgentService implements AgentTurnPort {
@@ -289,6 +308,26 @@ export class AgentService implements AgentTurnPort {
     return was;
   }
 
+  /**
+   * Switches the agent runtime: the live permission (any runtime) is revoked and a permission for `runtimeKind` is granted, as ONE
+   * transaction (all or nothing: a grant that is refused leaves the earlier permission as it was). The caps carry over unless
+   * given; `model` is the local-model runtime's chosen model. Refused while a turn is leased, running or waiting for approval
+   * (`turn_live`): a switch never cancels work; queued turns are held by the permission guard and then run on the new runtime.
+   * `hosts` are the new runtime's own, from its probe entry (the caller passes them, never the renderer).
+   */
+  switchRuntime(user: Principal, i: { runtimeKind: string; hosts: EgressHost[]; model?: string | null; caps?: Partial<Record<string, unknown>> | null }): LiveConsent {
+    const holding = this.db.prepare(`SELECT COUNT(*) AS n FROM jobs WHERE kind = 'agent.run' AND state IN (${HOLDING_STATES.map(() => '?').join(', ')})`)
+      .get(...HOLDING_STATES) as { n: number };
+    if (holding.n > 0) refuse('conflict', 'a turn is running; finish or stop it before switching the runtime', 'turn_live');
+    return immediateTx(this.db, () => {
+      const prior = this.deps.budget.live();
+      this.deps.budget.revoke(user);
+      const carried = prior ? { turnUsdCents: prior.caps.turnUsdCents, dayUsdCents: prior.caps.dayUsdCents, turnsPerHour: prior.caps.turnsPerHour,
+        concurrentTurns: prior.caps.concurrentTurns, turnTokens: prior.caps.turnTokens, toolCalls: prior.caps.toolCalls } : null;
+      return this.deps.budget.grant(user, { runtimeKind: i.runtimeKind, hosts: i.hosts, caps: i.caps ?? carried, ...(i.model ? { model: i.model } : {}) });
+    });
+  }
+
   /** The project's agent conversations, newest first. */
   list(user: Principal, projectId: string, o?: { limit?: number }): SessionView[] {
     const sessions = this.deps.sessions.listByProject(user, projectId, { limit: o?.limit });
@@ -378,8 +417,10 @@ export class AgentService implements AgentTurnPort {
    * consent. `busy` is not a refusal here (another conversation's turn runs; this one waits `waiting:slots`).
    */
   private requireReady(projectId: string): LiveConsent {
-    const p = this.runtimeProblem(null);
-    if (p !== null) refuse('unavailable', RUNTIME_PROBLEMS[p] ?? 'the agent runtime is not ready', p);
+    // The health examined first is the live permission's own runtime (none: the default one); a mismatch is judged after the guards.
+    const live0 = this.deps.budget.live();
+    const p = this.runtimeProblem(null, live0 ? live0.runtimeKind : null);
+    if (p !== null) refuse('unavailable', this.problemText(p, live0 ? live0.runtimeKind : null), p);
     const g = this.deps.budget.startGuard(projectId);
     if (!g.ok && g.reason !== 'busy') {
       const text = g.reason === 'consent_missing' ? 'the agent has not been given permission yet'
@@ -389,16 +430,64 @@ export class AgentService implements AgentTurnPort {
     const consent = this.deps.budget.live();
     if (!consent) return refuse('unavailable', 'the agent has not been given permission yet', 'consent_missing');
     const p2 = this.runtimeProblem(consent.runtimeKind);
-    if (p2 !== null) refuse('unavailable', RUNTIME_PROBLEMS[p2] ?? 'the agent runtime is not ready', p2);
+    if (p2 !== null) refuse('unavailable', this.problemText(p2, consent.runtimeKind), p2);
     this.consentHostsOrThrow(consent);
-    this.adapterHostsOrThrow(consent);
+    const hosts = this.adapterHostsOrThrow(consent);
+    // The local-model runtime also needs its settings and the chosen model to be usable (a fixed sentence says which is not).
+    if (consent.runtimeKind === LOCAL_MODEL_KIND) {
+      const lp = this.localModelProblem(consent, hosts);
+      if (lp.problem !== null) refuse('unavailable', LOCAL_MODEL_PROBLEMS[lp.problem], lp.problem);
+    }
     return consent;
   }
 
-  /** Why the cached runtime health says no (a reason word), or null. `kind`: the consent's runtime, when known. */
-  private runtimeProblem(kind: string | null): string | null {
-    let h: RuntimeHealthEntry | null = null;
-    try { h = this.runtimeHealth(); } catch { h = null; }
+  /** The sentence of a runtime problem reason; the local-model runtime's "not installed" is its server not running. */
+  private problemText(reason: string, kind: string | null): string {
+    if (kind === LOCAL_MODEL_KIND && reason === 'runtime_not_installed') return LOCAL_MODEL_PROBLEMS.local_model_server_down;
+    return RUNTIME_PROBLEMS[reason] ?? 'the agent runtime is not ready';
+  }
+
+  /** The health entry of one runtime (null: the default one); null when unknown. Never throws. */
+  private healthOf(kind: string | null): RuntimeHealthEntry | null {
+    try { return this.runtimeHealth(kind); } catch { return null; }
+  }
+
+  /**
+   * Why a turn of the local-model runtime cannot be built from the settings and the probe's model list: no model chosen, an address
+   * that is not loopback or is not the one the permission names, a chosen model the server does not list, or one that cannot use
+   * tools; else the model and the endpoint the turn's request carries. `chosen`: the user's choice (null: the settings' default).
+   */
+  private localCheck(hosts: readonly EgressHost[], models: readonly RuntimeModelInfo[] | undefined, chosen: string | null):
+    { problem: LocalModelReason; model: string | null; endpoint: null } | { problem: null; model: string; endpoint: { host: string; port: number } } {
+    const read = readLocalModelSettings({ readConfig: () => this.deps.localModelConfig?.() ?? null, chosenModel: chosen });
+    if (!read.ok) return { problem: read.reason === 'endpoint_not_local' ? 'local_model_endpoint' : 'local_model_not_chosen', model: null, endpoint: null };
+    // The endpoint must be the consented destination (the permission's hosts are the adapter's own).
+    if (!hosts.some((x) => x.host.toLowerCase() === read.endpoint.host && x.port === read.endpoint.port)) return { problem: 'local_model_endpoint', model: read.model, endpoint: null };
+    const mp = modelProblem(models, read.model);
+    return mp !== null ? { problem: mp, model: read.model, endpoint: null } : { problem: null, model: read.model, endpoint: { host: read.endpoint.host, port: read.endpoint.port } };
+  }
+
+  private localModelProblem(consent: LiveConsent, hosts: readonly EgressHost[]): ReturnType<AgentService['localCheck']> {
+    void consent;
+    return this.localCheck(hosts, this.healthOf(LOCAL_MODEL_KIND)?.models, this.deps.budget.liveModel());
+  }
+
+  /**
+   * For a grant or the setup view: why `model` (null: the one in force, else the settings' default) cannot be used with the local-model
+   * runtime's probe entry (`hosts`, `models`), and which model that is. The reason is the short form the views use.
+   */
+  localModelState(hosts: readonly EgressHost[], models: readonly RuntimeModelInfo[] | undefined, model: string | null = null):
+    { model: string | null; reason: LocalModelReason | null } {
+    const r = this.localCheck(hosts, models, model ?? this.deps.budget.liveModel());
+    return { model: r.model, reason: r.problem };
+  }
+
+  /**
+   * Why the cached runtime health says no (a reason word), or null. `kind`: the consent's runtime, when known. `healthKind`: whose
+   * health is looked at (default `kind`; none: the default runtime's).
+   */
+  private runtimeProblem(kind: string | null, healthKind: string | null = kind): string | null {
+    const h = this.healthOf(healthKind);
     if (!h) return 'runtime_unknown';
     if (!h.health.ok) return `runtime_${h.health.reason}`;
     if (kind !== null && h.kind !== kind) return 'runtime_mismatch';
@@ -421,8 +510,7 @@ export class AgentService implements AgentTurnPort {
    * the plan's allow-list is built from). Anything else, in either direction, is `consent_mismatch`.
    */
   private adapterHostsOrThrow(c: LiveConsent): EgressHost[] {
-    let h: RuntimeHealthEntry | null = null;
-    try { h = this.runtimeHealth(); } catch { h = null; }
+    const h = this.healthOf(c.runtimeKind);
     const hosts = this.adapterHosts(h);
     if (!hosts) return refuse('unavailable', RUNTIME_PROBLEMS.runtime_unknown, 'runtime_unknown');
     const mine = JSON.stringify([...c.hosts].sort());
@@ -589,7 +677,17 @@ export class AgentService implements AgentTurnPort {
       return { failed: { code, message: code === 'consent_mismatch' ? 'the permission on record does not match the destinations the agent runtime needs' : RUNTIME_PROBLEMS.runtime_unknown } };
     }
     if (!j.session_id) return { failed: { code: 'session_missing', message: 'the turn has no session' } };
-    const health = (() => { try { return this.runtimeHealth(); } catch { return null; } })();
+    const health = this.healthOf(consent.runtimeKind);
+    // The local-model runtime's turn names its chosen model and its loopback endpoint; the settings are read here, before anything
+    // is minted (a turn that cannot be built fails with the fixed sentence, and nothing is left behind).
+    let model: { provider: string; model: string } = { provider: 'runtime-owned', model: 'default' };
+    let endpoint: { host: string; port: number } | undefined;
+    if (consent.runtimeKind === LOCAL_MODEL_KIND) {
+      const lp = this.localModelProblem(consent, hosts);
+      if (lp.problem !== null) return { failed: { code: lp.problem, message: LOCAL_MODEL_PROBLEMS[lp.problem] } };
+      model = { provider: LOCAL_MODEL_PROVIDER, model: lp.model };
+      endpoint = lp.endpoint;
+    }
     const domain = getDomain(j.workspace_id);
     const ceiling = domain?.capabilities ?? [];
     const caps: TokenCapability[] = TURN_GRANT.map((id) => ceiling.find((x) => x.id === id)).filter((x): x is NonNullable<typeof x> => !!x)
@@ -603,7 +701,7 @@ export class AgentService implements AgentTurnPort {
       job: { id: j.id, projectId: j.project_id }, attempt, bootId: c.bootId, dataHomeRoot: c.dataHomeRoot, workRel: c.workRel, logRel: c.logRel,
       profile: c.profile, imageId: c.imageId, worktree: p.worktree,
       runtime: { kind: consent.runtimeKind, token, sessionId: j.session_id, idempotencyKey: `${j.id}:${attempt.n}`, domainId: j.workspace_id,
-        skills: p.skills, context: { hash: p.contextSha256 }, message: this.messageOf(j), mcpUrl: c.mcpUrl, model: { provider: 'runtime-owned', model: 'default' } },
+        skills: p.skills, context: { hash: p.contextSha256 }, message: this.messageOf(j), mcpUrl: c.mcpUrl, model, ...(endpoint ? { endpoint } : {}) },
       egress: { allow: hosts, consentHostsSha256: consent.hostsSha256 },
       caps: { turnTokens: consent.caps.turnTokens, turnUsdCents: consent.caps.turnUsdCents, dayRemainingUsdCents: dayRemaining, toolCalls: consent.caps.toolCalls },
       wallClockMs: consent.caps.wallClockMs, mcpTools

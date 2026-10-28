@@ -14,12 +14,14 @@
  * and aborts `port.signal`; this function, once its runtime loop notices the abort, reports the turn's failure as
  * `worktree_guard` rather than a plain cancel.
  */
+import { createHash } from 'node:crypto';
 import * as path from 'node:path';
 import type { AttemptPhase, ExitReason, ProgressEvent, RefusalReason } from '../shared/nexus/runnerProtocol';
 import { chunkText, EGRESS_EVENT_MAX } from '../shared/nexus/runnerProtocol';
 import type { AttemptFailureClass } from '../shared/nexus/runnerProtocol';
 import type { AgentPlan, ExitInfo, PreflightReport } from '../shared/nexus/execution';
 import type { AgentRuntime, RunRequest, RuntimeEvent } from '../shared/nexus/runtime';
+import { LOCAL_MODEL_KIND, loopbackEndpoint } from '../shared/nexus/localModel';
 import type { GuardRefusal } from './worktreeGuard';
 import { scrub } from './logs';
 import { DockerError, SpecError } from './sandbox/dockerDriver';
@@ -76,6 +78,17 @@ async function safeRemove(driver: RunnerDriver, cid: string): Promise<void> {
 
 /** A DNS name (labels of letters, digits, `_` and `-`, at most 253 characters): the only host text a decision event may carry. */
 const DNS_HOST_RE = /^(?=.{1,253}$)[a-z0-9_]([a-z0-9_-]{0,61}[a-z0-9_])?(\.[a-z0-9_]([a-z0-9_-]{0,61}[a-z0-9_])?)*$/i;
+
+/** The local-model runtime's consent check: loopback hosts only, and the canonical hash of the list (as main records it) is the consent's. */
+function loopbackConsentOk(e: AgentPlan['egress']): boolean {
+  if (!e || !Array.isArray(e.allow) || e.allow.length === 0 || typeof e.consentHostsSha256 !== 'string') return false;
+  const keys = new Set<string>();
+  for (const h of e.allow) {
+    if (loopbackEndpoint(h) === null) return false;
+    keys.add(`${h.host.toLowerCase()}:${h.port}`);
+  }
+  return createHash('sha256').update(JSON.stringify([...keys].sort()), 'utf8').digest('hex') === e.consentHostsSha256;
+}
 
 /**
  * The host of one proxy decision as it may leave the runner: a secret-shaped or token-shaped one is `redacted`, one that
@@ -200,12 +213,19 @@ export async function run(plan: AgentPlan, port: AgentAttemptPort): Promise<void
 
     // ---- step 2: the host egress proxy for this turn (a failure, consent_mismatch included, fails the turn) ----
     try {
-      proxy = await port.startHostEgressProxy({
-        allow: plan.egress.allow,
-        consentHostsSha256: plan.egress.consentHostsSha256,
-        onDecision,
-        imagesDir: port.imagesDir
-      });
+      if (plan.runtime.kind === LOCAL_MODEL_KIND) {
+        // The local-model runtime makes no proxied request: its adapter connects to the loopback endpoint itself and checks it is the
+        // consented host. The proxy only takes DNS names, so here the runner checks the same rule directly: every allowed host is a
+        // loopback address and the list's canonical hash is the consent's recorded one.
+        if (!loopbackConsentOk(plan.egress)) throw Object.assign(new Error('the consent hash does not match the loopback hosts'), { code: 'consent_mismatch' });
+      } else {
+        proxy = await port.startHostEgressProxy({
+          allow: plan.egress.allow,
+          consentHostsSha256: plan.egress.consentHostsSha256,
+          onDecision,
+          imagesDir: port.imagesDir
+        });
+      }
     } catch (e) {
       failedWith = (e as { code?: unknown } | null)?.code === 'consent_mismatch' ? 'consent_mismatch' : 'proxy_failed';
       port.log(`the host egress proxy did not start: ${msgOf(e)}`);

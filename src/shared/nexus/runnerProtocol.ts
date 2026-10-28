@@ -10,6 +10,7 @@ import {
   type SandboxProbe, type SandboxProfile, type SandboxProfileId, type StagedOutput
 } from './execution';
 import type { RuntimeEvent, RuntimeHealth, RuntimeKind } from './runtime';
+import { MODEL_NAME_RE, RUNTIME_MODELS_MAX, type RuntimeModelInfo } from './localModel';
 import { EGRESS_HOST_RE, EGRESS_REASONS, type EgressReason } from './egressPolicy';
 import { TOKEN_MAX_BYTES, TOKEN_RE } from './tokens';
 import { SANDBOX_EXEC_MAX_TIMEOUT_MS } from './mcpTools';
@@ -129,6 +130,11 @@ export type ImageBuildOutcome = 'succeeded' | 'failed' | 'cancelled';
  */
 export interface RuntimeSetup {
   signedIn: 'yes' | 'no' | 'unknown'; flagsOk: boolean; label: string; egressHosts: { host: string; port: number }[];
+  /**
+   * Only a runtime that serves a choice of models (the local-model kind): the models its server listed, each with whether it
+   * reports tool support (at most RUNTIME_MODELS_MAX). Main offers these as the choices and checks the chosen one against them.
+   */
+  models?: RuntimeModelInfo[];
 }
 
 /** What a bounded git read found. A diff's `patch` is capped at 1 MiB per side (`truncated` when cut). */
@@ -529,7 +535,8 @@ function arrMax<T>(c: Check<T>, max: number, min = 0): Check<T[]> {
 
 const runtimeSetup = obj<RuntimeSetup>({ signedIn: oneOf(['yes', 'no', 'unknown'] as const), flagsOk: bool,
   label: str({ min: 1, re: /^[^\x00-\x1f\x7f]{1,64}$/ }),
-  egressHosts: arrMax(obj({ host: str({ re: EGRESS_HOST_RE }), port: intIn(1, 65535) }), RUNTIME_SETUP_MAX_HOSTS) });
+  egressHosts: arrMax(obj({ host: str({ re: EGRESS_HOST_RE }), port: intIn(1, 65535) }), RUNTIME_SETUP_MAX_HOSTS) },
+  { models: arrMax(obj<RuntimeModelInfo>({ name: str({ re: MODEL_NAME_RE }), tools: bool }), RUNTIME_MODELS_MAX) });
 
 const RUNTIME_EVENT_CHECKS: Check<RuntimeEvent>[] = [
   obj({ t: lit('run.started'), runRef: runtimeRef, at: count }),

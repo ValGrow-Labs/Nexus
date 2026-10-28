@@ -188,7 +188,9 @@ test('IA3 no path, command, principal, model id or host is accepted by any agent
     await bad('nexus:sessions:list', [{ projectId: PROJECT, [k]: v }], k);
     await bad('nexus:review:decide', [UNKNOWN, { decision: 'approve', [k]: v }, intent()], k);
     await bad('nexus:repo:mergeAccepted', [PROJECT, { branch: 'main', expectedAcceptedHead: BASE, [k]: v }], k);
-    await bad('nexus:agent:consent', [{ op: 'grant', [k]: v }], k);
+    // Deliberate contract change (local-model runtime): #51 alone takes `runtime` and `model`, each checked in main against its own probe
+    // (LM2b, LM2c in nexus-platform-agent-localmodel-runtime.test.cjs). Every other key, and every other channel, stays refused here.
+    if (k !== 'runtime' && k !== 'model') await bad('nexus:agent:consent', [{ op: 'grant', [k]: v }], k);
     await bad('nexus:agent:consent', [{ op: 'grant', caps: { turnUsdCents: 100, [k]: v } }], k);
   }
   // Shapes: ids, lengths, counts, enums, arity.
@@ -855,8 +857,9 @@ test('IA10 the activity rows the agent flows write have keys and sentences: none
 test('IA12 no system-only method is reachable: the agent channels call a closed list of user-facing methods and nothing else', () => {
   const files = ['src/main/nexusIpc/registerNexusIpc.ts', 'src/main/nexusIpc/agentSetup.ts', 'src/main/nexusIpc/dto.ts'].map((f) => [f, read(f)]);
   const allowed = {
-    agents: new Set(['start', 'get', 'list', 'end', 'cancel', 'revokeConsent']), reviews: new Set(['decide']), accepts: new Set(['accept', 'status', 'mergeAccepted']),
-    budget: new Set(['grant', 'revoke', 'live', 'usageToday']), agentProbe: new Set(['cache', 'refresh', 'refreshAndWait'])
+    // Deliberate additions (local-model runtime): switchRuntime and localModelState (agents), chooseModel (budget): each user-facing, owner-checked in the service.
+    agents: new Set(['start', 'get', 'list', 'end', 'cancel', 'revokeConsent', 'switchRuntime', 'localModelState']), reviews: new Set(['decide']), accepts: new Set(['accept', 'status', 'mergeAccepted']),
+    budget: new Set(['grant', 'revoke', 'live', 'usageToday', 'chooseModel']), agentProbe: new Set(['cache', 'refresh', 'refreshAndWait'])
   };
   const SERVICES = ['agents', 'reviews', 'accepts', 'budget', 'agentProbe', 'tokens', 'mcpGateway', 'worktrees', 'changeSets', 'contextResolver', 'skills', 'gitRead'];
   for (const [f, text] of files) {
@@ -913,7 +916,7 @@ test('I3 #51 names the destination in its consent row (hosts, `host:port`, the a
   const setup = read('src/main/nexusIpc/agentSetup.ts');
   assert.equal((setup.match(/hosts/g) || []).length > 0, true);
   const mod = read('src/main/nexusIpc/registerNexusIpc.ts');
-  assert.equal((mod.match(/agentConsentView\(nx\)/g) || []).length, 3, 'get, grant and revoke of #51 only');
+  assert.equal((mod.match(/agentConsentView\(nx\)/g) || []).length, 4, 'get, revoke, model and grant/switch of #51 only');
   assert.match(mod, /agentSetupView\(nx, agentsOff\(nx\)\)\)\);/, '#23 keeps the plain setup row (plus, only while agents are off, why)');
   const dto = read('src/main/nexusIpc/dto.ts');
   assert.doesNotMatch(dto, /hosts\??\s*:|\.hosts|egressHosts/, 'dto.ts builds no view from a host list');

@@ -38,6 +38,8 @@ const MODEL_RE = /^[A-Za-z0-9._:/@-]{1,128}$/;
 const PROBE_TIMEOUT_MS = 4000;
 const PROBE_MAX_BYTES = 1024 * 1024;
 const PROBE_TOOL_CHECKS = 6;
+/** The models the setup row lists with their tool support (each costs one `/api/show`, asked in parallel). */
+const PROBE_LISTED_MODELS = 16;
 const CONTEXT_MAX_BYTES = 24 * 1024;
 const SKILLS_MAX_BYTES = 16 * 1024;
 
@@ -86,6 +88,7 @@ export class LocalModelAdapter implements AgentRuntime {
   readonly kind: RuntimeKind = LOCAL_MODEL_KIND;
   private readonly active = new Set<AbortController>();
   private lastCheck: { at: number; models: string[]; health: RuntimeHealth; reachable: boolean } | null = null;
+  private lastInfo: { at: number; info: { name: string; tools: boolean }[] } | null = null;
 
   constructor(private readonly o: LocalModelAdapterOptions = {}) {}
 
@@ -157,8 +160,26 @@ export class LocalModelAdapter implements AgentRuntime {
 
   async check(_o: { proxyUrl?: string } = {}): Promise<{ health: RuntimeHealth; setup: RuntimeSetup }> {
     const l = await this.look();
+    const models = l.reachable ? await this.modelInfo(l.models) : [];
     return { health: l.health, setup: { signedIn: l.reachable ? 'yes' : 'unknown', flagsOk: l.health.ok, label: ADAPTER_LABEL,
-      egressHosts: [{ host: this.endpoint.host, port: this.endpoint.port }] } };
+      egressHosts: [{ host: this.endpoint.host, port: this.endpoint.port }], ...(l.reachable ? { models } : {}) } };
+  }
+
+  /**
+   * The installed models (the first PROBE_LISTED_MODELS) with whether each reports tool support, for the setup row's model choice.
+   * A model that cannot be inspected is listed as not supporting tools. Cached with the look; never throws.
+   */
+  private async modelInfo(names: readonly string[]): Promise<{ name: string; tools: boolean }[]> {
+    const hit = this.lastInfo;
+    if (hit && this.now() - hit.at >= 0 && this.now() - hit.at < 5000) return hit.info;
+    const t = await this.target();
+    const b = { timeoutMs: PROBE_TIMEOUT_MS, maxBytes: PROBE_MAX_BYTES };
+    const info = t.ok ? await Promise.all(names.slice(0, PROBE_LISTED_MODELS).map(async (name) => {
+      const r = await supportsTools(t, name, b);
+      return { name, tools: r.ok && r.value };
+    })) : [];
+    this.lastInfo = { at: this.now(), info };
+    return info;
   }
 
   // ---------------------------------------------------------------- a turn

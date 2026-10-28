@@ -296,8 +296,9 @@ export interface BlobGcView {
 }
 
 // ---------- B2b agent views (channels #42-#51) ----------
-// Built field by field in main, like the B2a views. No view carries a host, a model id, a token, a path (no worktree,
-// config folder or repository folder), a pid, a container id or a principal id. Display text is redacted and capped.
+// Built field by field in main, like the B2a views. No view carries a host, a token, a path (no worktree, config folder or
+// repository folder), a pid, a container id or a principal id, and a model name appears in ONE place only: the local-model
+// runtime's option in #51's answer (the models the user's own server lists, to choose from). Display text is redacted and capped.
 // The engine's display name appears only in AgentSetupView.label (the setup row, D-B9); every other view says "the
 // agent". Usage and cost are what the runtime reported, or `estimated` when Nexus charged the cap.
 
@@ -380,14 +381,33 @@ export interface AgentSetupView {
   signedIn: 'yes' | 'no' | 'unknown';
   /** False when a flag Nexus pins is missing from the installed version (it then reads as unsupported). */
   flagsOk: boolean | null;
+  /** The runtime this row is about: the live permission's, else the default one (null when none is known). */
+  kind?: string | null;
+  /** Only a runtime that serves a choice of models: why the chosen model cannot be used now (null: it can, or none applies). */
+  problem?: AgentRuntimeProblem | null;
   /** The live network permission: its caps and how many destinations it grants (the destinations are not in a view). */
   consent: { live: boolean; caps: { turnUsdCents: number; dayUsdCents: number; turnsPerHour: number; concurrentTurns: number;
     turnTokens: number; toolCalls: number; wallClockMs: number; childJobs: number } | null; hostsCount: number; grantedAt: number | null };
   /** Today's usage: cost in US cents (reported, or estimated at the cap where none was reported) and turns started. */
   usageToday: { usdCents: number; turns: number; estimated: boolean };
 }
+/** Why a runtime that serves a choice of models cannot be used now (each has a fixed sentence in the renderer). */
+export type AgentRuntimeProblem = 'model_not_chosen' | 'address_not_local' | 'model_missing' | 'model_no_tools';
+/** One agent runtime the probe reported, as the setup sheet's picker lists it. Its label is the adapter's own. */
+export interface AgentRuntimeOptionView {
+  kind: string; label: string | null; version: string | null; state: AgentSetupState; signedIn: 'yes' | 'no' | 'unknown';
+  /** True for the runtime the live permission names. */
+  selected: boolean;
+  /** Only a runtime that serves a choice of models: the models its server listed (name, and whether it reports tool support). */
+  models: { name: string; tools: boolean }[] | null;
+  /** The model in force (the live permission's choice), else the settings' default when the server lists it; null when none. */
+  model: string | null;
+  problem: AgentRuntimeProblem | null;
+  /** The destinations a permission for this runtime covers (`host:port`): the runtime's own, from its probe. Shown on the picker row only. */
+  hosts: string[];
+}
 /**
- * #51's answer (get, grant and revoke): the setup row plus, in its consent row ONLY, the destinations the permission covers
+ * #51's answer (get, grant, switch, model and revoke): the setup row plus, in its consent row ONLY, the destinations the permission covers
  * (F24). `hosts` are `host:port` strings: the live consent's own, or, with none, the ones the runtime's probe reported (what a
  * grant would cover). No other view carries them: #23's `agent` keeps `hostsCount` and nothing else.
  * `get` never waits for the runtime check: on a first open (or with a stale answer) it returns `hosts: []` (and `state: 'unknown'`)
@@ -396,6 +416,8 @@ export interface AgentSetupView {
  */
 export interface AgentConsentView extends AgentSetupView {
   consent: AgentSetupView['consent'] & { hosts: string[] };
+  /** Every agent runtime the fresh probe reported, for the picker (absent in an answer from before runtimes were listed). */
+  runtimes?: AgentRuntimeOptionView[];
 }
 
 // ---------- requests (what the renderer sends: ids and small values only) ----------
@@ -444,8 +466,9 @@ export type BlobGcArgs = { apply: false } | { apply: true; expectedCandidatesHas
 /** The nexus:hint push: only the newest event seq (pull #31 for what changed). */
 export interface NexusHint { lastSeq: number }
 
-// ---------- B2b requests (channels #42-#51): ids, enums and bounded values; the renderer never names a host, a model, a
-// principal or a location. Hosts of the agent's network permission come from main's runtime probe.
+// ---------- B2b requests (channels #42-#51): ids, enums and bounded values; the renderer never names a host, a principal
+// or a location. Hosts of the agent's network permission come from main's runtime probe. The one thing it may choose is the
+// agent runtime and, for the local-model runtime, its model, each only from what main's own probe listed (#51).
 export interface AgentStartArgs {
   projectId: ProjectId; workspaceId: WorkspaceId; sessionId: SessionId | null; skillId?: string;
   focusVersionIds: VersionId[]; message: string; intentId: string;
@@ -457,7 +480,14 @@ export interface RepoMergeArgs { branch: string; expectedAcceptedHead: string }
 export interface AgentConsentCaps {
   turnUsdCents?: number; dayUsdCents?: number; turnsPerHour?: number; concurrentTurns?: number; turnTokens?: number; toolCalls?: number;
 }
-export type AgentConsentArgs = { op: 'get' } | { op: 'revoke' } | { op: 'grant'; caps?: AgentConsentCaps };
+/**
+ * `runtime`: a runtime kind the probe reported (the default one when omitted); `model`: a model that runtime's probe listed (the
+ * local-model runtime). Main checks both against its own probe cache: a name it did not list is refused, never stored.
+ * `switch`: revoke the live permission and grant one for `runtime`, as one step (refused while a turn is running).
+ * `model`: change the model of the live permission without changing the permission.
+ */
+export type AgentConsentArgs = { op: 'get' } | { op: 'revoke' } | { op: 'grant'; caps?: AgentConsentCaps; runtime?: string; model?: string }
+  | { op: 'switch'; runtime: string; model?: string; caps?: AgentConsentCaps } | { op: 'model'; model: string };
 export interface AgentStartResultView { session: SessionView; job: JobView }
 export interface ReviewResultView { review: ReviewView; job: JobView | null }
 export interface AcceptResultView { version: VersionView; accept: ChangeSetAcceptView }

@@ -25,6 +25,7 @@ import { AGENT_DEFAULTS, budgetDecision, clampCaps, dayRemainingCents, type Agen
 import type { AuthService } from '../auth/authService';
 import { PrincipalResolver, requireStoredUser } from '../auth/principals';
 import { appendActivityRow } from '../activity/writer';
+import { isModelName } from '../../../shared/nexus/localModel';
 import { newId } from '../db/ids';
 import { immediateTx } from '../db/tx';
 import { PlatformError } from '../errors';
@@ -85,9 +86,14 @@ export class BudgetService {
     this.principals = new PrincipalResolver(db);
   }
 
-  grant(user: Principal, i: { runtimeKind: string; hosts: EgressHost[]; caps?: Partial<Record<keyof AgentCaps, unknown>> | null }): LiveConsent {
+  /**
+   * `model`: only a runtime that serves a choice of models (the local-model runtime): the model the user chose, recorded WITH the
+   * grant in its audit row (no schema change; read back by `liveModel`). The caller has checked it against the probe's list.
+   */
+  grant(user: Principal, i: { runtimeKind: string; hosts: EgressHost[]; caps?: Partial<Record<keyof AgentCaps, unknown>> | null; model?: string | null }): LiveConsent {
     this.requireConsenter(user);
     if (!i || typeof i !== 'object') throw new PlatformError('invalid', 'input must be an object');
+    if (i.model !== undefined && i.model !== null && !isModelName(i.model)) throw new PlatformError('invalid', 'model is a model name', { reason: 'bad_model' });
     if (typeof i.runtimeKind !== 'string' || !/^[a-z][a-z0-9_.-]{0,31}$/.test(i.runtimeKind)) throw new PlatformError('invalid', 'runtimeKind is a runtime kind');
     const hostsJson = canonicalHostsJson(i.hosts);
     const sha = createHash('sha256').update(hostsJson, 'utf8').digest('hex');
@@ -113,7 +119,7 @@ export class BudgetService {
       appendActivityRow(this.db, { actorKind: 'user', actorId: user.id, onBehalfOf: user.id, entityType: 'runtime_consent', entityId: id,
         action: 'agent.consent', status: 'succeeded', details: { op: 'grant', runtimeKind: i.runtimeKind, hostsCount: JSON.parse(hostsJson).length,
           turnUsdCents: caps.turnUsdCents, dayUsdCents: caps.dayUsdCents, turnsPerHour: caps.turnsPerHour, turnTokens: caps.turnTokens,
-          toolCalls: caps.toolCalls } }, now);
+          toolCalls: caps.toolCalls, ...(i.model ? { model: i.model } : {}) } }, now);
       return this.toLive(this.liveRow()!);
     });
   }
@@ -130,6 +136,34 @@ export class BudgetService {
         action: 'agent.consent', status: 'succeeded', details: { op: 'revoke', runtimeKind: live.runtime_kind } }, now);
       return true;
     });
+  }
+
+  /**
+   * Changes the model of the live permission (the local-model runtime), without touching the permission itself: an audit row
+   * against the live consent records it, and `liveModel` reads the newest. The caller has checked it against the probe's list.
+   * Refused (`consent_missing`) with no live permission.
+   */
+  chooseModel(user: Principal, model: string): void {
+    this.requireConsenter(user);
+    if (!isModelName(model)) throw new PlatformError('invalid', 'model is a model name', { reason: 'bad_model' });
+    const now = this.deps.now();
+    immediateTx(this.db, () => {
+      const live = this.liveRow();
+      if (!live) throw new PlatformError('unavailable', 'the agent has not been given permission yet', { reason: 'consent_missing' });
+      appendActivityRow(this.db, { actorKind: 'user', actorId: user.id, onBehalfOf: user.id, entityType: 'runtime_consent', entityId: live.id,
+        action: 'agent.consent', status: 'succeeded', details: { op: 'model', runtimeKind: live.runtime_kind, model } }, now);
+    });
+  }
+
+  /** The model the user chose for the live permission (its grant's, or the newest `chooseModel`), or null. Never throws. */
+  liveModel(): string | null {
+    try {
+      const live = this.liveRow();
+      if (!live) return null;
+      const r = this.db.prepare(`SELECT json_extract(details_json, '$.model') AS m FROM activity WHERE entity_type = 'runtime_consent' AND entity_id = ?
+        AND action = 'agent.consent' AND status = 'succeeded' AND json_extract(details_json, '$.model') IS NOT NULL ORDER BY seq DESC LIMIT 1`).get(live.id) as { m: unknown } | undefined;
+      return r && isModelName(r.m) ? r.m : null;
+    } catch { return null; }
   }
 
   /** The live consent (hosts included: for the setup sheet's consent row and the proxy's binding only), or null. */

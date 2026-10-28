@@ -56,6 +56,7 @@ import type {
 import type { RunRequest, RuntimeKind } from '../../../shared/nexus/runtime';
 import type { RecipeDef } from '../../../shared/nexus/recipes';
 import { looksSecret } from '../../../shared/nexus/secretShape';
+import { loopbackEndpoint } from '../../../shared/nexus/localModel';
 import { homeLabel } from '../../../shared/nexus/homeLabel';
 import { containsSecret } from '../activity/redact';
 import {
@@ -697,6 +698,8 @@ export interface AgentPlanContext {
     skills: readonly { id: string; version: string; sha256: string }[];
     context: { hash: string };
     message: string; mcpUrl: string; model: { provider: string; model: string };
+    /** The local-model runtime only: the loopback endpoint of the user's settings (absent for every other runtime: the request has no such key). */
+    endpoint?: { host: string; port: number };
   };
   /** The live consent's hosts and its recorded `hosts_sha256` (never derived from `allow`). */
   egress: { allow: readonly { host: string; port: number }[]; consentHostsSha256: string };
@@ -723,6 +726,8 @@ export function buildAgentPlan(ctx: AgentPlanContext): AgentPlan {
   if (!/^wt\/[0-9a-z]{26}$/.test(ctx.worktree.relPath)) return refuse('bad_input', 'the worktree is not a session folder');
   if (typeof ctx.runtime.token !== 'string' || ctx.runtime.token.length === 0) return refuse('bad_input', 'a turn needs its token');
   if (!SHA256_HEX.test(ctx.egress.consentHostsSha256)) return refuse('consent_mismatch', 'the live consent carries no valid hosts hash');
+  // A runtime endpoint is a loopback address and nothing else (the local-model runtime reaches nothing remote).
+  if (ctx.runtime.endpoint !== undefined && loopbackEndpoint(ctx.runtime.endpoint) === null) return refuse('bad_input', 'the runtime endpoint is not a loopback address');
   const worktreePath = underDataHome(ctx.dataHomeRoot, ctx.worktree.relPath);
   const configDir = underDataHome(ctx.dataHomeRoot, `jobs/${job.id}/agent`);
   const labels = attemptLabels({ job, attempt, bootId: ctx.bootId, dataHomeRoot: ctx.dataHomeRoot });
@@ -754,6 +759,7 @@ export function buildAgentPlan(ctx: AgentPlanContext): AgentPlan {
     container: { id: 'pending' },
     mcp: { url: ctx.runtime.mcpUrl },
     model: ctx.runtime.model,
+    ...(ctx.runtime.endpoint ? { endpoint: { host: ctx.runtime.endpoint.host, port: ctx.runtime.endpoint.port } } : {}),
     limits: { wallClockMs: ctx.wallClockMs, maxTurns: ctx.caps.toolCalls, maxCostUsd: cents / 100 },
     credential: { ref: 'runtime-owned' },
     configDir

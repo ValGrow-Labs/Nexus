@@ -35,6 +35,7 @@
 .nx-xs__word { color: var(--nx-text-2); font-weight: 600; }
 .nx-xs__text, .nx-xs__action, .nx-xs__btn { grid-column: 2; overflow-wrap: anywhere; }
 .nx-xs__action { color: var(--nx-text-2); }
+.nx-xs__select { height: 32px; max-width: 100%; margin-left: var(--nx-s2); padding: 0 var(--nx-s2); border: 1px solid var(--nx-line-strong); border-radius: var(--nx-r-ctl); background: var(--nx-surface); color: var(--nx-ink); font: 400 13px/1 var(--nx-font); }
 .nx-xs__actions { display: flex; flex-wrap: wrap; gap: var(--nx-s2); }
 .nx-xl__attempts { display: flex; flex-wrap: wrap; gap: var(--nx-s1); }
 .nx-xl__attempts [aria-pressed="true"] { box-shadow: inset 0 -2px 0 var(--nx-ink); font-weight: 650; }

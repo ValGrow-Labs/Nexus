@@ -2,7 +2,7 @@ import { useMemo, useState } from 'react';
 import type { ImageProfileArg } from '@shared/nexus/ipc';
 import { nexusClient } from '../data/nexusClient';
 import { execFailText } from '../data/errorCopy';
-import { checkedLine, consentHostsOf, noticeFor, setupLead, setupSheet } from '../data/executionModel';
+import { checkedLine, consentHostsOf, noticeFor, runtimeChoices, setupLead, setupSheet, type RuntimeChoice } from '../data/executionModel';
 import { CHECK_AGAIN_REREAD_MS, useApprovals, useHealth, useHealthPoll, withIntent } from '../data/useExecution';
 import { useAgentConsent } from '../data/useAgents';
 import { agentFailText } from '../agent/agentModel';
@@ -42,6 +42,9 @@ function SetupBody({ onClose }: { onClose: () => void }) {
   // "Check again" refreshes health first; #51 is read again once that re-read has had its time (the probe lands before the next look).
   const checkAgain = () => { askAgain(); consent.reloadAfter(CHECK_AGAIN_REREAD_MS + 500); };
   const [busy, setBusy] = useState<string | null>(null);
+  // The runtime picker (shown only when the probe reported more than one runtime): the model picked per runtime in this open sheet.
+  const [picked, setPicked] = useState<Record<string, string>>({});
+  const choices = runtimeChoices(consent.view, picked);
   const [note, setNote] = useState<{ text: string; alert: boolean } | null>(null);
   const notice = noticeFor(availability);
   const lead = setupLead(availability, rows);
@@ -62,6 +65,27 @@ function SetupBody({ onClose }: { onClose: () => void }) {
     setBusy(null);
     setNote(r.ok ? { text: op === 'grant' ? 'The network permission was granted.' : 'The network permission was revoked.', alert: false } : { text: agentFailText(r), alert: true });
     if (op === 'grant') checkAgain();
+  };
+
+  const useRuntime = async (c: RuntimeChoice) => {
+    if (busy || !c.action || c.action.disabled) return;
+    setBusy(`runtime:${c.kind}`); setNote(null);
+    const model = c.model !== null ? { model: c.model } : {};
+    const r = await consent.send(c.action.op === 'switch' ? { op: 'switch', runtime: c.kind, ...model } : { op: 'grant', runtime: c.kind, ...model });
+    setBusy(null);
+    setNote(r.ok ? { text: c.action.op === 'switch' ? 'The agent runtime was changed.' : 'The network permission was granted for that runtime.', alert: false } : { text: agentFailText(r), alert: true });
+    checkAgain();
+  };
+
+  // A model picked for the runtime in use changes at once (no new permission); for another runtime it only readies the button.
+  const pickModel = async (c: RuntimeChoice, model: string) => {
+    setPicked((p) => ({ ...p, [c.kind]: model }));
+    if (!c.selected || busy) return;
+    setBusy(`model:${c.kind}`); setNote(null);
+    const r = await consent.send({ op: 'model', model });
+    setBusy(null);
+    setNote(r.ok ? { text: 'The model was changed.', alert: false } : { text: agentFailText(r), alert: true });
+    checkAgain();
   };
 
   return (
@@ -94,6 +118,36 @@ function SetupBody({ onClose }: { onClose: () => void }) {
         </ul>
       ) : (
         <p className="nx-muted" role="status">{availability.kind === 'unknown' && !availability.text ? 'Reading this computer’s setup…' : 'The setup cannot be read while execution is off.'}</p>
+      )}
+      {choices.length > 0 && (
+        <section aria-labelledby="nx-xs-runtimes">
+          <h3 id="nx-xs-runtimes" className="nx-xs__sub">Agent runtime</h3>
+          <ul className="nx-xs__rows" aria-label="Agent runtime">
+            {choices.map((c) => (
+              <li key={c.kind} className="nx-xs__row" data-state={c.state}>
+                <span className="nx-xs__label">{c.label}</span>
+                <span className="nx-xs__word">{c.word}</span>
+                <span className="nx-xs__text">{c.text}{!c.selected && c.destination ? ` Using it lets Nexus reach only ${c.destination}.` : ''}</span>
+                {c.models && (
+                  <span className="nx-xs__action">
+                    <label>Model
+                      <select className="nx-xs__select" aria-label={`Model for ${c.label}`} disabled={busy !== null}
+                        value={c.model !== null && c.models.some((m) => m.name === c.model) ? c.model : ''} onChange={(e) => { void pickModel(c, e.target.value); }}>
+                        {!(c.model !== null && c.models.some((m) => m.name === c.model)) && <option value="" disabled>{c.models.length > 0 ? 'Choose a model' : 'No models installed'}</option>}
+                        {c.models.map((m) => <option key={m.name} value={m.name} disabled={m.disabled}>{m.label}</option>)}
+                      </select>
+                    </label>
+                  </span>
+                )}
+                {c.action && (
+                  <span className="nx-xs__btn">
+                    <Button disabled={busy !== null || c.action.disabled} onClick={() => { void useRuntime(c); }}>{busy === `runtime:${c.kind}` ? 'Working…' : c.action.label}</Button>
+                  </span>
+                )}
+              </li>
+            ))}
+          </ul>
+        </section>
       )}
       {health && <p className="nx-muted">{checkedLine(health.checkedAt)}</p>}
       {waiting.length > 0 && (

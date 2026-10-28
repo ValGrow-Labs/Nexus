@@ -44,6 +44,7 @@ import { HANDOFF_STATUSES, MAX_SUBJECTS } from '../nexus/handoff/handoffRules';
 import { MAX_LINK_SOURCES } from '../nexus/lineage/lineageService';
 import { getUserAction } from '../../shared/nexus/actions';
 import { DOMAINS } from '../../shared/nexus/domains/index';
+import { LOCAL_MODEL_KIND, modelProblem } from '../../shared/nexus/localModel';
 import { fail, ok, unavailable } from './envelope';
 import {
   APPROVAL_STATUSES_ACCEPTED, DEPLOYMENT_STATUSES_ACCEPTED, MAX_FOCUS_VERSIONS, PREVIEW_PARTS, RequestError, V
@@ -784,17 +785,29 @@ export function registerNexusIpc(registrar: IpcRegistrar, deps: NexusIpcDeps): v
     return ok(mergeView(r.merge));
   });
 
-  // #51 the agent's network permission. `grant` carries caps only (clamped to the D-B4 ceilings by the service); the destinations
-  // come from the runtime's own probe, never from the renderer. Owner role (the service checks); `revoke` ends it.
+  // #51 the agent's network permission. `grant` carries caps only (clamped to the D-B4 ceilings by the service), plus, optionally, the
+  // runtime to use (a kind the probe reported) and, for the local-model runtime, its model (one that runtime's probe listed); the
+  // destinations come from that runtime's own probe, never from the renderer. `switch` revokes the live permission and grants one for
+  // another runtime as one step; `model` changes the live permission's model. Owner role (the service checks); `revoke` ends it.
   reg('nexus:agent:consent', (args) => {
     V.arity(args, 1);
-    const o = V.object(args[0], ['op', 'caps'] as const, ['caps'] as const);
-    const op = V.enumOf(o.op, 'op', ['get', 'grant', 'revoke'] as const);
-    if (op !== 'grant') {
+    const o = V.object(args[0], ['op', 'caps', 'runtime', 'model'] as const, ['caps', 'runtime', 'model'] as const);
+    const op = V.enumOf(o.op, 'op', ['get', 'grant', 'revoke', 'switch', 'model'] as const);
+    if (op === 'get' || op === 'revoke') {
       if (o.caps !== undefined) throw new RequestError('caps', 'is sent only with grant');
+      if (o.runtime !== undefined) throw new RequestError('runtime', 'is sent only with grant or switch');
+      if (o.model !== undefined) throw new RequestError('model', 'is sent only with grant, switch or model');
       return { op };
     }
-    return { op, caps: o.caps === undefined ? {} : V.consentCaps(o.caps) };
+    if (op === 'model') {
+      if (o.caps !== undefined) throw new RequestError('caps', 'is sent only with grant or switch');
+      if (o.runtime !== undefined) throw new RequestError('runtime', 'is sent only with grant or switch');
+      if (o.model === undefined) throw new RequestError('model', 'is required');
+      return { op, model: V.modelName(o.model) };
+    }
+    if (op === 'switch' && o.runtime === undefined) throw new RequestError('runtime', 'is required');
+    return { op, caps: o.caps === undefined ? {} : V.consentCaps(o.caps), runtime: o.runtime === undefined ? undefined : V.runtimeKind(o.runtime),
+      model: o.model === undefined ? undefined : V.modelName(o.model) };
   }, async (nx, me, q) => {
     const probe = nx.agentProbe;
     if (q.op === 'get') {
@@ -808,14 +821,40 @@ export function registerNexusIpc(registrar: IpcRegistrar, deps: NexusIpcDeps): v
       probe?.refresh();
       return ok(agentConsentView(nx));
     }
-    // The hosts and the kind are the adapter's own, as the runner's probe reported them (refreshed first when stale).
     if (probe && probe.cache.isStale()) await probe.refreshAndWait(RUNTIME_REFRESH_WAIT_MS);
-    const seen = probe?.cache.fresh() ?? null;
-    const hosts = probe?.cache.egressHosts() ?? null;
+    if (q.op === 'model') {
+      // The live permission's runtime must serve models, and the model must be one its own probe listed (tool support included).
+      const live = nx.budget!.live();
+      if (!live) throw new PlatformError('unavailable', 'the agent has not been given permission yet', { reason: 'consent_missing' });
+      const entry = probe?.cache.fresh(live.runtimeKind) ?? null;
+      if (live.runtimeKind !== LOCAL_MODEL_KIND || !entry) throw new PlatformError('unavailable', 'the agent has not been checked on this computer yet', { reason: 'runtime_unknown' });
+      const mp = modelProblem(entry.setup?.models, q.model);
+      if (mp !== null) throw new PlatformError('invalid', 'that model cannot be used', { reason: mp });
+      nx.budget!.chooseModel(me, q.model);
+      probe?.refresh();
+      return ok(agentConsentView(nx));
+    }
+    // grant / switch: the hosts, the kind and the models are the adapter's own, as the runner's probe reported them (refreshed first when stale).
+    const seen = probe?.cache.fresh(q.runtime) ?? null;
+    const hosts = probe?.cache.egressHosts(q.runtime) ?? null;
     if (!seen || !hosts || hosts.length === 0) {
       throw new PlatformError('unavailable', 'the agent has not been checked on this computer yet', { reason: 'runtime_unknown' });
     }
-    nx.budget!.grant(me, { runtimeKind: seen.kind, hosts, caps: q.caps });
+    let model: string | null = null;
+    if (seen.kind === LOCAL_MODEL_KIND) {
+      // The local-model runtime: the settings' address must be the destination granted, and the model must be one the server lists.
+      const st = nx.agents ? nx.agents.localModelState(hosts, seen.setup?.models, q.model ?? null) : { model: null, reason: 'local_model_not_chosen' as const };
+      if (st.reason !== null) throw new PlatformError('invalid', 'the local model cannot be used', { reason: st.reason });
+      model = st.model;
+    } else if (q.model !== undefined) {
+      throw new PlatformError('invalid', 'that runtime does not take a model', { reason: 'bad_model' });
+    }
+    if (q.op === 'switch') {
+      if (!nx.agents) throw new PlatformError('unavailable', 'agent turns are not available', { reason: 'agents_unavailable' });
+      nx.agents.switchRuntime(me, { runtimeKind: seen.kind, hosts, caps: Object.keys(q.caps).length > 0 ? q.caps : null, model });
+    } else {
+      nx.budget!.grant(me, { runtimeKind: seen.kind, hosts, caps: q.caps, ...(model !== null ? { model } : {}) });
+    }
     probe?.refresh();
     return ok(agentConsentView(nx));
   });
