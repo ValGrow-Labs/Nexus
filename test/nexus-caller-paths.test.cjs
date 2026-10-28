@@ -202,7 +202,11 @@ test('the agent request schemas (#42-#51) name no folder, command, image, networ
   const ipc = read('src/shared/nexus/ipc.ts');
   const b2b = ipc.slice(ipc.indexOf('// ---------- B2b requests'));
   assert.ok(b2b.length > 300);
-  for (const k of [...b2b.matchAll(/\b([A-Za-z]+)\??:\s/g)].map((m) => m[1])) assert.ok(!banned.test(k), k);
+  // Everything but #51's own args type, which alone carries `runtime` and `model` (deliberate; see above) and is pinned to exactly those keys.
+  const consentArgs = b2b.match(/export type AgentConsentArgs =[\s\S]*?\{ op: 'model'; model: string \};/);
+  assert.ok(consentArgs && /runtime\??: string/.test(consentArgs[0]) && /model\??: string/.test(consentArgs[0]));
+  assert.deepEqual([...new Set([...consentArgs[0].matchAll(/\b([A-Za-z]+)\??:\s/g)].map((m) => m[1]))].sort(), ['caps', 'model', 'op', 'runtime']);
+  for (const k of [...b2b.replace(consentArgs[0], '').matchAll(/\b([A-Za-z]+)\??:\s/g)].map((m) => m[1])) assert.ok(!banned.test(k), k);
   // The preload takes no principal or function: each agent method forwards its ids and values and nothing else.
   const preload = read('src/preload/index.ts');
   for (const m of preload.matchAll(/^  (nexus(?:AgentStart|SessionsList|SessionGet|SessionEnd|SessionCancel|ReviewDecide|ChangeSetAccept|RepoStatus|RepoMergeAccepted|AgentConsent)):[^\n]*\n[^\n]*\n/gm)) {
