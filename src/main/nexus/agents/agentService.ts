@@ -420,7 +420,7 @@ export class AgentService implements AgentTurnPort {
     // The health examined first is the live permission's own runtime (none: the default one); a mismatch is judged after the guards.
     const live0 = this.deps.budget.live();
     const p = this.runtimeProblem(null, live0 ? live0.runtimeKind : null);
-    if (p !== null) refuse('unavailable', this.problemText(p, live0 ? live0.runtimeKind : null), p);
+    if (p !== null) refuse('unavailable', this.problemText(p, live0 ? live0.runtimeKind : null), this.problemReason(p, live0 ? live0.runtimeKind : null));
     const g = this.deps.budget.startGuard(projectId);
     if (!g.ok && g.reason !== 'busy') {
       const text = g.reason === 'consent_missing' ? 'the agent has not been given permission yet'
@@ -430,7 +430,7 @@ export class AgentService implements AgentTurnPort {
     const consent = this.deps.budget.live();
     if (!consent) return refuse('unavailable', 'the agent has not been given permission yet', 'consent_missing');
     const p2 = this.runtimeProblem(consent.runtimeKind);
-    if (p2 !== null) refuse('unavailable', this.problemText(p2, consent.runtimeKind), p2);
+    if (p2 !== null) refuse('unavailable', this.problemText(p2, consent.runtimeKind), this.problemReason(p2, consent.runtimeKind));
     this.consentHostsOrThrow(consent);
     const hosts = this.adapterHostsOrThrow(consent);
     // The local-model runtime also needs its settings and the chosen model to be usable (a fixed sentence says which is not).
@@ -444,7 +444,17 @@ export class AgentService implements AgentTurnPort {
   /** The sentence of a runtime problem reason; the local-model runtime's "not installed" is its server not running. */
   private problemText(reason: string, kind: string | null): string {
     if (kind === LOCAL_MODEL_KIND && reason === 'runtime_not_installed') return LOCAL_MODEL_PROBLEMS.local_model_server_down;
+    if (kind === LOCAL_MODEL_KIND && reason === 'runtime_version_unsupported') return LOCAL_MODEL_PROBLEMS.local_model_no_tools;
     return RUNTIME_PROBLEMS[reason] ?? 'the agent runtime is not ready';
+  }
+
+  /**
+   * The machine-readable reason of a runtime problem. The local-model runtime's probe reports `version_unsupported` when the server
+   * has no model (the chosen one, or any) that can use tools: that is not an unsupported program version, so its reason is the
+   * existing `local_model_no_tools` (whose fixed sentence main's envelope and the renderer's copy carry). Every other reason is unchanged.
+   */
+  private problemReason(reason: string, kind: string | null): string {
+    return kind === LOCAL_MODEL_KIND && reason === 'runtime_version_unsupported' ? 'local_model_no_tools' : reason;
   }
 
   /** The health entry of one runtime (null: the default one); null when unknown. Never throws. */

@@ -261,7 +261,9 @@ test('the engine check is asked for in one place (the platform\'s refresh), neve
   assert.equal((exec.match(/op: 'probe'/g) || []).length, 2);
   // The runner: adapters are reached from one place, behind the flag; the entry runs none by itself.
   const core = read('src/runner/core.ts');
-  assert.match(core, /if \(withRuntimes && this\.deps\.runtimeProbe\)/);
+  // C1: only for a well-formed `kinds` (a malformed one checks nothing); main names the live consent's own kind, never another.
+  assert.match(core, /if \(withRuntimes && this\.deps\.runtimeProbe && only !== null\)/);
+  assert.match(platform, /\.\.\.\(kinds \? \{ kinds \} : \{\}\)/, 'the probe carries the live consent kind');
   assert.equal((core.match(/this\.probeRuntimes\(/g) || []).length, 1);
   assert.doesNotMatch(read('src/runner/index.ts'), /setInterval|setTimeout|\.probe\(/);
   // Hosts: only #51's consent view builds them; #23's agent row and every other view are built without.

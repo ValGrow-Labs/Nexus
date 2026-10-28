@@ -110,6 +110,7 @@ function runtimeBlocker(a: AgentSetupView): string | null {
   // The local-model runtime words its own server and model problems.
   if (a.kind === LOCAL_MODEL_KIND) {
     if (a.state === 'not_installed') return AGENT_REASON_TEXT.local_model_server_down;
+    if (a.state === 'version_unsupported') return AGENT_REASON_TEXT.local_model_no_tools;
     if (a.state === 'ready' && a.problem) return LOCAL_PROBLEM_TEXT[a.problem];
   }
   switch (a.state) {

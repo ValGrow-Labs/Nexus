@@ -336,7 +336,8 @@ test('H2 the engine check is on demand: the flag rides only on a refresh, with t
   const n0 = probes().length;
   await grant(w);
   assert.equal(probes().length, n0 + 1, 'a grant asks for a fresh check at once');
-  assert.deepEqual(probes().at(-1), { op: 'probe', runtimes: true, consentHostsSha256: hostsSha256([API_HOST]) });
+  // C1: with a live consent the probe also names that consent's own runtime kind (the runner checks no other adapter).
+  assert.deepEqual(probes().at(-1), { op: 'probe', runtimes: true, consentHostsSha256: hostsSha256([API_HOST]), kinds: ['cli-agent'] });
   // The scheduler's own probe, even with a live consent, stays plain (requestProbe is rate limited: let its window pass).
   w.advance(6000);
   w.nx.exec.requestProbe();

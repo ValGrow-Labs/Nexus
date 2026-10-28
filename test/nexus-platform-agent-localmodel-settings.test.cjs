@@ -216,6 +216,21 @@ test('LS6b the agent panel words the local runtime\'s problems and nothing else 
   assert.deepEqual(blockers(agentRow({ kind: undefined, state: 'not_installed' })), [E.AGENT_REASON_TEXT.runtime_not_installed], 'another runtime keeps its own sentence');
 });
 
+test('LS6c (C1) the local runtime unsupported state (no model can use tools) reads as the "cannot use tools" sentence in the rows, the picker and the panel; another runtime keeps the program-version sentence', () => {
+  const NO_TOOLS = E.AGENT_REASON_TEXT.local_model_no_tools;
+  assert.equal(X.agentSetupRows(agentRow({ state: 'version_unsupported', problem: 'model_no_tools' }))[0].text, NO_TOOLS);
+  assert.equal(X.agentSetupRows(agentRow({ state: 'version_unsupported' }))[0].state, 'problem');
+  const choice = X.runtimeChoices(view([opt(), localOpt({ state: 'version_unsupported', models: [{ name: 'plain:1b', tools: false }], problem: 'model_no_tools', model: null })]))[1];
+  assert.deepEqual([choice.word, choice.text, choice.action.disabled], ['Needs attention', NO_TOOLS, true]);
+  const h = (agent) => ({ db: { version: 10, platform: true, handoffs: true, execution: true, subReason: null }, agent });
+  const blockers = (agent) => A.agentPanelModel({ health: h(agent), availability: { kind: 'ready', advisories: [] }, sessions: [], sessionsFail: null }).blockers;
+  assert.deepEqual(blockers(agentRow({ state: 'version_unsupported', problem: 'model_no_tools' })), [NO_TOOLS]);
+  // The vendor runtime's row and blocker are unchanged.
+  assert.deepEqual(blockers(agentRow({ kind: undefined, state: 'version_unsupported' })), [E.AGENT_REASON_TEXT.runtime_version_unsupported]);
+  assert.match(X.agentSetupRows(agentRow({ kind: undefined, state: 'version_unsupported' }))[0].text, /not a version Nexus supports/);
+  assert.equal(E.AGENT_REASON_TEXT.local_model_no_tools, ENV.AGENT_REASON_MESSAGES.local_model_no_tools);
+});
+
 test('LS7 the sheet and the model add no vendor word, no host and no code to their copy; the picker is shown only from the model\'s rows', () => {
   const VENDOR = /claude|anthropic|hermes|sonnet|opus|haiku|openai|gpt-|ollama|qwen|llama/i;
   for (const f of ['src/renderer/src/nexus/components/ExecutionSetupSheet.tsx', 'src/renderer/src/nexus/data/executionModel.ts', 'src/renderer/src/nexus/data/errorCopy.ts',

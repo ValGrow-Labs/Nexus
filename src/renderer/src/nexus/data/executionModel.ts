@@ -313,6 +313,8 @@ export const LOCAL_PROBLEM_TEXT: Readonly<Record<AgentRuntimeProblem, string>> =
 /** The local-model runtime's program row for the states it words itself; null leaves the generic row to speak. */
 function localProgramRow(a: Pick<AgentSetupView, 'state' | 'problem'>, label: string, version: string): SetupRow | null {
   if (a.state === 'not_installed') return row('agent', label, 'problem', AGENT_REASON_TEXT.local_model_server_down, 'Start it, then check again.');
+  // The local runtime reports "unsupported" when the server has no model that can use tools: said as that, not as a program version.
+  if (a.state === 'version_unsupported') return row('agent', label, 'problem', LOCAL_PROBLEM_TEXT.model_no_tools, 'Choose a model in the runtime list, then check again.');
   if (a.state !== 'ready') return null;
   if (a.problem) return row('agent', label, 'problem', LOCAL_PROBLEM_TEXT[a.problem], 'Choose a model in the runtime list, then check again.');
   return row('agent', label, 'ok', `The local model server is running and the chosen model can use tools${version}.`);
@@ -400,7 +402,7 @@ const runtimeWord = (o: AgentRuntimeOptionView): { word: string; text: string; o
         : { word: 'Not checked', text: 'The agent program is installed. Nexus could not confirm that it is signed in.', ok: false };
     case 'not_installed': return { word: 'Needs attention', text: local ? AGENT_REASON_TEXT.local_model_server_down : AGENT_REASON_TEXT.runtime_not_installed, ok: false };
     case 'not_signed_in': return { word: 'Needs attention', text: AGENT_REASON_TEXT.runtime_not_authenticated, ok: false };
-    case 'version_unsupported': return { word: 'Needs attention', text: AGENT_REASON_TEXT.runtime_version_unsupported, ok: false };
+    case 'version_unsupported': return { word: 'Needs attention', text: local ? LOCAL_PROBLEM_TEXT.model_no_tools : AGENT_REASON_TEXT.runtime_version_unsupported, ok: false };
     case 'unavailable': return { word: 'Not checked', text: AGENT_REASON_TEXT.runtime_error, ok: false };
     default: return { word: 'Not checked', text: AGENT_REASON_TEXT.runtime_unknown, ok: false };
   }

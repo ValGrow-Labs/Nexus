@@ -31,8 +31,13 @@ export type MainToRunner =
    * `consentHostsSha256` (with `runtimes`): the hash of the live consent's hosts, when one exists. The runner then runs the
    * runtime's health under its allow-list proxy (only when the hash is the adapter's own host list); without it, under the
    * deny-all proxy: nothing the engine does can leave the machine before the user's permission exists.
+   * `kinds` (with `runtimes`): the runtime kinds to check, one to four. Only those adapters are asked anything (no process is
+   * started, no server is contacted for any other) and the others are reported absent. Main sends the live consent's own kind, so
+   * the permission the user gave for ONE runtime is never used to look at another; with no live consent it sends none and every
+   * adapter is checked under the deny-all proxy (the setup sheet's choice between runtimes). A `kinds` that is not a list of one to
+   * four kind ids (`parseProbeKinds`) makes the runner check no runtime at all, never all of them.
    */
-  | { op: 'probe'; runtimes?: true; consentHostsSha256?: string }
+  | { op: 'probe'; runtimes?: true; consentHostsSha256?: string; kinds?: string[] }
   | { op: 'attempt.start'; attemptId: string; plan: AttemptPlan }
   | { op: 'attempt.cancel'; attemptId: string; graceMs: number; reason: CancelReason }
   | { op: 'attempt.adopt'; attemptId: string; containerId: string; logPath: string }      // recovery
@@ -319,6 +324,24 @@ const SHA256_RE = /^[0-9a-f]{64}$/;
 /** A git object id: SHA-1 (40 hex) or SHA-256 (64 hex). */
 const COMMIT_RE = /^[0-9a-f]{40}(?:[0-9a-f]{24})?$/;
 /** The runner's loopback MCP endpoint. */
+/** A runtime kind id as main sends it in `probe.kinds`, and the most kinds one probe may name. */
+export const PROBE_KIND_RE = /^[a-z][a-z0-9_.-]{0,31}$/;
+export const PROBE_KINDS_MAX = 4;
+/**
+ * The `kinds` of a probe: `undefined` when absent (check every adapter), the de-duplicated list when it is one to
+ * `PROBE_KINDS_MAX` kind ids, and `null` for anything else (an empty list, too many, a non-string, a bad id), which the runner
+ * treats as "check nothing", so a malformed filter can never widen what is run.
+ */
+export function parseProbeKinds(x: unknown): string[] | undefined | null {
+  if (x === undefined) return undefined;
+  if (!Array.isArray(x) || x.length === 0 || x.length > PROBE_KINDS_MAX) return null;
+  const out: string[] = [];
+  for (const k of x) {
+    if (typeof k !== 'string' || !PROBE_KIND_RE.test(k)) return null;
+    if (!out.includes(k)) out.push(k);
+  }
+  return out;
+}
 export const MCP_URL_RE = /^http:\/\/127\.0\.0\.1:([1-9][0-9]{0,4})\/mcp$/;
 /**
  * A relay id: the runner mints `callId` (one per relayed MCP call); main mints `execId` (inside the `sandbox_exec`

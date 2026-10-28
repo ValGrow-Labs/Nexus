@@ -40,7 +40,7 @@ import {
   type ParsedOutput, type SandboxProfile, type SandboxProbe, type ServicePlan, type StagedOutput, type ToolPlan
 } from '../shared/nexus/execution';
 import {
-  EGRESS_EVENT_MAX, parseRunnerMessage, ULID_RE, type AttemptFailureClass, type AttemptPhase, type CancelReason, type ExitReason, type McpReplyResult,
+  EGRESS_EVENT_MAX, parseProbeKinds, parseRunnerMessage, ULID_RE, type AttemptFailureClass, type AttemptPhase, type CancelReason, type ExitReason, type McpReplyResult,
   type RefusalReason, type RunnerToMain, type SandboxExecGrant
 } from '../shared/nexus/runnerProtocol';
 import { expectedNetworkName } from '../shared/nexus/preflightCheck';
@@ -313,7 +313,7 @@ export class RunnerCore {
       switch (m.op) {
         case 'hello': return await this.onHello(m);
         case 'mcp.reply': this.onMcpReply(m); return;
-        case 'probe': return await this.onProbe(m.runtimes === true, typeof m.consentHostsSha256 === 'string' ? m.consentHostsSha256 : null);
+        case 'probe': return await this.onProbe(m.runtimes === true, typeof m.consentHostsSha256 === 'string' ? m.consentHostsSha256 : null, m.kinds);
         case 'attempt.start': return await this.onStart(m.attemptId as string, m.plan as AttemptPlan);
         case 'attempt.cancel': return await this.onCancel(m.attemptId as string, m.graceMs as number, m.reason as CancelReason);
         case 'attempt.adopt': return await this.onAdopt(m.attemptId as string, m.containerId as string, m.logPath as string);
@@ -480,7 +480,7 @@ stderr: ${r.stderr}` : ''}`
 
   private runtimeProber: RuntimeProber | null = null;
 
-  private async onProbe(withRuntimes = false, consentHostsSha256: string | null = null): Promise<void> {
+  private async onProbe(withRuntimes = false, consentHostsSha256: string | null = null, kinds: unknown = undefined): Promise<void> {
     const gpu = { detected: false, usableInContainers: false as const };
     let probe: SandboxProbe;
     try { probe = await this.driver.probe(); } catch { probe = { docker: 'stopped', gpu }; }
@@ -500,18 +500,20 @@ stderr: ${r.stderr}` : ''}`
     // The sandbox facts the scheduler leases against go out at once; the engine check never holds them back.
     this.post({ ...result, runtimes: [] });
     // The engine is checked only when main asked (a refresh of the runtime check), and its answer follows as a second message.
-    if (withRuntimes && this.deps.runtimeProbe) {
-      void this.probeRuntimes(consentHostsSha256).then((runtimes) => { if (runtimes.length > 0) this.post({ ...result, runtimes }); }).catch(() => undefined);
+    // `kinds` (main sends the live consent's own kind) limits which adapters are asked anything; a malformed one checks none.
+    const only = parseProbeKinds(kinds);
+    if (withRuntimes && this.deps.runtimeProbe && only !== null) {
+      void this.probeRuntimes(consentHostsSha256, only).then((runtimes) => { if (runtimes.length > 0) this.post({ ...result, runtimes }); }).catch(() => undefined);
     }
   }
 
   /** `probe.result.runtimes`: the adapters' health through a deny-all proxy (no consent) or the allow-list proxy (after consent). */
-  private async probeRuntimes(consentHostsSha256: string | null): Promise<Awaited<ReturnType<RuntimeProber['probe']>>> {
+  private async probeRuntimes(consentHostsSha256: string | null, kinds?: readonly string[]): Promise<Awaited<ReturnType<RuntimeProber['probe']>>> {
     const rp = this.deps.runtimeProbe;
     if (!rp) return [];
     this.runtimeProber ??= new RuntimeProber({ adapters: rp.adapters, now: this.now, log: this.log, imagesDir: this.deps.imagesDir,
       startProxy: rp.startProxy ?? this.deps.agentRuntime?.startProxy, timeoutMs: rp.timeoutMs, ttlMs: rp.ttlMs });
-    try { return await this.runtimeProber.probe(consentHostsSha256); } catch { return []; }
+    try { return await this.runtimeProber.probe(consentHostsSha256, kinds); } catch { return []; }
   }
 
   // ---------- attempt state ----------

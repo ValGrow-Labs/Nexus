@@ -7,7 +7,10 @@
  *   engine can never reach the network;
  * - only after a live consent, and only when main's consent hash equals the hash of the adapter's own host list, the proxy
  *   is the allow-list proxy bound to that consent (the same rule a turn uses). Anything else stays deny-all.
- * The engine is never run when no proxy could be started. The raw output of the engine's own status never leaves the
+ * The engine is never run when no proxy could be started.
+ * With `kinds` (main names the live consent's own runtime) ONLY those adapters are asked anything: the others are not described,
+ * checked or set up (no process, no request) and are absent from the result, so a permission given for one runtime is never
+ * used to look at another. Without `kinds` every adapter is checked, as before the permission exists. The raw output of the engine's own status never leaves the
  * adapter (it answers `yes|no|unknown`); the entries carry only the health, the display label, the flags verdict and
  * the hosts. The result is kept for a few seconds per consent state, so a burst of probes costs one engine run.
  *
@@ -53,11 +56,16 @@ export class RuntimeProber {
   private running: { key: string; done: Promise<RuntimeProbeEntry[]> } | null = null;
   constructor(private readonly deps: RuntimeProberDeps) {}
 
-  /** `consentHostsSha256`: main's live consent hash, or null/undefined before consent. */
-  async probe(consentHostsSha256?: string | null): Promise<RuntimeProbeEntry[]> {
-    const key = typeof consentHostsSha256 === 'string' && /^[0-9a-f]{64}$/.test(consentHostsSha256) ? consentHostsSha256 : '';
+  /**
+   * `consentHostsSha256`: main's live consent hash, or null/undefined before consent. `kinds`: only these adapters are checked
+   * (undefined: all); the cache and the single-flight slot are per consent hash AND kind set.
+   */
+  async probe(consentHostsSha256?: string | null, kinds?: readonly string[]): Promise<RuntimeProbeEntry[]> {
+    const hash = typeof consentHostsSha256 === 'string' && /^[0-9a-f]{64}$/.test(consentHostsSha256) ? consentHostsSha256 : '';
+    const wanted = kinds === undefined ? null : [...new Set(kinds)].sort();
+    const key = wanted === null ? hash : `${hash}|${wanted.join(',')}`;
     for (;;) {
-      const adapters = this.deps.adapters();
+      const adapters = this.deps.adapters().filter((a) => wanted === null || wanted.includes(a.kind as string));
       if (adapters.length === 0) return [];
       const now = this.deps.now();
       if (this.last && this.last.key === key && now >= this.last.at && now - this.last.at < (this.deps.ttlMs ?? RUNTIME_PROBE_TTL_MS)) return this.last.entries;
@@ -69,7 +77,7 @@ export class RuntimeProber {
       }
       const done = (async () => {
         const entries: RuntimeProbeEntry[] = [];
-        for (const a of adapters) entries.push(await this.one(a, key));
+        for (const a of adapters) entries.push(await this.one(a, hash));
         this.last = { key, at: this.deps.now(), entries };
         return entries;
       })();

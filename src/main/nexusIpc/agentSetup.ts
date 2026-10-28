@@ -32,7 +32,10 @@ function optionOf(nx: NexusPlatform, e: RuntimeCacheEntry, live: { runtimeKind: 
   const models = (e.setup?.models ?? []).slice(0, 64).map((m) => ({ name: scrubMessage(m.name).slice(0, 128), tools: m.tools === true }));
   // The chosen model only counts for the runtime the live permission names; any other row shows the settings' default.
   const st = nx.agents.localModelState((e.setup?.egressHosts ?? []).map((h) => ({ host: h.host, port: h.port })), e.setup?.models);
-  return { ...base, models, model: st.model, problem: st.reason === null ? null : PROBLEM_OF[st.reason] };
+  // The adapter reports `version_unsupported` when the server has no model that can use tools (the chosen one, or any): that is the
+  // "cannot use tools" problem, not an unsupported program version.
+  const noTools = !e.health.ok && e.health.reason === 'version_unsupported';
+  return { ...base, models, model: st.model, problem: noTools ? 'model_no_tools' : st.reason === null ? null : PROBLEM_OF[st.reason] };
 }
 
 /**

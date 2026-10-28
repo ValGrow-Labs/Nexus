@@ -67,7 +67,7 @@ async function world(o = {}) {
   w.db.prepare('UPDATE projects SET root_path = ? WHERE id = ?').run(repoDir, PROJECT);
   Object.assign(w, { dataHome, cfg, st: { runtimes: o.runtimes ?? [cliRuntime(), localRuntime()] } });
   addRepository(w);
-  const runner = new FakeRunner({ probeReply: (msg) => (msg.runtimes === true ? [sandbox([]), sandbox(w.st.runtimes)] : [sandbox([])]) });
+  const runner = new FakeRunner({ probeReply: (msg) => (msg.runtimes === true ? [sandbox([]), sandbox(w.st.runtimes.filter((r) => !w.st.honorKinds || !msg.kinds || msg.kinds.includes(r.kind)))] : [sandbox([])]) });
   w.runner = runner;
   w.nx.exec.attachRunner(runner, w.nx.bootId);
   runner.report({ op: 'ready', bootId: w.nx.bootId, mcpUrl: MCP_URL });
@@ -421,4 +421,64 @@ test('LM7 #23 says which runtime the row is about and why a chosen model cannot 
   assert.equal(b.consent.hostsCount, 1);
   assert.ok(!('hosts' in b.consent));
   assert.doesNotMatch(JSON.stringify(b), /127\.0\.0\.1|coder/);
+});
+
+// ---------- LM9: the probe is per kind (the permission is for ONE runtime) ----------
+
+test('LM9 a flagged probe names the live permission\'s own kind (and only it); with no permission it names none and every runtime is checked', async () => {
+  const w = await world();
+  w.st.honorKinds = true; // the fake runner answers like the real one: only the kinds it is asked for
+  const flagged = () => w.runner.sentOf('probe').filter((p) => p.runtimes === true);
+  const kindsOfCache = () => w.nx.agentProbe.cache.all().map((e) => e.kind);
+  // Before any permission: the setup sheet's probe asks for nothing in particular, so both runtimes are checked (deny-all).
+  w.reprobe();
+  assert.deepEqual(flagged().at(-1), { op: 'probe', runtimes: true });
+  assert.deepEqual(kindsOfCache(), ['cli-agent', 'local-model']);
+  // A live local-model permission: every refresh names that kind only, with its own hash; the vendor runtime is not in the answer.
+  await grant(w, { runtime: 'local-model', model: 'coder:7b' });
+  assert.deepEqual(flagged().at(-1), { op: 'probe', runtimes: true, consentHostsSha256: hostsSha256(LOCAL_HOSTS), kinds: ['local-model'] });
+  assert.deepEqual(kindsOfCache(), ['local-model']);
+  const since = flagged().length;
+  w.reprobe();
+  await w.x.ok('nexus:agent:consent', { op: 'revoke' }).then(() => grant(w, { runtime: 'local-model', model: 'coder:7b' }));
+  assert.ok(flagged().length > since);
+  for (const p of flagged().slice(since).filter((q) => q.consentHostsSha256 !== undefined)) assert.deepEqual(p.kinds, ['local-model'], 'a probe under the permission asks for no other kind');
+  // The scheduler's plain probe never carries the flag or a kind.
+  w.nx.exec.requestProbe();
+  assert.deepEqual(w.runner.sentOf('probe').at(-1).kinds, undefined);
+  // Revoked: back to every runtime. A permission for the vendor runtime names that kind and the local server is not asked about.
+  await w.x.ok('nexus:agent:consent', { op: 'revoke' });
+  assert.deepEqual(flagged().at(-1), { op: 'probe', runtimes: true });
+  assert.deepEqual(kindsOfCache(), ['cli-agent', 'local-model']);
+  await grant(w);
+  assert.deepEqual(flagged().at(-1), { op: 'probe', runtimes: true, consentHostsSha256: hostsSha256(CLI_HOSTS), kinds: ['cli-agent'] });
+  assert.deepEqual(kindsOfCache(), ['cli-agent']);
+  // The turn still starts: the live permission's own runtime is what the gate reads.
+  assert.equal(w.start().job.state, 'queued');
+});
+
+// ---------- LM10: a server with no tool-capable model says so ----------
+
+test('LM10 the local runtime\'s "unsupported" health (no model can use tools) reads as the "cannot use tools" sentence, in the start refusal and in #23 and #51', async () => {
+  const w = await world({ cfg: { providerDefaultModels: { opencode: 'local/coder:7b' } } });
+  await grant(w, { runtime: 'local-model', model: 'coder:7b' });
+  const none = [{ name: 'plain:1b', tools: false }];
+  w.st.runtimes = [cliRuntime(), localRuntime({ health: { ok: false, reason: 'version_unsupported', detail: 'no installed model supports tool calls' }, models: none })];
+  w.reprobe();
+  assert.throws(() => w.start(), (e) => e.code === 'unavailable' && e.detail.reason === 'local_model_no_tools'
+    && e.message === 'the chosen local model cannot use tools, which agent turns need');
+  const a = (await w.x.ok('nexus:platform:health')).agent;
+  assert.deepEqual([a.kind, a.state, a.problem], ['local-model', 'version_unsupported', 'model_no_tools']);
+  const v = await w.x.ok('nexus:agent:consent', { op: 'get' });
+  const row = v.runtimes.find((r) => r.kind === 'local-model');
+  assert.deepEqual([row.state, row.problem], ['version_unsupported', 'model_no_tools']);
+  assert.match(AGENT_REASON_MESSAGES.local_model_no_tools, /cannot use tools/, 'main envelope carries the sentence for that reason');
+  // The vendor runtime's "unsupported" is untouched: still a program version.
+  const c = await world();
+  await grant(c);
+  c.st.runtimes = [cliRuntime({ health: { ok: false, reason: 'version_unsupported', detail: 'old' } }), localRuntime()];
+  c.reprobe();
+  assert.throws(() => c.start(), (e) => e.detail.reason === 'runtime_version_unsupported');
+  assert.equal((await c.x.ok('nexus:platform:health')).agent.state, 'version_unsupported');
+  assert.equal('problem' in (await c.x.ok('nexus:platform:health')).agent, false);
 });

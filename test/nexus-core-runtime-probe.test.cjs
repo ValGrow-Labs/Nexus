@@ -12,6 +12,8 @@
 //   RP10 the sandbox result is never held back by a slow or hung engine check
 //   RP11 single flight: concurrent refreshes run the engine once
 //   RP12 `auth status` is spawned once per refresh (the real adapter on its stand-in executable)
+//   RP13 (C1) `kinds`: only the named adapters are described, checked and set up (no proxy, process or request for any other), the others
+//        are absent; cache and single flight per kind set; `parseProbeKinds` (a malformed kinds checks NOTHING); through RunnerCore
 // Plain node: no Docker, no Electron, no database, no network (the engine here is a fake adapter object).
 const test = require('node:test');
 const { after } = require('node:test');
@@ -215,7 +217,8 @@ test('RP9 the scheduler\'s own probe (no flag) never runs an adapter: no proxy, 
   const core = fs.readFileSync(path.join(ROOT, 'src/runner/core.ts'), 'utf8');
   assert.match(core, /case 'probe': return await this\.onProbe\(m\.runtimes === true, /);
   assert.equal((core.match(/this\.probeRuntimes\(/g) || []).length, 1);
-  assert.match(core, /if \(withRuntimes && this\.deps\.runtimeProbe\) \{/);
+  // C1: and only for a well-formed `kinds` (a malformed one checks nothing).
+  assert.match(core, /if \(withRuntimes && this\.deps\.runtimeProbe && only !== null\) \{/);
 });
 
 test('RP10 the sandbox result is never held back by the engine check: a hung adapter delays only the second message, which then says the check timed out', async () => {
@@ -350,6 +353,99 @@ test('RP8 the runner entry reports the real adapters (nothing is run when they a
   const core = fs.readFileSync(path.join(ROOT, 'src/runner/core.ts'), 'utf8');
   assert.equal((core.match(/this\.probeRuntimes\(/g) || []).length, 1, 'one place asks for the engine check');
   assert.equal((core.match(/runtimes: \[\] \}\);/g) || []).length, 1, 'the sandbox probe answers with no runtimes');
+});
+
+// ---------- RP13: the probe is per kind (C1) ----------
+
+/** A recording stand-in for a second runtime (a local server): the same shape as `adapter`, with its own kind. */
+function other(kind, o = {}) {
+  const a = adapter({ hosts: o.hosts ?? [{ host: '127.0.0.1', port: 11434 }] });
+  a.kind = kind;
+  return a;
+}
+const probeOf = (list, px, extra = {}) => new RuntimeProber({ adapters: () => list, now: extra.now ?? (() => Date.now()), startProxy: px.startProxy, imagesDir: IMAGES, ...extra });
+
+test('RP13 kinds: only the named adapter is described, checked and set up; the other never is, and gets no proxy', async () => {
+  const cli = adapter(); const lm = other('local-model'); const px = fakeProxies();
+  // Named: local-model only. The CLI adapter is not touched in ANY way.
+  const out = await probeOf([cli, lm], px).probe(null, ['local-model']);
+  assert.deepEqual(out.map((e) => e.kind), ['local-model']);
+  assert.deepEqual(cli.calls, [], 'the other adapter was asked nothing: no describe, no health, no setup, no check');
+  assert.ok(lm.calls.length > 0);
+  assert.equal(px.started.length, 1, 'one proxy, for the named adapter only');
+  // The other way round, under a live consent.
+  const cli2 = adapter(); const lm2 = other('local-model'); const px2 = fakeProxies();
+  const out2 = await probeOf([cli2, lm2], px2).probe(HASH, ['cli-agent']);
+  assert.deepEqual(out2.map((e) => e.kind), ['cli-agent']);
+  assert.deepEqual(lm2.calls, []);
+  assert.deepEqual(px2.started.map((p) => p.opts.allow), [HOSTS], 'the named adapter still runs under the consent it was given');
+  // Absent: every adapter, in the adapters' order (today's behaviour).
+  const all = await probeOf([adapter(), other('local-model')], fakeProxies()).probe(null);
+  assert.deepEqual(all.map((e) => e.kind), ['cli-agent', 'local-model']);
+  // Two kinds named: both, nothing else; a kind no adapter has is simply absent.
+  const two = await probeOf([adapter(), other('local-model')], fakeProxies()).probe(null, ['local-model', 'cli-agent', 'nothing-here']);
+  assert.deepEqual(two.map((e) => e.kind), ['cli-agent', 'local-model']);
+  assert.deepEqual(await probeOf([adapter()], fakeProxies()).probe(null, ['nothing-here']), []);
+});
+
+test('RP13b the cache and the single flight are per consent AND kind set: a probe for one kind never serves another', async () => {
+  const cli = adapter(); const lm = other('local-model');
+  const p = probeOf([cli, lm], fakeProxies(), { ttlMs: 60_000 });
+  await p.probe(null, ['local-model']);
+  const r = await p.probe(null, ['cli-agent']);
+  assert.deepEqual(r.map((e) => e.kind), ['cli-agent'], 'the cached answer for local-model is not served for cli-agent');
+  assert.ok(cli.calls.some((c) => c[0] === 'health' || c[0] === 'setup'));
+  // The same kind set twice inside the TTL is one run.
+  const runs = () => lm.calls.filter((c) => c[0] === 'describe').length;
+  await p.probe(null, ['local-model']);
+  const n = runs();
+  await p.probe(null, ['local-model']);
+  assert.equal(runs(), n, 'a repeat of the same consent and kind set is a cache hit');
+  // Concurrent probes for different kind sets each get only their own kinds.
+  const p2 = probeOf([adapter(), other('local-model')], fakeProxies(), { ttlMs: 1 });
+  const [a, b] = await Promise.all([p2.probe(null, ['cli-agent']), p2.probe(null, ['local-model'])]);
+  assert.deepEqual([a.map((e) => e.kind), b.map((e) => e.kind)], [['cli-agent'], ['local-model']]);
+});
+
+test('RP13c parseProbeKinds: one to four kind ids are accepted (de-duplicated); anything else is null (check nothing), absent is undefined', () => {
+  const { parseProbeKinds, PROBE_KINDS_MAX, PROBE_KIND_RE } = loadTs('src/shared/nexus/runnerProtocol.ts');
+  assert.equal(PROBE_KINDS_MAX, 4);
+  assert.equal(parseProbeKinds(undefined), undefined);
+  assert.deepEqual(parseProbeKinds(['local-model']), ['local-model']);
+  assert.deepEqual(parseProbeKinds(['cli-agent', 'local-model', 'cli-agent']), ['cli-agent', 'local-model']);
+  assert.deepEqual(parseProbeKinds(['a', 'b', 'c', 'd']), ['a', 'b', 'c', 'd']);
+  assert.deepEqual(parseProbeKinds(['a.b_c-d']), ['a.b_c-d']);
+  const bad = [[], ['a', 'b', 'c', 'd', 'e'], null, 'local-model', {}, 7, [''], ['Local'], ['1abc'], ['-a'], ['a'.repeat(33)], ['a b'], ['a/b'], ['a', 7], [null], [['a']], ['a\n']];
+  for (const b of bad) assert.equal(parseProbeKinds(b), null, JSON.stringify(b));
+  assert.equal(PROBE_KIND_RE.test('a'.repeat(32)), true);
+});
+
+test('RP13d through RunnerCore: kinds scopes the engine check, a malformed kinds checks nothing, and the result still passes main\'s parser', async () => {
+  const cli = adapter(); const lm = other('local-model'); const px = fakeProxies();
+  const w = await coreWorld({ runtimeProbe: { adapters: () => [cli, lm], startProxy: px.startProxy, ttlMs: 1 } });
+  const r = await w.flaggedProbe({ kinds: ['local-model'] });
+  assert.ok(pm(r), 'main\'s parser accepts the result');
+  assert.deepEqual(r.runtimes.map((e) => e.kind), ['local-model']);
+  assert.deepEqual(cli.calls, [], 'the vendor adapter was never asked anything');
+  await new Promise((x) => setTimeout(x, 5));
+  const lmBefore = lm.calls.length;
+  const r2 = await w.flaggedProbe({ kinds: ['cli-agent'], consentHostsSha256: HASH });
+  assert.deepEqual(r2.runtimes.map((e) => e.kind), ['cli-agent']);
+  assert.equal(lm.calls.length, lmBefore, 'the local adapter was not asked for a probe naming the other kind');
+  await new Promise((x) => setTimeout(x, 5));
+  const r3 = await w.flaggedProbe();
+  assert.deepEqual(r3.runtimes.map((e) => e.kind), ['cli-agent', 'local-model'], 'no kinds: every adapter, as before');
+  // A malformed filter must not widen the check: nothing is run and no runtimes message follows.
+  const ncli = cli.calls.length; const nlm = lm.calls.length; const nWith = w.withRuntimes().length;
+  for (const bad of [[], ['A'], 'cli-agent', ['a', 'b', 'c', 'd', 'e'], [7]]) {
+    const n = w.results().length;
+    w.send({ op: 'probe', runtimes: true, kinds: bad });
+    await until(() => w.results().length > n);
+    await new Promise((x) => setTimeout(x, 30));
+  }
+  assert.equal(cli.calls.length, ncli);
+  assert.equal(lm.calls.length, nlm);
+  assert.equal(w.withRuntimes().length, nWith, 'a malformed kinds produced no runtimes message');
 });
 
 void startHostEgressProxy;

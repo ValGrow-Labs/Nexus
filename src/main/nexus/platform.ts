@@ -359,6 +359,16 @@ export function createNexusPlatform(db: Database.Database, opts?: NexusPlatformO
       return hostsSha256(hosts) === c.hostsSha256 ? c.hostsSha256 : null;
     } catch { return null; }
   };
+  /**
+   * The runtime kinds a flagged probe may ask the runner to check: the live consent's own kind, when one exists. The user gave
+   * permission for ONE runtime, so a refresh never runs or contacts another (with a local-model permission the vendor CLI is not
+   * run; with a CLI permission the local server is not contacted). With no live consent there is nothing to scope to: no `kinds`
+   * is sent and the runner checks every adapter under the deny-all proxy, which is what the setup sheet needs to offer the choice
+   * between runtimes (and what a user who never chose a runtime has always had). Never throws.
+   */
+  const consentKinds = (): string[] | null => {
+    try { const k = budget?.live()?.runtimeKind; return typeof k === 'string' && k !== '' ? [k] : null; } catch { return null; }
+  };
   const sendRuntimeProbe = (): boolean => {
     if (!probePort) return false;
     try { probePort.send({ op: 'probe', runtimes: true }); return true; } catch { return false; }
@@ -391,7 +401,11 @@ export function createNexusPlatform(db: Database.Database, opts?: NexusPlatformO
         send: (m) => {
           if (m.op === 'probe') {
             // Only the runtime refresh may ask the runner to check the engine, and only with agents on; the hash rides on that probe alone.
-            if (m.runtimes === true && runtimeCache) { const h = consentHash(); port.send(h ? { op: 'probe', runtimes: true, consentHostsSha256: h } : { op: 'probe', runtimes: true }); return; }
+            if (m.runtimes === true && runtimeCache) {
+              const h = consentHash(); const kinds = consentKinds();
+              port.send({ op: 'probe', runtimes: true, ...(h ? { consentHostsSha256: h } : {}), ...(kinds ? { kinds } : {}) });
+              return;
+            }
             port.send({ op: 'probe' });
             return;
           }
