@@ -16,6 +16,13 @@
 //   (playTool / playExec build the JUnit by regex over test titles in the staged tree; `[fails]` is not a product behaviour): what they
 //   prove is that the platform runs the check on the change set's own head commit and judges by the report. A real node:test or pytest
 //   run is XA6 of the gated suite only, and that has not been run.
+// - the LOCAL-MODEL variant (`flowWorld({ runtime: 'local-model', modelUrl, model })`): the model is the REAL local-model adapter
+//   (src/runner/runtimes/localModel/, built by runtimeFor as in production: no scriptFor), talking to `modelUrl`, a loopback model
+//   server (test/helpers/mockOllama.cjs in the tests, the real server only in the showcase). The runner's probe reports that adapter
+//   with its destination `127.0.0.1:<port of modelUrl>`; the consent is granted through #51 for that kind with `model`, so the plan
+//   carries the model and the loopback endpoint, and the adapter's own destination rule applies unchanged (no test seam in the runner).
+//   Everything else (main, the real runner core, the MCP server, the fake or real Docker) is as above. `w.bearers` collects every
+//   bearer the adapter sent to the MCP server (an observer on its fetch), for the no-leak scans.
 // Time is a fake clock (main's `now` and the runner's timers); `until` advances it a second at a time and runs the
 // scheduler's tick, while real I/O (git, files) is awaited between steps (the runner's own real I/O is counted).
 const fs = require('node:fs');
@@ -40,6 +47,7 @@ const { newId } = loadTs('src/main/nexus/db/ids.ts');
 const { resolveDataHome } = loadTs('src/main/nexusExec/dataHome.ts');
 const { loadImageProfiles } = loadTs('src/main/nexusExec/profiles.ts');
 const { RunnerCore } = loadTs('src/runner/core.ts');
+const { createLocalModelAdapter } = loadTs('src/runner/runtimes/localModel/adapter.ts');
 const { repositoryCheck, resolveCommit } = loadTs('src/main/git.ts');
 const { confirmMergeWith } = loadTs('src/main/nexusExec/mergeDialog.ts');
 const { STEP_SEPARATOR } = loadTs('src/main/nexus/exec/planBuilder.ts');
@@ -239,6 +247,12 @@ async function flowWorld(o = {}) {
   // `o.real` (the gated real-Docker suite, test/nexus-exec-agent.test.cjs): the REAL Docker driver, the real clock and real timers.
   // Nothing else changes: the same main, the same runner core, ScriptedRuntime for the model. `until` then waits in real time.
   const real = o.real === true;
+  // `o.runtime`: 'local-model' (see the header); `o.modelUrl`: the loopback model server; `o.model`: the model the user chooses at consent.
+  const lm = o.runtime === 'local-model';
+  if (lm && (typeof o.modelUrl !== 'string' || typeof o.model !== 'string')) throw new Error("flowWorld({ runtime: 'local-model' }) needs modelUrl and model");
+  const lmPort = lm ? Number(new URL(o.modelUrl).port) : 0;
+  /** The user's local-server address setting as main reads it; a test may change `lmCfg.baseUrl` (the settings a user could have). */
+  const lmCfg = o.lmCfg ?? { baseUrl: lm ? `${o.modelUrl.replace(/\/+$/, '')}/v1` : null };
   const clock = o.clock ?? (real ? { get now() { return Date.now(); }, advance() {} } : new FakeClock(h.NOW + 1000));
   const file = o.reopen?.file ?? h.v6Fixture().file;
   const s = track(new PersistStore(file));
@@ -255,10 +269,13 @@ async function flowWorld(o = {}) {
   const logs = [];
   const nx = createNexusPlatform(db, { now: () => clock.now, log: (l) => logs.push(l), execution: true, agents: true, dataHome, profiles: images.profiles,
     imageContexts: images.imageContexts, acceptFsRoot, isRepository: repositoryCheck, resolveCommit, appVersion: '0.0.0-test',
-    skillsResourcesDir: path.join(ROOT, 'resources'), runtimeHealthTtlMs: 365 * 24 * 3600_000, bootId: o.bootId });
+    skillsResourcesDir: path.join(ROOT, 'resources'), runtimeHealthTtlMs: 365 * 24 * 3600_000, bootId: o.bootId,
+    // The user's existing local-server setting (main's reader: localModelSettings.ts): the address of the model server a turn is sent to.
+    ...(lm ? { localModelConfig: () => ({ providerBaseUrls: { opencode: lmCfg.baseUrl } }) } : {}) });
   const startup = nx.startup();
   const p = { store: s, file, db, nx, logs, userData, dataHome, roots, images };
-  const w = { kind: real ? 'agent-flow-real' : 'agent-flow', real, clock, runnerLogs: [], played: [], execs: [], startup, scripts: [], scriptsSeen: [], holdGate: Promise.resolve() };
+  const w = { kind: real ? 'agent-flow-real' : 'agent-flow', real, clock, runnerLogs: [], played: [], execs: [], startup, scripts: [], scriptsSeen: [], holdGate: Promise.resolve(),
+    runtime: lm ? 'local-model' : 'scripted', model: lm ? o.model : null, modelUrl: lm ? o.modelUrl : null, bearers: o.bearers ?? [], lmCfg };
   addCommon(w, p);
   w.userData = userData; w.file = file; w.store = s;
   if (o.reopen) { w.current = o.reopen.current; w.repoDir = o.reopen.repo; }
@@ -299,8 +316,12 @@ async function flowWorld(o = {}) {
       pickPort: (() => { let n = 49200; return () => n++; })() };
     const core = new RunnerCore(b.transport, { driver, now: () => clock.now, fs: trackRealIo(fsp, io), log: (l) => w.runnerLogs.push(l),
       docker: cli, imagesDir: path.join(ROOT, 'infra', 'images'), ...fakeOnly,
-      runtimeProbe: { adapters: () => [scriptedAdapter] },
-      agentRuntime: { scriptFor: (plan) => w.nextScript(plan), ...(real ? {} : { startProxy }) } });
+      // The local-model world: the REAL adapter is what the probe reports (its destination is the model server's own loopback address)
+      // and what runtimeFor builds for the turn (consent hosts from the plan); the only observer is a fetch that notes the MCP bearer.
+      runtimeProbe: { adapters: () => (lm ? [createLocalModelAdapter({ consentedHosts: [{ host: '127.0.0.1', port: lmPort }], model: o.model })] : [scriptedAdapter]) },
+      agentRuntime: lm
+        ? { fetchImpl: (url, init) => { const a = init && init.headers && init.headers.authorization; if (typeof a === 'string' && a.startsWith('Bearer ')) w.bearers.push(a.slice(7)); return fetch(url, init); } }
+        : { scriptFor: (plan) => w.nextScript(plan), ...(real ? {} : { startProxy }) } });
     let gitRunner = core.git ?? null;
     Object.defineProperty(core, 'git', { configurable: true, enumerable: true, get: () => gitRunner, set: (v) => { gitRunner = v ? trackRealIo(v, io) : v; } });
     if (gitRunner) gitRunner = trackRealIo(gitRunner, io);
@@ -421,7 +442,7 @@ async function flowWorld(o = {}) {
   w.consent = async (caps) => {
     nx.agentProbe.refresh();
     await w.until(() => !nx.agentProbe.cache.isStale(), 'the runtime check');
-    return w.x.ok('nexus:agent:consent', { op: 'grant', ...(caps ? { caps } : {}) });
+    return w.x.ok('nexus:agent:consent', { op: 'grant', ...(lm ? { runtime: 'local-model', model: o.model } : {}), ...(caps ? { caps } : {}) });
   };
   /** #42, the user's message; the turn's worktree preparation, approval A3 and lease follow on their own. */
   w.start = async (message, x = {}) => w.x.ok('nexus:agent:start', { projectId: w.PROJECT, workspaceId: w.WORKSPACE, sessionId: x.sessionId ?? null,
@@ -533,7 +554,7 @@ async function flowWorld(o = {}) {
     const old = { core: w.core, bridge: w.bridge };
     w.bridge.close();
     try { s.close(); } catch { /* closed */ }
-    const w2 = await flowWorld({ clock, driver, real, reopen: { file, userData, roots, repo: w.repoDir, current: w.current }, ...o2 });
+    const w2 = await flowWorld({ clock, driver, real, runtime: o.runtime, modelUrl: o.modelUrl, model: o.model, bearers: w.bearers, lmCfg, reopen: { file, userData, roots, repo: w.repoDir, current: w.current }, ...o2 });
     w2.old = old;
     w2.extraCores.push(old);
     w2.played = w.played; w2.execs = w.execs;
