@@ -40,7 +40,7 @@ if (realDockerOrSkip()) {
     const ex = w.execResults(t.jobId);
     assert.equal(ex.length, 1, JSON.stringify(ex));
     assert.equal(ex[0].exit, 0, JSON.stringify(ex[0]));
-    assert.match(ex[0].stdout, /ok d+ - exports one line per row/); assert.match(ex[0].stdout, /# fail 0/);
+    assert.match(ex[0].stdout, /ok \d+ - exports one line per row/); assert.match(ex[0].stdout, /# fail 0/);
     assert.match(toolText(w, 2), /exports one line per row/, 'the model was handed the real output of its own command');
     const [cs] = w.changeSetsOf(t.jobId);
     assert.ok(cs, 'changeset_register registered a change set');
