@@ -72,6 +72,7 @@ import { startHostEgressProxy } from './hostEgressProxy';
 import type { AgentRuntime } from '../shared/nexus/runtime';
 import type { ScriptedStep } from './runtimes/scripted';
 import { runtimeFor } from './runtimes/registry';
+import { LOCAL_MODEL_KIND, loopbackEndpoint, normalizeLoopbackHost } from '../shared/nexus/localModel';
 import { RuntimeProber, type RuntimeProbeAdapter } from './runtimes/probe';
 import { DEPS_VOLUME_RE, DockerError, SpecError } from './sandbox/dockerDriver';
 import type { DockerRunner } from './sandbox/dockerCli';
@@ -771,6 +772,12 @@ stderr: ${r.stderr}` : ''}`
       if (!Array.isArray(tools) || tools.length > MCP_TOOLS.length || new Set(tools).size !== tools.length
         || tools.some((t) => typeof t !== 'string' || !MCP_TOOLS.some((d) => d.name === t))) return 'the agent plan names a tool this runner does not serve';
     }
+    // The local-model runtime's endpoint: only for that runtime, a loopback address, and one of the consented hosts (never a remote one).
+    if (req.endpoint !== undefined) {
+      const ep = loopbackEndpoint(req.endpoint);
+      if (plan.runtime.kind !== LOCAL_MODEL_KIND || ep === null
+        || !plan.egress.allow.some((h) => isObj(h) && normalizeLoopbackHost(h.host) === ep.host && h.port === ep.port)) return 'the runtime endpoint is not the consented loopback address';
+    }
     return null;
   }
 
@@ -1163,6 +1170,7 @@ stderr: ${r.stderr}` : ''}`
         egressProxyUrl: () => egress.url,
         caps: plan.caps,
         mcpTools: plan.mcpTools,
+        consentedHosts: plan.egress?.allow,
         steps: this.deps.agentRuntime?.scriptFor?.(plan) ?? [],
         fetchImpl: this.deps.agentRuntime?.fetchImpl,
         agentBin: this.deps.agentRuntime?.agentBin,

@@ -1,9 +1,11 @@
 /**
- * The agent runtime registry (B2b Tasks 11 and 13): picks the `AgentRuntime` for one turn by its `RuntimeKind`. Two kinds
- * exist in this build: `scripted` (in-process, no child process: src/runner/runtimes/scripted.ts) and `cli-agent` (the
+ * The agent runtime registry (B2b Tasks 11 and 13): picks the `AgentRuntime` for one turn by its `RuntimeKind`. Three kinds
+ * exist in this build: `scripted` (in-process, no child process: src/runner/runtimes/scripted.ts), `cli-agent` (the
  * vendor-neutral kind every real engine adapter runs under: src/runner/runtimes/cliAgent/, the engine's own native
  * executable run on the host, confined to the turn's own worktree by policy, every actual command run through
- * `sandbox_exec` into the container).
+ * `sandbox_exec` into the container) and `local-model` (src/runner/runtimes/localModel/: a tool-calling loop in the runner
+ * process against a model server on this machine, reached over loopback only; its file tools are confined to the worktree and
+ * every command still runs through `sandbox_exec`).
  *
  * This file spawns nothing. The `cli-agent` adapter is the one spawn site for the engine: it resolves the native
  * executable itself (production never sets `agentBin`), builds the engine's environment from an allow-list (never the
@@ -16,10 +18,11 @@
 import type { AgentRuntime, RuntimeKind } from '../../shared/nexus/runtime';
 import { CLI_AGENT_KIND, createCliAgentAdapter, type Preflight, type TurnCaps } from './cliAgent/adapter';
 import { sanitizeOverlay } from './cliAgent/testSeam';
+import { LOCAL_MODEL_KIND, createLocalModelAdapter } from './localModel/adapter';
 import type { RuntimeProbeAdapter } from './probe';
 import { SCRIPTED_KIND, ScriptedRuntime, type ScriptedStep } from './scripted';
 
-export { CLI_AGENT_KIND, SCRIPTED_KIND };
+export { CLI_AGENT_KIND, LOCAL_MODEL_KIND, SCRIPTED_KIND };
 
 /** What one turn needs to build its runtime: the bearer for MCP calls, and (kind-specific) how to reach the engine. */
 export interface RuntimeTurnContext {
@@ -45,6 +48,8 @@ export interface RuntimeTurnContext {
   /** `cli-agent` only: called once the process is gone (it exited, or was killed): its pidfile is forgotten, never killed later. */
   onGone?: (pid: number) => void | Promise<void>;
   taskkillBin?: string;
+  /** `local-model` only: the hosts the live consent granted (the plan's `egress.allow`); the request's endpoint must be one of them. Without it only the default loopback address is consented. */
+  consentedHosts?: readonly { host: string; port: number }[];
 }
 
 /** The version and flag check of an executable, kept across turns (keyed by the executable, its size and mtime). */
@@ -61,10 +66,18 @@ export function runtimeFor(kind: RuntimeKind, ctx: RuntimeTurnContext): AgentRun
       taskkillBin: ctx.taskkillBin, preflightCache: PREFLIGHT_CACHE
     });
   }
+  if (kind === LOCAL_MODEL_KIND) {
+    return createLocalModelAdapter({
+      token: ctx.token, mcpUrl: ctx.mcpUrl, consentedHosts: ctx.consentedHosts, caps: ctx.caps, mcpTools: ctx.mcpTools, fetchImpl: ctx.fetchImpl
+    });
+  }
   throw new Error(`no runtime is registered for ${String(kind)}`);
 }
 
-/** The adapters the runner's probe reports (production: the `cli-agent` adapter, sharing the preflight cache with turns). Runs nothing by itself. */
+/**
+ * The adapters the runner's probe reports (production: the `cli-agent` adapter, sharing the preflight cache with turns, and the
+ * `local-model` adapter, which only reads from the loopback model server when asked). Runs nothing by itself.
+ */
 export function probeAdapters(): RuntimeProbeAdapter[] {
-  return [createCliAgentAdapter({ preflightCache: PREFLIGHT_CACHE })];
+  return [createCliAgentAdapter({ preflightCache: PREFLIGHT_CACHE }), createLocalModelAdapter()];
 }

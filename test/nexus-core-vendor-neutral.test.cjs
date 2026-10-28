@@ -99,6 +99,8 @@ test('V4 the runner protocol accepts any well-formed runtime kind and favours no
  * execution wiring and the renderer is scanned (code and comments); the ONLY hits allowed are listed here, each with its exact
  * count, so any NEW engine word anywhere fails this test (and a removed one asks for the entry to be removed).
  * Not scanned: src/runner/runtimes/cliAgent/** (the one adapter that names the engine), which is the boundary itself.
+ * The local-model adapter (src/runner/runtimes/localModel/**) is scanned like everything else: its only engine word is the agent CLI's
+ * per-worktree `.claude` folder, which its file tools and prompt refuse to touch (the same reason as the entries below).
  */
 const V5_DIRS = ['src/main/nexus', 'src/main/nexusIpc', 'src/main/nexusExec', 'src/runner', 'src/renderer/src/nexus', 'src/shared/nexus'];
 const V5_SKIP = (rel) => rel.startsWith('src/runner/runtimes/cliAgent/') || rel === 'src/shared/nexus/runtime.ts';
@@ -118,6 +120,13 @@ const V5_ALLOWED = {
     '8077bba16c26f4c0',  // /** A `.claude` path segment at any depth (case-insensitive: the folder name is 
     '59d5d704efbd649a',  // export const AGENT_CONFIG_SEGMENT_RE = /(?:^|\/)\.claude[. ]*(?:\/|$)/i;
     '6c88bf0372babb77',  // // The agent CLI's own per-worktree settings folder (`.claude/`): never part of 
+  ],
+  'src/runner/runtimes/localModel/fileTools.ts': [
+    'b447b0ed17fe9d6d',  // *   `.pypirc`), a `.claude*` entry (the agent CLI's own per-worktree folder) or 
+    'cc568571cd91d200',  // const CONTROL_ENTRY_RE = /^(?:\.claude|\.nexus|nexus\.)/i;
+  ],
+  'src/runner/runtimes/localModel/prompt.ts': [
+    '879757e61d113841',  // '- Do not touch .git, .env files, keys, or anything under .claude or .nexus.',
   ],
   'src/runner/gitWrite.ts': [
     'e86d7c5f197d5a45',  // * `<worktree>/.claude/` (Task 0), which must never be staged or committed.

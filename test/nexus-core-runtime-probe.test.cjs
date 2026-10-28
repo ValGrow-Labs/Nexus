@@ -339,9 +339,9 @@ test('RP8 the runner entry reports the real adapters (nothing is run when they a
   cp.spawn = function spy() { spawned++; return real.apply(this, arguments); };
   try {
     const list = probeAdapters();
-    assert.equal(list.length, 1);
-    assert.equal(list[0].kind, KIND);
-    for (const m of ['describe', 'health', 'setup']) assert.equal(typeof list[0][m], 'function', m);
+    // Two adapters since the local-model runtime (kind `local-model`, src/runner/runtimes/localModel): the engine CLI first.
+    assert.deepEqual(list.map((a) => a.kind), [KIND, 'local-model']);
+    for (const a of list) for (const m of ['describe', 'health', 'setup']) assert.equal(typeof a[m], 'function', m);
   } finally { cp.spawn = real; }
   assert.equal(spawned, 0, 'building the probe adapters starts no process');
   // The engine's raw status output never leaves the adapter: the runtimes entry holds a closed shape only.
