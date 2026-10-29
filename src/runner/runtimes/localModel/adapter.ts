@@ -26,7 +26,7 @@ import { DEFAULT_ENDPOINT, ENDPOINT_NOT_CONSENTED, ENDPOINT_NOT_LOOPBACK, loopba
 import { DEFAULT_FILE_LIMITS, FILE_TOOL_DEFS, FILE_TOOL_NAMES, FileTools, type FileToolLimits } from './fileTools';
 import { DEFAULT_TUNING, runLoop, type LoopTuning } from './loop';
 import { McpClient, redactToken } from './mcpClient';
-import { systemPrompt, toolDescription, userMessage } from './prompt';
+import { namedFiles, systemPrompt, toolDescription, userMessage } from './prompt';
 
 export const LOCAL_MODEL_KIND = 'local-model' as RuntimeKind;
 /** The runtime's display name: shown on the setup row only (D-B9). */
@@ -42,6 +42,12 @@ const PROBE_TOOL_CHECKS = 6;
 const PROBE_LISTED_MODELS = 16;
 const CONTEXT_MAX_BYTES = 24 * 1024;
 const SKILLS_MAX_BYTES = 16 * 1024;
+/**
+ * The runner tools a small model is offered by default: the ones the work loop needs. The token's other tools (artifact reads, job
+ * status and logs, job and review requests, requirement drafts) are only a distraction to a model of a few billion parameters (it
+ * spends its turns calling them), so they are offered only with `allTools`.
+ */
+export const CORE_MCP_TOOLS: readonly string[] = Object.freeze(['context_get', 'sandbox_exec', 'changeset_register']);
 
 /** The turn's caps the adapter enforces (the same shape the other real adapter takes; only tokens and tool calls apply: a local model costs nothing). */
 export interface TurnCaps { turnTokens?: number; turnUsdCents?: number; dayRemainingUsdCents?: number; toolCalls?: number }
@@ -56,6 +62,8 @@ export interface LocalModelAdapterOptions {
   caps?: TurnCaps;
   /** The Nexus MCP tools this turn may call (default: every tool the runner lists; main still checks the claims). */
   mcpTools?: readonly string[];
+  /** Offer every allowed runner tool, not just the core set (default false: a small model does better with a focused tool list). */
+  allTools?: boolean;
   /** The model the probe checks (default: any installed model that supports tools is enough for `ok`). */
   model?: string;
   /** TEST SEAM: the HTTP client for MCP calls (default: the global `fetch`). */
@@ -213,16 +221,20 @@ export class LocalModelAdapter implements AgentRuntime {
       if (signal.aborted) { yield { t: 'run.cancelled', at: at() }; return; }
       if (!listed) { yield failed('runtime_error', 'the Nexus MCP server did not answer'); return; }
       const allow = this.o.mcpTools ? new Set(this.o.mcpTools) : null;
-      const mcpTools = listed.filter((t) => !FILE_TOOL_NAMES.includes(t.name) && (!allow || allow.has(t.name)));
+      const mcpTools = listed.filter((t) => !FILE_TOOL_NAMES.includes(t.name) && (!allow || allow.has(t.name)) && (this.o.allTools === true || CORE_MCP_TOOLS.includes(t.name)));
       const mcpSchemas = new Map(mcpTools.map((t) => [t.name, t.inputSchema] as const));
       const tools = [...FILE_TOOL_DEFS, ...mcpTools.map((t) => ({ type: 'function' as const,
         function: { name: t.name, description: toolDescription(t.name, t.description), parameters: t.inputSchema } }))];
 
       const [context, skills] = await Promise.all([readHead(req.context.file, CONTEXT_MAX_BYTES), readHead(path.join(req.configDir, 'skills.md'), SKILLS_MAX_BYTES)]);
       const scrubbed = (s: string | null): string | null => (s === null ? null : redactToken(s, token));
+      // The files the task names that are not in the project yet: what the model is told to write first, and what the loop checks at the end.
+      const files = new FileTools(req.worktree.hostPath, { ...DEFAULT_FILE_LIMITS, ...this.o.fileLimits });
+      const newFiles: string[] = [];
+      for (const f of namedFiles(req.message)) if (!(await files.exists(f))) newFiles.push(f);
       const messages = [
         { role: 'system' as const, content: systemPrompt({ hasSandbox: mcpSchemas.has('sandbox_exec'), hasChangeset: mcpSchemas.has('changeset_register') }) },
-        { role: 'user' as const, content: userMessage({ message: redactToken(req.message, token), context: scrubbed(context), skills: scrubbed(skills),
+        { role: 'user' as const, content: userMessage({ message: redactToken(req.message, token), context: scrubbed(context), skills: scrubbed(skills), newFiles,
           hasSandbox: mcpSchemas.has('sandbox_exec'), hasChangeset: mcpSchemas.has('changeset_register') }) }
       ];
 
@@ -233,7 +245,7 @@ export class LocalModelAdapter implements AgentRuntime {
       this.note(`local model turn: ${mcpTools.length} runner tool(s) offered`);
       yield* runLoop({
         req, signal: ac.signal, endedBy: () => why, target, model: req.model.model, messages, tools, mcpSchemas,
-        files: new FileTools(req.worktree.hostPath, { ...DEFAULT_FILE_LIMITS, ...this.o.fileLimits }), mcp, token,
+        files, taskFiles: newFiles, mcp, token,
         caps: { turnTokens: this.o.caps?.turnTokens, toolCalls: this.o.caps?.toolCalls },
         tuning: { ...DEFAULT_TUNING, ...this.o.tuning }, now: () => at(), deadline
       });

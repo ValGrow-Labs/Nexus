@@ -22,10 +22,10 @@
 import type { RunRequest, RuntimeEvent } from '../../../shared/nexus/runtime';
 import { chat, type ChatMessage, type ChatTool, type ClientFailure } from './client';
 import type { Target } from './endpoint';
-import { FILE_TOOL_NAMES, type FileTools } from './fileTools';
+import { FILE_TOOL_NAMES, checkRelPath, type FileTools } from './fileTools';
 import { McpClient, redactToken } from './mcpClient';
-import { NOTE_TEXT_CALL, NUDGE_EMPTY, NUDGE_NO_TOOLS, NUDGE_REGISTER } from './prompt';
-import { canonicalToolName, coerceArgs, coerceBySchema, recoverTextCalls } from './toolCalls';
+import { HINT_FINISH, HINT_READ_FIX, HINT_RUN, NOTE_TEXT_CALL, NUDGE_BAD_CALL, NUDGE_EMPTY, NUDGE_FINISH, NUDGE_FORMAT, NUDGE_REGISTER, NUDGE_RUN, hintFix, hintMissing, nudgeFix, nudgeMissing, nudgeNoTools } from './prompt';
+import { canonicalToolName, coerceArgs, coerceBySchema, looksLikeCall, recoverTextCalls } from './toolCalls';
 
 /** The most tool calls any turn may make, whatever its cap says. */
 export const MAX_TOOL_CALLS = 200;
@@ -36,6 +36,8 @@ const REPEAT_FAIL_ABORT = 5;
 const REPEAT_SAME_ABORT = 6;
 const MAX_CALLS_PER_REPLY = 8;
 const MAX_NUDGES = 2;
+/** Every nudge of a turn together (each kind is also limited to MAX_NUDGES until the model makes progress). */
+const MAX_NUDGES_TOTAL = 10;
 const DELTA_MAX_BYTES_PER_TURN = 256 * 1024;
 const REF_RE = /^[A-Za-z0-9_.:-]{1,128}$/;
 
@@ -46,9 +48,11 @@ export interface LoopTuning {
   chatMaxBytes: number;
   /** The most characters of one tool result given back to the model (a longer one keeps its start and its end). */
   toolResultMaxChars: number;
+  /** The most characters of a command's output (each of stdout and stderr) given back to the model. */
+  execOutputMaxChars: number;
 }
 export const DEFAULT_TUNING: Readonly<LoopTuning> = Object.freeze({
-  numCtx: 16384, numPredict: 4096, chatTimeoutMs: 15 * 60_000, chatMaxBytes: 4 * 1024 * 1024, toolResultMaxChars: 16_000
+  numCtx: 16384, numPredict: 4096, chatTimeoutMs: 15 * 60_000, chatMaxBytes: 4 * 1024 * 1024, toolResultMaxChars: 6_000, execOutputMaxChars: 3_500
 });
 
 export interface LoopDeps {
@@ -64,6 +68,8 @@ export interface LoopDeps {
   /** The runner's tools, by name, with their argument schemas (the file tools are not here). */
   mcpSchemas: ReadonlyMap<string, unknown>;
   files: FileTools;
+  /** The files the task names that did not exist when it started: the turn is not done while one is unwritten. */
+  taskFiles: readonly string[];
   mcp: McpClient | null;
   token: string;
   caps: { turnTokens?: number; toolCalls?: number };
@@ -81,6 +87,72 @@ export function clip(text: string, max: number): string {
   const head = Math.floor(max * 0.4);
   const tail = max - head;
   return `${text.slice(0, head)}\n...[${text.length - max} characters omitted]...\n${text.slice(text.length - tail)}`;
+}
+
+/** Lines of a test runner's output a small model gains nothing from (YAML fences, timings, bookkeeping counters, the runner's own stack frames). */
+const NOISE_LINE_RES: readonly RegExp[] = [
+  /^\s*(?:---|\.\.\.)\s*$/,
+  /^\s*(?:duration_ms|failureType): .*$/,
+  /^\s*type: 'suite'\s*$/,
+  /^\s*code: 'ERR_TEST_FAILURE'\s*$/,
+  /^# (?:suites|cancelled|skipped|todo|duration_ms) .*$/,
+  /^\s*(?:async )?(?:Test|Suite|process|Module\w*|Object)\.\S+(?: \(.*\))?\s*$/,
+  /^#?\s+at .*node:internal.*$/
+];
+/** What a FAILED run need not repeat: the passing tests and the TAP bookkeeping (the failing ones, with their errors, stay). */
+const PASSING_LINE_RES: readonly RegExp[] = [/^\s*ok \d+ - .*$/, /^\s*# Subtest: .*$/, /^\s*\d+\.\.\d+\s*$/, /^TAP version \d+\s*$/, /^\s*(?:code|name|operator): '.*'\s*$/];
+const isNoise = (l: string, failed: boolean): boolean => NOISE_LINE_RES.some((re) => re.test(l)) || (failed && PASSING_LINE_RES.some((re) => re.test(l)));
+
+/**
+ * A `sandbox_exec` result for a small model: the runner's answer is JSON (`{exit:{code}, stdout, stderr, truncated}`) whose output is
+ * one long escaped string; it is given back as plain lines, test-runner noise dropped and each stream cut to what a small context
+ * holds (start and end kept). `code` is the exit code, or null when the answer is not that shape (the text is then given as it is).
+ */
+export function renderExec(text: string, maxChars: number): { text: string; code: number | null; where: string | null; failing: string[] } {
+  let v: unknown;
+  try { v = JSON.parse(text); } catch { return { text, code: null, where: null, failing: [] }; }
+  if (typeof v !== 'object' || v === null) return { text, code: null, where: null, failing: [] };
+  const o = v as { exit?: unknown; stdout?: unknown; stderr?: unknown; truncated?: unknown };
+  const exit = typeof o.exit === 'number' ? o.exit : (typeof o.exit === 'object' && o.exit !== null ? (o.exit as { code?: unknown }).code : undefined);
+  const code = typeof exit === 'number' && Number.isInteger(exit) ? exit : null;
+  const failed = code !== null && code !== 0;
+  const tidy = (x: unknown): string => (typeof x === 'string' ? x.split('\n').filter((l) => !isNoise(l, failed)).join('\n').trim() : '');
+  const out = tidy(o.stdout); const err = tidy(o.stderr);
+  const parts = [code === null ? 'The command did not finish normally.' : `exit code: ${code} (${code === 0 ? 'passed' : 'FAILED'})`];
+  if (out) parts.push(`stdout:\n${clip(out, maxChars)}`);
+  if (err) parts.push(`stderr:\n${clip(err, Math.floor(maxChars / 2))}`);
+  if (o.truncated === true) parts.push('(the output was cut)');
+  const all = `${tidy(o.stderr)}\n${tidy(o.stdout)}`;
+  return { text: parts.join('\n'), code, where: failed ? failureLocation(all) : null, failing: failed ? failingTests(all) : [] };
+}
+
+/** The names of the failing tests a TAP run lists (`not ok 4 - name`), at most four, each cut short. */
+export function failingTests(output: string): string[] {
+  const names: string[] = [];
+  for (const m of output.matchAll(/^\s*not ok \d+ - (.{1,200})$/gm)) {
+    const n = m[1].trim().slice(0, 80);
+    if (!names.includes(n)) names.push(n);
+    if (names.length >= 4) break;
+  }
+  return names;
+}
+
+const LOCATION_RE = /\/workspace\/((?:[\w.@+-]+\/)*[\w.@+-]+\.(?:[cm]?[jt]sx?|py|rb|go|rs|java)):(\d{1,6})/g;
+
+/**
+ * Where a failed run says its error is: `path line N`, for a file of the project (the command runs with the project at /workspace; a source
+ * file is preferred to a test file), or null. A small model otherwise "fixes" the file it wrote last, not the one that is wrong.
+ */
+export function failureLocation(output: string): string | null {
+  let first: string | null = null;
+  for (const m of output.matchAll(LOCATION_RE)) {
+    if (m[1].startsWith('node_modules/') || m[1].includes('/node_modules/')) continue;
+    const where = `${m[1]} line ${m[2]}`;
+    // A source file beats a test file: the test only says what it expected.
+    if (!/(?:^|\/)(?:tests?|__tests__|specs?)\/|\.(?:test|spec)\.[cm]?[jt]sx?$/.test(m[1])) return where;
+    first ??= where;
+  }
+  return first;
 }
 
 function failMessage(kind: ClientFailure, status?: number): string {
@@ -131,10 +203,20 @@ export async function* runLoop(d: LoopDeps): AsyncGenerator<RuntimeEvent> {
   let strikes = 0;
   let totalStrikes = 0;
   let nudgesNoTool = 0;
-  let nudgesRegister = 0;
   let nudgesEmpty = 0;
   let wroteFiles = false;
   let registered = false;
+  /** The last `sandbox_exec` verdict: none yet, passed (exit 0), failed, or ran with a result that was not read. */
+  let lastRun: 'none' | 'pass' | 'fail' | 'unknown' = 'none';
+  /** Where the last failed run put its first error (`src/a.js line 4`), when it said. */
+  let lastWhere: string | null = null;
+  let lastFailing: string[] = [];
+  const wrote = new Set<string>();
+  const hasSandbox = d.mcpSchemas.has('sandbox_exec');
+  const missingFiles = (): string[] => d.taskFiles.filter((f) => !wrote.has(f));
+  /** Nudges given per kind since the model last made progress (a file written or a command run); all nudges together are capped too. */
+  const nudgesByKind = new Map<string, number>();
+  let nudgesTotal = 0;
   let deltaBytes = 0;
   let lastKey = '';
   let sameRun = 0;
@@ -185,14 +267,32 @@ export async function* runLoop(d: LoopDeps): AsyncGenerator<RuntimeEvent> {
 
     if (calls.length === 0) {
       let nudge: string | null = null;
-      if (text.trim().length === 0) {
-        // An empty reply is nudged twice; after that it ends the turn when work was done, and fails it when none was.
-        if (nudgesEmpty < MAX_NUDGES) { nudge = NUDGE_EMPTY; nudgesEmpty++; }
-        else if (usage.toolCalls === 0) { yield usageEvent(); yield failed('protocol', 'the model did not produce usable tool calls'); return; }
-      } else if (usage.toolCalls === 0 && nudgesNoTool < MAX_NUDGES) { nudge = NUDGE_NO_TOOLS; nudgesNoTool++; }
-      else if (hasChangeset && wroteFiles && !registered && nudgesRegister < MAX_NUDGES) { nudge = NUDGE_REGISTER; nudgesRegister++; }
+      if (text.trim().length === 0 && nudgesEmpty >= MAX_NUDGES && usage.toolCalls === 0) { yield usageEvent(); yield failed('protocol', 'the model did not produce usable tool calls'); return; }
+      if (nudgesTotal < MAX_NUDGES_TOTAL) {
+        // What is left to do, said specifically: the files the task named, then the run, the fix, the registration. Each kind of nudge is
+        // given at most MAX_NUDGES times (an empty reply and a text-only one before any tool have their own), and all together at most MAX_NUDGES_TOTAL.
+        const missing = missingFiles();
+        if (text.trim().length > 0 && looksLikeCall(text, known) && (nudgesByKind.get('badcall') ?? 0) < MAX_NUDGES) {
+          nudge = NUDGE_BAD_CALL; nudgesByKind.set('badcall', (nudgesByKind.get('badcall') ?? 0) + 1);
+        } else if (usage.toolCalls === 0) {
+          if (text.trim().length === 0) { if (nudgesEmpty < MAX_NUDGES) { nudge = NUDGE_EMPTY; nudgesEmpty++; } }
+          else if (nudgesNoTool < MAX_NUDGES) { nudge = nudgeNoTools(missing); nudgesNoTool++; }
+        } else {
+          let kind = '';
+          if (registered) { /* the change is registered: nothing is left */ }
+          else if (missing.length > 0) { kind = 'missing'; nudge = nudgeMissing(missing); }
+          else if (wroteFiles && hasSandbox && lastRun === 'none') { kind = 'run'; nudge = NUDGE_RUN; }
+          else if (wroteFiles && lastRun === 'fail') { kind = 'fix'; nudge = nudgeFix(lastWhere, lastFailing); }
+          else if (hasChangeset && wroteFiles) { kind = 'finish'; nudge = lastRun === 'pass' ? NUDGE_FINISH : NUDGE_REGISTER; }
+          if (nudge !== null) {
+            if ((nudgesByKind.get(kind) ?? 0) >= MAX_NUDGES) nudge = null; else nudgesByKind.set(kind, (nudgesByKind.get(kind) ?? 0) + 1);
+          }
+          if (nudge === null && text.trim().length === 0 && nudgesEmpty < MAX_NUDGES) { nudge = NUDGE_EMPTY; nudgesEmpty++; }
+        }
+      }
       if (nudge === null) { yield usageEvent(); yield { t: 'run.completed', at: at(), stopReason: reply.doneReason === 'length' ? 'max_tokens' : 'end_turn' }; return; }
-      d.messages.push({ role: 'user', content: nudge });
+      nudgesTotal++;
+      d.messages.push({ role: 'user', content: `${nudge}${NUDGE_FORMAT}` });
       continue;
     }
 
@@ -240,17 +340,36 @@ export async function* runLoop(d: LoopDeps): AsyncGenerator<RuntimeEvent> {
       yield { t: 'tool.started', callId, tool: name, argsSummary: wellFormed(redactToken(summary, d.token)) };
 
       let ok: boolean; let content: string; let bytes: number;
+      /** What the model should do next, when the loop knows (appended to the result). */
+      let hint = '';
       if ((fails.get(key) ?? 0) >= REPEAT_FAIL_NOTICE) {
         ok = false; bytes = 0;
         content = `ERROR: this exact call has already failed ${fails.get(key)} times. Do not repeat it: change the arguments or try another approach.`;
       } else if (isFile) {
         const fr = await d.files.run(name, args);
-        ok = fr.ok; content = fr.text; bytes = Buffer.byteLength(fr.text, 'utf8');
+        ok = fr.ok; bytes = Buffer.byteLength(fr.text, 'utf8');
+        content = name === 'read_file' ? clip(fr.text, d.tuning.toolResultMaxChars) : fr.text;
+        if (ok && name === 'read_file' && lastRun === 'fail') hint = HINT_READ_FIX;
         if (ok && (name === 'write_file' || name === 'delete_file')) wroteFiles = true;
+        if (ok && name === 'write_file') {
+          const c = checkRelPath(args.path);
+          if (c.ok) wrote.add(c.segs.join('/'));
+          nudgesByKind.clear();
+          const missing = missingFiles();
+          hint = missing.length > 0 ? hintMissing(missing) : (hasSandbox && lastRun !== 'pass' ? HINT_RUN : '');
+        }
       } else if (d.mcp) {
         const mr = await d.mcp.call(name, args, d.signal);
         ok = mr.ok; bytes = mr.bytes;
-        content = clip(mr.text.length > 0 ? mr.text : (ok ? '(no output)' : 'ERROR: the tool failed'), d.tuning.toolResultMaxChars);
+        content = mr.text.length > 0 ? mr.text : (ok ? '(no output)' : 'ERROR: the tool failed');
+        if (ok && name === 'sandbox_exec') {
+          const r = renderExec(content, d.tuning.execOutputMaxChars);
+          content = r.text;
+          lastRun = r.code === null ? 'unknown' : (r.code === 0 ? 'pass' : 'fail');
+          nudgesByKind.clear();
+          lastWhere = r.where; lastFailing = r.failing;
+          hint = r.code === null ? '' : (r.code !== 0 ? hintFix(r.where, r.failing) : (hasChangeset && missingFiles().length === 0 ? HINT_FINISH : (missingFiles().length > 0 ? hintMissing(missingFiles()) : '')));
+        } else content = clip(content, d.tuning.toolResultMaxChars);
         if (ok && name === 'changeset_register') registered = true;
       } else {
         ok = false; bytes = 0; content = 'ERROR: the tool is not available';
@@ -259,7 +378,8 @@ export async function* runLoop(d: LoopDeps): AsyncGenerator<RuntimeEvent> {
       yield { t: 'tool.completed', callId, ok, resultBytes: bytes };
       const stop3 = ended();
       if (stop3) { yield usageEvent(); yield stop3; return; }
-      toolMsg(`${ok || content.startsWith('ERROR') ? '' : 'ERROR: '}${content}${fromText && i === 0 ? `\n${NOTE_TEXT_CALL}` : ''}`);
+      const note = fromText && i === 0 ? `\n${NOTE_TEXT_CALL}` : '';
+      toolMsg(`${ok || content.startsWith('ERROR') ? '' : 'ERROR: '}${content}${note}${hint ? `\n${hint}` : ''}`);
       if ((fails.get(key) ?? 0) >= REPEAT_FAIL_ABORT) { yield usageEvent(); yield failed('protocol', 'the model kept repeating a failing tool call'); return; }
       if (sameRun >= REPEAT_SAME_ABORT) { yield usageEvent(); yield failed('protocol', 'the model kept repeating the same tool call'); return; }
     }

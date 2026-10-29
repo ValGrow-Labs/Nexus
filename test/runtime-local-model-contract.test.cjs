@@ -19,6 +19,8 @@ const adapterMod = loadTs('src/runner/runtimes/localModel/adapter.ts');
 const endpointMod = loadTs('src/runner/runtimes/localModel/endpoint.ts');
 const filesMod = loadTs('src/runner/runtimes/localModel/fileTools.ts');
 const callsMod = loadTs('src/runner/runtimes/localModel/toolCalls.ts');
+const loopMod = loadTs('src/runner/runtimes/localModel/loop.ts');
+const promptMod = loadTs('src/runner/runtimes/localModel/prompt.ts');
 const registry = loadTs('src/runner/runtimes/registry.ts');
 const { parseRunnerMessage } = loadTs('src/shared/nexus/runnerProtocol.ts');
 const { createLocalModelAdapter, LOCAL_MODEL_KIND, ADAPTER_LABEL } = adapterMod;
@@ -132,7 +134,7 @@ test('LM2 a text-only reply ends the turn; a model that only talks is nudged twi
 test('LM3 files were written but nothing registered: the model is nudged to register; after two nudges the turn still ends', async () => {
   const w = await world();
   try {
-    const events = await run(w, [call('write_file', { path: 'a.txt', content: 'a' }), { text: 'all done' }, { text: 'really done' }, { text: 'done done' }]);
+    const events = await run(w, [call('write_file', { path: 'src/add.js', content: 'a' }), { text: 'all done' }, { text: 'really done' }, { text: 'done done' }]);
     assertRuntimeContract(events, { terminal: 'run.completed' });
     const bodies = w.model.chats();
     assert.match(bodies[2].messages.slice(-1)[0].content, /changeset_register/);
@@ -647,5 +649,145 @@ test('LM22 the runtime keeps its words neutral in what it reports: the display l
     const c = await adapter(w, { model: MODEL }).check();
     const shown = JSON.stringify({ health: c.health, detail: c.health.ok ? '' : c.health.detail });
     assert.ok(!/ollama/i.test(shown));
+  } finally { await w.stop(); }
+});
+
+// ---------------------------------------------------------------- a small real model (what the first real runs taught)
+
+const EXEC_FAIL = JSON.stringify({ exit: { code: 1, signal: null }, truncated: false, stderr: '',
+  stdout: "TAP version 13\n# Subtest: a\nnot ok 1 - a\n  ---\n  duration_ms: 1.2\n  location: '/workspace/test/a.test.js:3:1'\n  failureType: 'testCodeFailure'\n  error: 'x is not a function'\n  code: 'ERR_TEST_FAILURE'\n  stack: |-\n    TestContext.<anonymous> (/workspace/test/a.test.js:5:7)\n    Test.run (node:internal/test_runner/test:796:25)\n  ...\n# /workspace/src/a.js:42\n#   ReferenceError: f is not defined\n#     at Module._compile (node:internal/modules/cjs/loader:1:1)\n# tests 1\n# suites 0\n# pass 0\n# fail 1\n# cancelled 0\n# duration_ms 5\n" });
+const EXEC_PASS = JSON.stringify({ exit: { code: 0, signal: null }, truncated: false, stderr: '', stdout: '# tests 2\n# pass 2\n# fail 0\n' });
+
+test('LM23 text calls as a small model writes them: several JSON objects one after another (and prose around them) are all run, in order; a JSON value that is not a call keeps the text a message', async () => {
+  const known = ['write_file', 'sandbox_exec'];
+  const a = '{"name": "write_file", "arguments": {"path": "a.js", "content": "if (x) { y() } // }{ \\"q\\""}}';
+  const b = '{"name": "sandbox_exec", "arguments": {"argv": ["node", "--test"], "timeoutMs": 1000}}';
+  assert.deepEqual(callsMod.recoverTextCalls(`${a}\n${b}\n`, known).map((c) => c.name), ['write_file', 'sandbox_exec']);
+  assert.deepEqual(callsMod.recoverTextCalls(`${a}${b}`, known).map((c) => c.name), ['write_file', 'sandbox_exec'], 'glued together');
+  assert.deepEqual(callsMod.recoverTextCalls(`First this:\n${a}\nthen that:\n${b}`, known).map((c) => c.name), ['write_file', 'sandbox_exec'], 'prose around the calls');
+  assert.equal(callsMod.recoverTextCalls(a, known)[0].args.content, 'if (x) { y() } // }{ "q"', 'braces inside a string are content, not structure');
+  assert.equal(callsMod.recoverTextCalls(`${a}\n{"hello": "world"}`, known), null, 'a value that is not a call: an ordinary message');
+  const t0 = Date.now();
+  assert.equal(callsMod.recoverTextCalls('{'.repeat(200_000), known), null);
+  assert.ok(Date.now() - t0 < 3000, 'a long run of unclosed braces costs a bounded scan');
+  // End to end: the reply is a text with two calls; both are run.
+  const w = await world();
+  try {
+    const events = await run(w, [{ text: `${a}\n${b}` }, { text: 'ok' }], { reqOver: { message: 'Do the thing.' } });
+    assertRuntimeContract(events, { terminal: 'run.completed' });
+    assert.deepEqual(events.filter((e) => e.t === 'tool.started').map((e) => e.tool), ['write_file', 'sandbox_exec']);
+  } finally { await w.stop(); }
+});
+
+test('LM24 a small model is offered a focused tool list: the file tools plus context_get, sandbox_exec and changeset_register; the others only with allTools', async () => {
+  const tools = [...MCP_TOOLS, { name: 'job_request', description: 'x', inputSchema: { type: 'object', properties: {} } }, { name: 'artifact_list', description: 'x', inputSchema: { type: 'object', properties: {} } }];
+  const w = await world({}, { tools });
+  try {
+    await run(w, [{ text: 'hi' }], { reqOver: { message: 'Explain.' } });
+    assert.deepEqual(w.model.chats()[0].tools.map((t) => t.function.name), ['read_file', 'write_file', 'list_files', 'delete_file', 'context_get', 'sandbox_exec', 'changeset_register']);
+    await run(w, [{ text: 'hi' }], { reqOver: { message: 'Explain.' }, adOver: { allTools: true } });
+    assert.deepEqual(w.model.chats().slice(-1)[0].tools.map((t) => t.function.name).slice(4), ['context_get', 'sandbox_exec', 'changeset_register', 'job_request', 'artifact_list']);
+    // The allow-list still narrows: a tool the turn's token does not grant is never offered, core or not.
+    await run(w, [{ text: 'hi' }], { reqOver: { message: 'Explain.' }, adOver: { allTools: true, mcpTools: ['job_request', 'sandbox_exec'] } });
+    assert.deepEqual(w.model.chats().slice(-1)[0].tools.map((t) => t.function.name).slice(4), ['sandbox_exec', 'job_request']);
+  } finally { await w.stop(); }
+});
+
+test('LM25 the files the task names: the first message says to write them first, a text-only reply is nudged by name, a file already there is not "to create", and a finished file is not asked for again', async () => {
+  assert.deepEqual(promptMod.namedFiles('Build it in src/todo.js (a Node.js library); tests in test/todo.test.js; see package.json and e.g. foo.bar and ./lib/x.ts'), ['src/todo.js', 'test/todo.test.js', 'package.json', 'lib/x.ts']);
+  const w = await world();
+  try {
+    fs.writeFileSync(path.join(w.wt, 'package.json'), '{}');
+    const message = 'Create src/todo.js and test/todo.test.js; package.json already exists.';
+    const events = await run(w, [{ text: 'I will start by thinking about it.' }, call('write_file', { path: 'src/todo.js', content: 'a' }), { text: 'done' },
+      call('write_file', { path: 'test/todo.test.js', content: 'b' }), { text: 'done' }, { text: 'done' }, { text: 'done' }], { reqOver: { message } });
+    assertRuntimeContract(events, { terminal: 'run.completed' });
+    const chats = w.model.chats();
+    const first = chats[0].messages[1].content;
+    assert.match(first, /Files to create: src\/todo\.js, test\/todo\.test\.js\. Start now: your first action is write_file for src\/todo\.js/);
+    assert.ok(!/Files to create:[^\n]*package\.json/.test(first), 'an existing file is not to be created');
+    assert.match(chats[0].messages[0].content, /FIRST action is write_file/);
+    // Text only before any tool: nudged to write the first missing file, by name, with the call format.
+    const n1 = chats[1].messages.slice(-1)[0].content;
+    assert.match(n1, /did not call a tool/); assert.match(n1, /write_file now to create src\/todo\.js/); assert.match(n1, /\{"name": "write_file"/);
+    // After the first file: the result says what is next; a stop with a file missing is nudged to write that file.
+    assert.match(chats[2].messages.slice(-1)[0].content, /Next: still to create: test\/todo\.test\.js/);
+    assert.match(chats[3].messages.slice(-1)[0].content, /still missing: test\/todo\.test\.js/);
+    // Both written: the nudge moves on (to the run and the registration), no longer asking for files.
+    assert.match(chats[5].messages.slice(-1)[0].content, /sandbox_exec/);
+    assert.ok(!/still missing/.test(chats[5].messages.slice(-1)[0].content));
+  } finally { await w.stop(); }
+});
+
+test('LM26 a command\'s answer is given as plain lines (exit code, no runner noise), says where the first error is, and the next step is told: fix, run again, register; every nudge is bounded', async () => {
+  const w = await world({}, { onCall: (name) => (name === 'sandbox_exec' ? EXEC_FAIL : 'ok:registered') });
+  try {
+    const events = await run(w, [call('write_file', { path: 'src/a.js', content: 'x' }), call('sandbox_exec', { argv: ['node', '--test'], timeoutMs: 60000 }), { text: 'it failed' }, { text: 'still failed' }, { text: 'sorry' }, { text: 'sorry' }],
+      { reqOver: { message: 'Write src/a.js and run its tests.' } });
+    assertRuntimeContract(events, { terminal: 'run.completed' });
+    const chats = w.model.chats();
+    const result = chats[2].messages.slice(-1)[0].content;
+    assert.match(result, /^exit code: 1 \(FAILED\)\nstdout:\n/);
+    assert.match(result, /not ok 1 - a/); assert.match(result, /error: 'x is not a function'/);
+    for (const noise of [/duration_ms/, /failureType/, /ERR_TEST_FAILURE/, /node:internal/, /# suites/, /# cancelled/, /^\s*---$/m, /^\s*\.\.\.$/m]) assert.ok(!noise.test(result), `noise dropped: ${noise}`);
+    assert.match(result, /Next: the run failed\. The first error is in src\/a\.js line 42/);
+    assert.ok(!/\{"exit"/.test(result), 'not the raw JSON');
+    assert.ok(!/# Subtest/.test(result) && !/^TAP version/m.test(result), 'a failed run drops the bookkeeping of the passing tests');
+    assert.match(result, /Failing: a\./, 'the failing test names are said in the hint');
+    assert.match(chats[3].messages.slice(-1)[0].content, /Failing: a\..*Do not read the files again/);
+    assert.deepEqual(loopMod.failingTests('not ok 1 - x\n  not ok 2 - y\nnot ok 3 - x\nok 4 - z'), ['x', 'y']);
+    // The reply that only talks is nudged to fix, naming the file; two nudges of a kind, then the turn ends.
+    assert.match(chats[3].messages.slice(-1)[0].content, /The last run failed\. The first error is in src\/a\.js line 42/);
+    assert.equal(chats.length, 5, 'the call, the run, the text, two nudged texts: the third text ends the turn');
+    // The helpers alone.
+    assert.equal(loopMod.failureLocation('x\n# /workspace/node_modules/z/i.js:3\n# /workspace/test/t.js:9:1'), 'test/t.js line 9');
+    assert.equal(loopMod.failureLocation('nothing here'), null);
+    assert.equal(loopMod.renderExec('not json', 100).code, null);
+    assert.equal(loopMod.renderExec(EXEC_PASS, 1000).code, 0);
+  } finally { await w.stop(); }
+  // A pass is followed by the instruction to register, and a registered change is not nudged any more.
+  const w2 = await world({}, { onCall: (name) => (name === 'sandbox_exec' ? EXEC_PASS : 'ok:registered') });
+  try {
+    await run(w2, [call('write_file', { path: 'src/a.js', content: 'x' }), call('sandbox_exec', { argv: ['node', '--test'], timeoutMs: 60000 }), { text: 'passed' },
+      call('changeset_register', { title: 't', summary: 's', clientKey: 'cs1' }), { text: 'done' }], { reqOver: { message: 'Write src/a.js and run its tests.' } });
+    const chats = w2.model.chats();
+    assert.match(chats[2].messages.slice(-1)[0].content, /^exit code: 0 \(passed\)[\s\S]*Next: it passed\. Call changeset_register now/);
+    assert.match(chats[3].messages.slice(-1)[0].content, /The work is done and the tests pass\. Call changeset_register now/);
+    assert.equal(chats.length, 5, 'nothing is nudged after the change is registered');
+  } finally { await w2.stop(); }
+});
+
+test('LM27 a write that changes nothing is refused as such (a model that keeps "fixing" the wrong file sees it); a real change still goes through', async () => {
+  const w = await world();
+  try {
+    const events = await run(w, [call('write_file', { path: 'a.txt', content: 'same' }), call('write_file', { path: 'a.txt', content: 'same' }), call('write_file', { path: 'a.txt', content: 'other' }), { text: 'ok' }],
+      { reqOver: { message: 'Do the thing.' } });
+    const done = events.filter((e) => e.t === 'tool.completed').map((e) => e.ok);
+    assert.deepEqual(done, [true, false, true]);
+    const second = w.model.chats()[2].messages.slice(-1)[0].content;
+    assert.match(second, /nothing changed: this file already has exactly this content/);
+    assert.equal(fs.readFileSync(path.join(w.wt, 'a.txt'), 'utf8'), 'other');
+  } finally { await w.stop(); }
+});
+
+test('LM28 a call that ends with its closing braces missing is repaired (the content is whole); a call cut off inside a string is not run, and the model is told its call was not valid JSON', async () => {
+  const known = ['write_file'];
+  const whole = '{"name": "write_file", "arguments": {"path": "a.js", "content": "x = 1;\\n"}}';
+  assert.deepEqual(callsMod.recoverTextCalls(whole.slice(0, -1), known)[0].args, { path: 'a.js', content: 'x = 1;\n' }, 'one brace missing');
+  assert.deepEqual(callsMod.recoverTextCalls(`${whole.slice(0, -2)}\n`, known)[0].args, { path: 'a.js', content: 'x = 1;\n' }, 'two braces missing, a newline after');
+  assert.equal(callsMod.recoverTextCalls(whole.slice(0, -6), known), null, 'cut inside the content string: never repaired');
+  assert.equal(callsMod.recoverTextCalls('{"name": "write_file", "arguments": {"path": "a.js", "content": "x" "y"}}', known), null, 'other invalid JSON is not guessed at');
+  assert.equal(callsMod.looksLikeCall(whole.slice(0, -6), known), true);
+  assert.equal(callsMod.looksLikeCall('{"name": "nothing"}', known), false);
+  assert.equal(callsMod.looksLikeCall('plain words', known), false);
+  const w = await world();
+  try {
+    const cut = '{"name": "write_file", "arguments": {"path": "a.js", "content": "x = 1;\\ny = ';
+    const events = await run(w, [{ text: whole.slice(0, -1) }, { text: cut }, { text: whole }, { text: 'done' }], { reqOver: { message: 'Do the thing.' } });
+    assertRuntimeContract(events, { terminal: 'run.completed' });
+    assert.equal(events.filter((e) => e.t === 'tool.started').length, 2, 'the repaired call ran, the cut one did not, the whole one did');
+    const nudge = w.model.chats()[2].messages.slice(-1)[0].content;
+    assert.match(nudge, /not valid JSON, so it was not run/);
+    assert.match(nudge, /\{"name": "<tool>"/);
   } finally { await w.stop(); }
 });

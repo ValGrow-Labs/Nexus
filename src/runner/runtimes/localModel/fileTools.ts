@@ -120,6 +120,17 @@ export class FileTools {
     }
   }
 
+  /** Whether a path the model may use holds anything now (a path the tools would refuse counts as present: it is not for the model to create). */
+  async exists(rel: string): Promise<boolean> {
+    try {
+      const c = checkRelPath(rel);
+      if (!c.ok || c.segs.length === 0) return true;
+      const ch = await this.chain(c.segs, false);
+      if (!ch.ok) return !ch.missing;
+      return (await this.probe(path.join(ch.parent, c.segs[c.segs.length - 1]))).kind !== 'missing';
+    } catch { return true; }
+  }
+
   private async rootOk(): Promise<boolean> {
     if (!path.isAbsolute(this.root)) return false;
     try { const st = await fsp.lstat(this.root); return st.isDirectory() && !st.isSymbolicLink(); } catch { return false; }
@@ -195,6 +206,11 @@ export class FileTools {
     const before = await this.probe(abs);
     if (before.kind === 'refused') return fail(before.why);
     if (before.kind === 'dir') return fail('that is a folder, not a file');
+    // A rewrite with the very same content changes nothing: said plainly, so a model that keeps "fixing" the wrong file sees it.
+    if (before.kind === 'file' && before.size === bytes) {
+      const same = await fsp.readFile(abs, 'utf8').then((t) => t === a.content, () => false);
+      if (same) return fail('nothing changed: this file already has exactly this content. The error is somewhere else (another file, or this content must differ).');
+    }
     const tmp = path.join(ch.parent, `.write-${randomBytes(6).toString('hex')}.tmp`);
     let fh: Awaited<ReturnType<typeof fsp.open>> | null = null;
     try {
