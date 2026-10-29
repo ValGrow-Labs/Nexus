@@ -159,7 +159,8 @@ test('nexusIpc: every registration goes through the one wrapper; no identity fro
   assert.equal(NEXUS_PRELOAD_METHODS.length, 41);
   // ... and 'kind' is read from a request only as the artifact-kind filter of nexus:artifacts:list and (B2a Task 13
   // pinned-test extension) as saveInline's user-authorable kind.
-  assert.deepEqual(mod.match(/\bo\.kind\b[^\n]*/g), ["o.kind === undefined ? undefined : V.artifactKind(o.kind, 'kind'),", "o.kind, 'kind'),"]);
+  // (`[^\r\n]`: this Windows checkout keeps CRLF in the working tree, LF in the index; a line's own text is what is pinned.)
+  assert.deepEqual(mod.match(/\bo\.kind\b[^\r\n]*/g), ["o.kind === undefined ? undefined : V.artifactKind(o.kind, 'kind'),", "o.kind, 'kind'),"]);
   assert.match(mod, /kind: V\.userAuthorableKind\(o\.kind, 'kind'\),/);
   assert.equal((mod.match(/['"`]kind['"`]/g) || []).length, 4, "the 'kind' keys of the artifacts filter and of saveInline, and their field names");
   // The ban on transport inside the platform core keeps its meaning: the IPC layer lives in src/main/nexusIpc.
