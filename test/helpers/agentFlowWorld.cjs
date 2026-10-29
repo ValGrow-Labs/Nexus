@@ -23,6 +23,14 @@
 //   carries the model and the loopback endpoint, and the adapter's own destination rule applies unchanged (no test seam in the runner).
 //   Everything else (main, the real runner core, the MCP server, the fake or real Docker) is as above. `w.bearers` collects every
 //   bearer the adapter sent to the MCP server (an observer on its fetch), for the no-leak scans.
+// - the REAL-CLI variant (`flowWorld({ runtime: 'cli-agent', real: true })`, controller-only: tools/nexus-demo-cli-agent.cjs; never part of
+//   a test run, since it needs the user's installed vendor CLI and login): the runner's probe adapters are the production ones
+//   (registry.probeAdapters(): the probe reports the real CLI's health and its host list), the consent is granted through #51 for kind
+//   `cli-agent` with the adapter's own hosts and the default caps (never raised), there is NO scriptFor and no fake runtime, the runner
+//   starts the REAL host egress proxy bound to the consent (default startProxy), and the REAL cli-agent adapter resolves the user's
+//   installed native CLI itself (production path: no agentBin / agentEnv seam). Docker is real (it requires `real: true`). The world
+//   exposes what a controller records: `w.egressDecisions(jobId)` (+ `w.egressTruncated`), `w.usageOf(jobId)`, `w.toolCallsOf(jobId)`,
+//   all read from the records main keeps (job_events / job_attempts). The probe's own proxy runs report nothing (its onDecision is a no-op).
 // Time is a fake clock (main's `now` and the runner's timers); `until` advances it a second at a time and runs the
 // scheduler's tick, while real I/O (git, files) is awaited between steps (the runner's own real I/O is counted).
 const fs = require('node:fs');
@@ -250,6 +258,10 @@ async function flowWorld(o = {}) {
   // `o.runtime`: 'local-model' (see the header); `o.modelUrl`: the loopback model server; `o.model`: the model the user chooses at consent.
   const lm = o.runtime === 'local-model';
   if (lm && (typeof o.modelUrl !== 'string' || typeof o.model !== 'string')) throw new Error("flowWorld({ runtime: 'local-model' }) needs modelUrl and model");
+  // `o.runtime: 'cli-agent'` (see the header): the real vendor CLI under the real runner; only with the real Docker driver.
+  const ca = o.runtime === 'cli-agent';
+  if (ca && real !== true) throw new Error("flowWorld({ runtime: 'cli-agent' }) needs real: true (the real CLI runs its commands in real Docker)");
+  if (ca && (o.driver || o.modelUrl || o.model)) throw new Error("flowWorld({ runtime: 'cli-agent' }) takes no driver, modelUrl or model");
   const lmPort = lm ? Number(new URL(o.modelUrl).port) : 0;
   /** The user's local-server address setting as main reads it; a test may change `lmCfg.baseUrl` (the settings a user could have). */
   const lmCfg = o.lmCfg ?? { baseUrl: lm ? `${o.modelUrl.replace(/\/+$/, '')}/v1` : null };
@@ -275,7 +287,7 @@ async function flowWorld(o = {}) {
   const startup = nx.startup();
   const p = { store: s, file, db, nx, logs, userData, dataHome, roots, images };
   const w = { kind: real ? 'agent-flow-real' : 'agent-flow', real, clock, runnerLogs: [], played: [], execs: [], startup, scripts: [], scriptsSeen: [], holdGate: Promise.resolve(),
-    runtime: lm ? 'local-model' : 'scripted', model: lm ? o.model : null, modelUrl: lm ? o.modelUrl : null, bearers: o.bearers ?? [], lmCfg };
+    runtime: lm ? 'local-model' : ca ? 'cli-agent' : 'scripted', model: lm ? o.model : null, modelUrl: lm ? o.modelUrl : null, bearers: o.bearers ?? [], lmCfg };
   addCommon(w, p);
   w.userData = userData; w.file = file; w.store = s;
   if (o.reopen) { w.current = o.reopen.current; w.repoDir = o.reopen.repo; }
@@ -314,12 +326,15 @@ async function flowWorld(o = {}) {
     };
     const fakeOnly = real ? {} : { timers: clock, freeBytes: async () => 100 * GIB, sleep: async () => {}, probeHttp: async (_port, q) => ({ status: w.health(q), ms: 3 }),
       pickPort: (() => { let n = 49200; return () => n++; })() };
+    // The real-CLI world: the production probe adapters, built once per runner (they share the registry's preflight cache).
+    const caAdapters = ca ? loadTs('src/runner/runtimes/registry.ts').probeAdapters() : null;
     const core = new RunnerCore(b.transport, { driver, now: () => clock.now, fs: trackRealIo(fsp, io), log: (l) => w.runnerLogs.push(l),
       docker: cli, imagesDir: path.join(ROOT, 'infra', 'images'), ...fakeOnly,
       // The local-model world: the REAL adapter is what the probe reports (its destination is the model server's own loopback address)
       // and what runtimeFor builds for the turn (consent hosts from the plan); the only observer is a fetch that notes the MCP bearer.
-      runtimeProbe: { adapters: () => (lm ? [createLocalModelAdapter({ consentedHosts: [{ host: '127.0.0.1', port: lmPort }], model: o.model })] : [scriptedAdapter]) },
-      agentRuntime: lm
+      runtimeProbe: { adapters: () => (ca ? caAdapters : lm ? [createLocalModelAdapter({ consentedHosts: [{ host: '127.0.0.1', port: lmPort }], model: o.model })] : [scriptedAdapter]) },
+      // The real-CLI world sets nothing: no scriptFor, no agentBin / agentEnv, no startProxy (the runner's default, real proxy).
+      agentRuntime: ca ? {} : lm
         ? { fetchImpl: (url, init) => { const a = init && init.headers && init.headers.authorization; if (typeof a === 'string' && a.startsWith('Bearer ')) w.bearers.push(a.slice(7)); return fetch(url, init); } }
         : { scriptFor: (plan) => w.nextScript(plan), ...(real ? {} : { startProxy }) } });
     let gitRunner = core.git ?? null;
@@ -440,10 +455,42 @@ async function flowWorld(o = {}) {
   // ---- the user's steps, through the handlers
   /** The runtime check and the consent (#51), as the setup sheet does: the adapter's own destination, never one the renderer names. */
   w.consent = async (caps) => {
+    if (ca) {
+      // The real CLI's check takes seconds and the cache may hold an older probe: wait for a result recorded AFTER this refresh.
+      await w.probeCli();
+      if (caps) throw new Error('the real-CLI world grants the default caps only (never raised, never lowered by the driver)');
+      return w.x.ok('nexus:agent:consent', { op: 'grant', runtime: 'cli-agent' });
+    }
     nx.agentProbe.refresh();
     await w.until(() => !nx.agentProbe.cache.isStale(), 'the runtime check');
     return w.x.ok('nexus:agent:consent', { op: 'grant', ...(lm ? { runtime: 'local-model', model: o.model } : {}), ...(caps ? { caps } : {}) });
   };
+  /**
+   * The real-CLI world: asks the runner for a fresh probe and waits for it (the real adapter runs the CLI's `--version`, `--help` and
+   * `auth status`). Returns the cache entry of kind `cli-agent` ({ kind, health, setup }; setup.signedIn is yes|no|unknown, never the
+   * CLI's own output) or null when the probe did not report it. Reads nothing of the CLI's home.
+   */
+  w.probeCli = async (ms = 120_000) => {
+    const since = clock.now;
+    if (!nx.agentProbe.refresh()) throw new Error('the runtime check could not be asked for');
+    const recorded = await nx.agentProbe.cache.whenRecorded(since, ms);
+    if (!recorded) throw new Error('the runtime check did not answer in time');
+    return nx.agentProbe.cache.fresh('cli-agent');
+  };
+  // ---- what a controller records of a turn (read from main's own records; no secret is ever in them)
+  /** Every proxy decision of the turn, in order: [{ decision: 'allowed'|'refused', host, port, reason }] (job_events attempt.progress `$.egress`). */
+  w.egressDecisions = (jobId) => db.prepare("SELECT json_extract(data_json, '$.egress') AS e FROM job_events WHERE job_id = ? AND type = 'attempt.progress' AND json_extract(data_json, '$.egress') IS NOT NULL ORDER BY seq")
+    .all(jobId).map((r) => JSON.parse(r.e));
+  /** How many decisions the runner did not report (more than EGRESS_EVENT_MAX): their hosts are NOT recorded anywhere. */
+  w.egressTruncated = (jobId) => db.prepare("SELECT COALESCE(SUM(json_extract(data_json, '$.egressTruncated.count')), 0) AS n FROM job_events WHERE job_id = ? AND type = 'attempt.progress' AND json_extract(data_json, '$.egressTruncated') IS NOT NULL")
+    .get(jobId).n;
+  /** The turn's latest attempt's usage as main recorded it (job_attempts.usage_json), or null. */
+  w.usageOf = (jobId) => { const r = db.prepare('SELECT usage_json FROM job_attempts WHERE job_id = ? ORDER BY n DESC LIMIT 1').get(jobId); return r && r.usage_json ? JSON.parse(r.usage_json) : null; };
+  /** The tools the agent used in the turn, in order (job_events `runtime.tool`): names only. */
+  w.toolCallsOf = (jobId) => db.prepare("SELECT json_extract(data_json, '$.tool') AS t FROM job_events WHERE job_id = ? AND type = 'attempt.progress' AND json_extract(data_json, '$.t') = 'runtime.tool' ORDER BY seq")
+    .all(jobId).map((r) => r.t);
+  /** The live consent row as stored (hosts and caps only). */
+  w.consentRow = () => db.prepare('SELECT runtime_kind, hosts_json, hosts_sha256, turn_usd_cents, day_usd_cents, turns_per_hour, concurrent_turns, turn_tokens, tool_calls FROM runtime_consents WHERE revoked_at IS NULL').get() ?? null;
   /** #42, the user's message; the turn's worktree preparation, approval A3 and lease follow on their own. */
   w.start = async (message, x = {}) => w.x.ok('nexus:agent:start', { projectId: w.PROJECT, workspaceId: w.WORKSPACE, sessionId: x.sessionId ?? null,
     focusVersionIds: x.focus ?? [], message, intentId: x.intentId ?? intent(), ...(x.skillId ? { skillId: x.skillId } : {}) });
