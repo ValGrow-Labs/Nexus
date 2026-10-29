@@ -948,6 +948,9 @@ test('V9-5 layout pins: the notice strip is bounded and scrolls (the bench keeps
   const x = fs.readFileSync(path.join(NEXUS, 'styles', 'execution.css'), 'utf8');
   assert.ok(x.includes('.nx-xstrip { flex: none; max-height: 32vh; overflow-y: auto; }'));
   assert.ok(x.includes('.nx-ag__form { grid-template-columns: minmax(0, 1fr) auto;'));
+  const pc = fs.readFileSync(path.join(NEXUS, 'styles', 'project.css'), 'utf8');
+  assert.ok(pc.includes('.nx-workbench { overflow-y: auto; }'));
+  assert.ok(pc.includes('min-height: 340px; flex: 1 0 340px; }'));
   assert.ok(fs.readFileSync(path.join(NEXUS, 'styles', 'project.css'), 'utf8').includes('.nx-surface__title:focus, .nx-surface__title:focus-visible { outline: none; }'));
 });
 
@@ -956,4 +959,26 @@ test('V9-6 the project agent is asked with the same words in the panel and in th
   assert.ok(il.includes("aria-label={mode === 'agent' ? 'Ask the agent' : 'Send'}"));
   assert.ok(il.includes("{mode === 'agent' ? 'Ask the agent' : 'Send'}</span>"));
   assert.ok(src('agent/AgentPanel.tsx').includes("'Ask the agent'}</Button>"));
+});
+
+test('V9-7 an answer that lists fewer runtimes than the sheet showed (a revoke answers before the probe refills) keeps the missing rows, no longer in use; a complete answer is taken as is', () => {
+  const prev = v9view([v9opt(), v9local({ selected: true, model: 'coder:7b', problem: null })], true);
+  const afterRevoke = v9view([v9local({ model: 'coder:7b', problem: null })], false);
+  const kept = X.keepRuntimes(prev, afterRevoke);
+  assert.deepEqual(kept.runtimes.map((r) => [r.kind, r.selected]), [['cli-agent', false], ['local-model', false]]);
+  assert.equal(kept.consent.live, false, 'the permission facts are the answer\'s own');
+  const full = v9view([v9opt(), v9local()], false);
+  assert.equal(X.keepRuntimes(prev, full), full);
+  assert.equal(X.keepRuntimes(null, afterRevoke), afterRevoke);
+  const prevB = v9view([v9opt({ selected: true })], true);
+  assert.equal(X.keepRuntimes(prevB, { consent: afterRevoke.consent }).runtimes, undefined, 'an answer without a list is left alone');
+  assert.ok(src('data/useAgents.ts').includes('keepRuntimes(prev.view, r.data)'));
+  // A read that still lists fewer runtimes (the probe is refilling) is looked at again, bounded; a complete or unrelated answer is not.
+  assert.equal(X.shrunkRereadDelay(prev, afterRevoke, 0), X.SHRUNK_REREAD_MS);
+  assert.equal(X.shrunkRereadDelay(prev, afterRevoke, X.SHRUNK_REREAD_LIMIT), null, 'bounded');
+  assert.equal(X.shrunkRereadDelay(prev, full, 0), null);
+  assert.equal(X.shrunkRereadDelay(null, afterRevoke, 0), null);
+  const hooks = src('data/useAgents.ts');
+  assert.ok(hooks.includes('shrunkRereadDelay(viewRef.current, r.data, tries)'));
+  assert.ok(hooks.includes('shrunk ?? consentRereadDelay(r.data, tries)'));
 });

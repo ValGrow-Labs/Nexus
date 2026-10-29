@@ -423,6 +423,29 @@ export const runtimeMemory = {
   clear(): void { memory.kind = null; memory.models = {}; }
 };
 
+/**
+ * A permission change answers before the probe has refilled its cache, so the answer may list fewer runtimes than the sheet already
+ * showed (a revoke left only the local model's row for many seconds). The runtimes the answer leaves out keep their last row, no
+ * longer in use; the next read of #51 (the sheet re-asks) replaces them all with the probe's own.
+ */
+export function keepRuntimes(prev: AgentConsentView | null | undefined, next: AgentConsentView): AgentConsentView {
+  const before = prev && Array.isArray(prev.runtimes) ? prev.runtimes : [];
+  if (before.length === 0 || !Array.isArray(next.runtimes)) return next;
+  const have = new Set(next.runtimes.map((r) => r.kind));
+  const kept = before.filter((r) => !have.has(r.kind)).map((r) => ({ ...r, selected: false }));
+  return kept.length === 0 ? next : { ...next, runtimes: [...next.runtimes, ...kept].sort((a, b) => before.findIndex((r) => r.kind === a.kind) - before.findIndex((r) => r.kind === b.kind)) };
+}
+
+/** How long to wait before reading #51 again when an answer lists fewer runtimes than the sheet showed (the probe is still refilling), and how many times. */
+export const SHRUNK_REREAD_MS = 3_000;
+export const SHRUNK_REREAD_LIMIT = 6;
+/** Null: nothing to wait for (the answer lists every runtime already shown, or the tries are used up). */
+export function shrunkRereadDelay(prev: Pick<AgentConsentView, 'runtimes'> | null | undefined, next: Pick<AgentConsentView, 'runtimes'>, attempt: number): number | null {
+  if (attempt >= SHRUNK_REREAD_LIMIT || !prev || !Array.isArray(prev.runtimes) || !Array.isArray(next.runtimes)) return null;
+  const have = new Set(next.runtimes.map((r) => r.kind));
+  return prev.runtimes.some((r) => !have.has(r.kind)) ? SHRUNK_REREAD_MS : null;
+}
+
 /** The runtime in use in a #51 answer, for the memory: its kind and model. Null when no permission is live. */
 export function runtimeInUse(view: Pick<AgentConsentView, 'runtimes' | 'consent'> | null | undefined): { kind: string; model: string | null } | null {
   if (!view || !view.consent.live || !Array.isArray(view.runtimes)) return null;

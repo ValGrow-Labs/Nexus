@@ -6,7 +6,7 @@ import type { AgentConsentArgs, AgentConsentView, JobView, NexusResult, RepoStat
 import { nexusClient } from './nexusClient';
 import { usePlatform } from './platformStore';
 import { useExecStore, useHints, useRead, useJobs, type Read } from './useExecution';
-import { consentRereadDelay } from './executionModel';
+import { consentRereadDelay, keepRuntimes, shrunkRereadDelay } from './executionModel';
 
 /** The project's agent conversations (#43), newest first. */
 export function useSessions(projectId: string | null): Read<SessionView[]> {
@@ -64,6 +64,8 @@ export function useAgentConsent(open: boolean): {
   const [state, setState] = useState<{ view: AgentConsentView | null; fail: Extract<NexusResult<AgentConsentView>, { ok: false }> | null; loaded: boolean }>(
     { view: null, fail: null, loaded: false });
   const [attempt, setAttempt] = useState(0);
+  const viewRef = useRef<AgentConsentView | null>(null);
+  viewRef.current = state.view;
   const reload = useCallback(() => setAttempt((n) => n + 1), []);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => () => { if (timer.current) clearTimeout(timer.current); }, []);
@@ -77,8 +79,10 @@ export function useAgentConsent(open: boolean): {
     let again: ReturnType<typeof setTimeout> | null = null;
     const read = (tries: number) => { void nexusClient.agentConsent({ op: 'get' }).then((r) => {
       if (!alive) return;
-      setState((prev) => (r.ok ? { view: r.data, fail: null, loaded: true } : { view: prev.view, fail: r, loaded: true }));
-      const delay = r.ok ? consentRereadDelay(r.data, tries) : null;
+      // An answer that lists fewer runtimes than the sheet showed is the probe still refilling: keep the rows and look again (bounded); after that it is taken as is.
+      const shrunk = r.ok ? shrunkRereadDelay(viewRef.current, r.data, tries) : null;
+      setState((prev) => (r.ok ? { view: shrunk !== null ? keepRuntimes(prev.view, r.data) : r.data, fail: null, loaded: true } : { view: prev.view, fail: r, loaded: true }));
+      const delay = r.ok ? (shrunk ?? consentRereadDelay(r.data, tries)) : null;
       if (delay !== null) again = setTimeout(() => { if (alive) read(tries + 1); }, delay);
     }); };
     read(0);
@@ -87,7 +91,7 @@ export function useAgentConsent(open: boolean): {
   }, [open, attempt]);
   const send = useCallback(async (args: AgentConsentArgs) => {
     const r = await nexusClient.agentConsent(args);
-    if (r.ok) setState({ view: r.data, fail: null, loaded: true });
+    if (r.ok) setState((prev) => ({ view: keepRuntimes(prev.view, r.data), fail: null, loaded: true }));
     // The permission changed: the shared health (the panel's facts) is read again.
     useExecStore.getState().bump(['health', 'jobs']);
     return r;
