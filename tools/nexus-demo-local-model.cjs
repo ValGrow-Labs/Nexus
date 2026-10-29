@@ -23,26 +23,34 @@ const { spawnSync } = require('node:child_process');
 
 const ROOT = path.resolve(__dirname, '..');
 const DEFAULT_BRIEF = 'Build a small, dependency-free Node.js todo-list library in src/todo.js: createTodoList() returns an object with add(title) (returns the new item {id, title, done:false}), complete(id), remove(id), list({done}) (optionally filtered by done) and clear(). It must throw a TypeError for an empty or non-string title and a RangeError for an unknown id. Write its tests with node:test in test/todo.test.js (at least six tests covering every method and both errors) and run them with sandbox_exec using ["node","--test"].';
+const FIXTURES = Object.freeze({
+  'node-test-app': { where: 'The project already has a src/ and a test/ folder; add your files there.', test: '["node","--test"]' },
+  'pytest-app': { where: 'The project is a Python package: put code under src/pytest_app/ and tests under tests/ (pytest finds src automatically; import with `from pytest_app.<module> import ...`).', test: '["python","-m","pytest","-q"]' }
+});
+const WEATHER_BRIEF = 'Build a tiny weather-prediction model in pure Python (no numpy, no internet, standard library only) in src/pytest_app/weather.py: make_dataset(days, seed) returns a reproducible synthetic list of daily temperatures (a yearly sine wave plus seeded noise); train(series, lags=3) fits a linear model that predicts the temperature of the next day from the previous `lags` days (ordinary least squares, solved yourself, for example with gradient descent or normal equations) and returns the weights; predict(weights, last_days) returns the next-day temperature; mae(weights, series, lags=3) returns the mean absolute error. Write at least six pytest tests in tests/test_weather.py (dataset is reproducible, training reduces error versus predicting the mean, predict has the right shape, mae is non-negative, a perfect linear series is recovered, errors on too-short input) and run them with sandbox_exec using ["python","-m","pytest","-q"].';
 const EXIT = Object.freeze({ OK: 0, FAILED: 1, REFUSED: 2, NOT_RUN: 3 });
 
 function usage() {
-  return 'usage: node tools/nexus-demo-local-model.cjs --go --out <folder> [--model <name>] [--brief "<text>"] [--url http://127.0.0.1:11434] [--max-turns 3]\n'
+  return 'usage: node tools/nexus-demo-local-model.cjs --go --out <folder> [--model <name>] [--weather | --fixture node-test-app|pytest-app --brief "<text>"] [--url http://127.0.0.1:11434] [--max-turns 3]\n'
     + '  --go is required: the showcase starts real Docker containers and talks to the real local model server.\n';
 }
 
 function parseArgs(argv) {
-  const o = { go: false, out: null, model: 'qwen2.5-coder:7b', brief: DEFAULT_BRIEF, url: 'http://127.0.0.1:11434', maxTurns: 3, unknown: [] };
+  const o = { go: false, out: null, fixture: 'node-test-app', model: 'qwen2.5-coder:7b', brief: null, url: 'http://127.0.0.1:11434', maxTurns: 3, unknown: [] };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     const val = () => { const v = argv[i + 1]; i += 1; return v; };
     if (a === '--go') o.go = true;
     else if (a === '--out') o.out = val();
     else if (a === '--model') o.model = val();
+    else if (a === '--fixture') o.fixture = val();
+    else if (a === '--weather') { o.fixture = 'pytest-app'; o.brief = WEATHER_BRIEF; }
     else if (a === '--brief') o.brief = val();
     else if (a === '--url') o.url = val();
     else if (a === '--max-turns') o.maxTurns = Number(val());
     else o.unknown.push(a);
   }
+  if (o.brief === null) o.brief = o.fixture === 'pytest-app' ? WEATHER_BRIEF : DEFAULT_BRIEF;
   return o;
 }
 
@@ -62,6 +70,7 @@ function loopbackUrl(url) {
 function refusal(o, preflight) {
   if (!o.go) return { code: EXIT.REFUSED, lines: ['refused: --go was not given.', usage()] };
   if (o.unknown.length > 0) return { code: EXIT.REFUSED, lines: [`refused: unknown argument ${o.unknown[0]}`, usage()] };
+  if (!Object.prototype.hasOwnProperty.call(FIXTURES, o.fixture)) return { code: EXIT.REFUSED, lines: [`refused: --fixture must be one of ${Object.keys(FIXTURES).join(', ')}.`] };
   if (!o.out || o.out.startsWith('--')) return { code: EXIT.REFUSED, lines: ['refused: --out <folder> is required.', usage()] };
   if (loopbackUrl(o.url) === null) return { code: EXIT.REFUSED, lines: [`refused: --url must be a loopback address (127.0.0.1, ::1 or localhost) with http: got ${JSON.stringify(o.url)}.`] };
   if (!/^[A-Za-z0-9._:/@-]{1,128}$/.test(o.model)) return { code: EXIT.REFUSED, lines: ['refused: --model is not a model name.'] };
@@ -82,6 +91,8 @@ const MIN = 60_000;
 const clip = (t, n) => { const s = String(t ?? ''); return s.length <= n ? s : `${s.slice(0, n)}...[cut]`; };
 /** node:test's own totals from a run's output: `# tests N`, `# pass N`, `# fail N`. */
 function testCounts(stdout) {
+  const py = /(?:(d+) failed)?[ ,]*(?:(d+) passed)/.exec(stdout ?? '');
+  if (py && !/^# tests /m.test(stdout ?? '')) { const f = Number(py[1] ?? 0); const ok = Number(py[2] ?? 0); return { tests: f + ok, pass: ok, fail: f }; }
   const n = (k) => { const m = new RegExp(`^# ${k} (\\d+)`, 'm').exec(stdout ?? ''); return m ? Number(m[1]) : null; };
   return { tests: n('tests'), pass: n('pass'), fail: n('fail') };
 }
@@ -106,13 +117,13 @@ async function run(o) {
   try {
     log(`model ${o.model} at ${url}; real Docker; up to ${o.maxTurns} turns`);
     w = await flowWorld({ runtime: 'local-model', modelUrl: url, model: o.model, real: true });
-    await useFixture(w, 'node-test-app');
+    await useFixture(w, o.fixture);
     await w.snapshot();
     try { await w.consent(); } catch (e) { T.problems.push(`consent was refused: ${clip(e && e.message, 400)}`); throw new Error('the local model runtime could not be granted: is the server running and does the model support tools?'); }
     log('permission granted for the local model; the first turn starts');
     const progress = (job, kind) => w.db.prepare("SELECT json_extract(data_json, '$.tool') t FROM job_events WHERE job_id = ? AND type = 'attempt.progress' AND json_extract(data_json, '$.t') = ? ORDER BY rowid").all(job, kind).map((e) => e.t);
 
-    let message = `${o.brief}\n\nThe project already has a src/ and a test/ folder; add your files there. When the tests pass, register the change with changeset_register.`;
+    let message = `${o.brief}\n\n${FIXTURES[o.fixture].where} Run the tests with sandbox_exec using ${FIXTURES[o.fixture].test}. When the tests pass, register the change with changeset_register.`;
     let sessionId = null; let artifactId = null; let candidate = null;
     for (let n = 1; n <= o.maxTurns && candidate === null; n++) {
       const t0 = Date.now();
