@@ -249,7 +249,9 @@ test('DOC10-12 section 49 says what is and is not proven, and the wiring default
   assert.match(s49, /`NEXUS_ENABLE_V10=1`/);
   assert.match(s49, /`DELIVERED_SUB_PHASE`[\s\S]*`B2B_E2E_STUB`/);
   assert.match(s49, /No real model has been run/);
-  assert.match(s49, /XA1 to XA7 and XA6b[\s\S]{0,200}has not been run/);
+  // The real-Docker agent suite was run on 2026-10-28 (test:exec PASS 6/6): the doc says so, and still says the model in it is ScriptedRuntime.
+  assert.match(s49, /XA1 to XA7 and XA6b[\s\S]{0,200}was run on 2026-10-28 and passes/);
+  assert.match(s49, /`ScriptedRuntime`, so this proves the container's isolation[\s\S]{0,200}not a real model/);
   const spec = fs.readFileSync(path.join(ROOT, 'src/shared/nexus/domainSpec.ts'), 'utf8');
   assert.match(spec, /export const CURRENT_SUB_PHASE: SubPhase = 'B2b';/);
 });
