@@ -889,3 +889,8 @@ test('R7-3 the accept refusal base_moved reads main\'s sentence (mirrored word f
   assert.doesNotMatch(s, /base_moved|_/);
   assert.equal(ENV.AGENT_REASON_MESSAGES.base_moved, s, 'main words it the same');
 });
+
+test('V9-1 after a revoke the setup sheet reads #51 again soon: the revoke answer is built before the probe refills, so without it the runtime list would show one row until the next 45 s re-ask', () => {
+  const sheet = src('components/ExecutionSetupSheet.tsx');
+  assert.match(sheet, /if \(op === 'grant'\) checkAgain\(\);\s*\/\/[^\n]*\s*else consent\.reloadAfter\(CHECK_AGAIN_REREAD_MS \+ 500\);/);
+});

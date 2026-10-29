@@ -65,6 +65,8 @@ function SetupBody({ onClose }: { onClose: () => void }) {
     setBusy(null);
     setNote(r.ok ? { text: op === 'grant' ? 'The network permission was granted.' : 'The network permission was revoked.', alert: false } : { text: agentFailText(r), alert: true });
     if (op === 'grant') checkAgain();
+    // Revoking answers with the probe's cache not yet refilled, so the runtime list would show one row until the next 45 s re-ask: read #51 again soon (no new health probe).
+    else consent.reloadAfter(CHECK_AGAIN_REREAD_MS + 500);
   };
 
   const useRuntime = async (c: RuntimeChoice) => {
