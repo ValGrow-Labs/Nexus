@@ -722,7 +722,7 @@ test('LM25 the files the task names: the first message says to write them first,
 test('LM26 a command\'s answer is given as plain lines (exit code, no runner noise), says where the first error is, and the next step is told: fix, run again, register; every nudge is bounded', async () => {
   const w = await world({}, { onCall: (name) => (name === 'sandbox_exec' ? EXEC_FAIL : 'ok:registered') });
   try {
-    const events = await run(w, [call('write_file', { path: 'src/a.js', content: 'x' }), call('sandbox_exec', { argv: ['node', '--test'], timeoutMs: 60000 }), { text: 'it failed' }, { text: 'still failed' }, { text: 'sorry' }, { text: 'sorry' }],
+    const events = await run(w, [call('write_file', { path: 'src/a.js', content: 'x' }), call('sandbox_exec', { argv: ['node', '--test'], timeoutMs: 60000 }), { text: 'it failed' }, { text: 'still failed' }, { text: 'sorry' }, { text: 'sorry' }, { text: 'sorry again' }],
       { reqOver: { message: 'Write src/a.js and run its tests.' } });
     assertRuntimeContract(events, { terminal: 'run.completed' });
     const chats = w.model.chats();
@@ -738,7 +738,10 @@ test('LM26 a command\'s answer is given as plain lines (exit code, no runner noi
     assert.deepEqual(loopMod.failingTests('not ok 1 - x\n  not ok 2 - y\nnot ok 3 - x\nok 4 - z'), ['x', 'y']);
     // The reply that only talks is nudged to fix, naming the file; two nudges of a kind, then the turn ends.
     assert.match(chats[3].messages.slice(-1)[0].content, /The last run failed\. The first error is in src\/a\.js line 42/);
-    assert.equal(chats.length, 5, 'the call, the run, the text, two nudged texts: the third text ends the turn');
+    assert.equal(chats.length, 7, 'the call, the run, two fix nudges, two give-up nudges, then the turn ends');
+    // After two fix nudges that changed nothing, the work is not lost: the model is told to register it as it is, saying what fails.
+    assert.match(chats[5].messages.slice(-1)[0].content, /Your fixes did not make the tests pass.*register the change anyway.*which tests still fail \(a\)/);
+    assert.equal(w.mcp.calls().filter((c) => c.params.name === 'changeset_register').length, 0, 'nothing is registered by the runtime itself: only the model own call does it');
     // The helpers alone.
     assert.equal(loopMod.failureLocation('x\n# /workspace/node_modules/z/i.js:3\n# /workspace/test/t.js:9:1'), 'test/t.js line 9');
     assert.equal(loopMod.failureLocation('nothing here'), null);
@@ -790,4 +793,39 @@ test('LM28 a call that ends with its closing braces missing is repaired (the con
     assert.match(nudge, /not valid JSON, so it was not run/);
     assert.match(nudge, /\{"name": "<tool>"/);
   } finally { await w.stop(); }
+});
+
+test('LM29 the fixes did not work, the model registers anyway when told: the change is kept, with the failing summary the model wrote', async () => {
+  const w = await world({}, { onCall: (name) => (name === 'sandbox_exec' ? EXEC_FAIL : 'ok:registered') });
+  try {
+    const events = await run(w, [call('write_file', { path: 'src/a.js', content: 'x' }), call('sandbox_exec', { argv: ['node', '--test'], timeoutMs: 60000 }), { text: 'it failed' }, { text: 'still failed' }, { text: 'sorry' },
+      call('changeset_register', { title: 't', summary: 'test a still fails', clientKey: 'cs1' }), { text: 'done' }], { reqOver: { message: 'Write src/a.js and run its tests.' } });
+    assertRuntimeContract(events, { terminal: 'run.completed' });
+    const reg = w.mcp.calls().filter((c) => c.params.name === 'changeset_register');
+    assert.equal(reg.length, 1);
+    assert.equal(reg[0].params.arguments.summary, 'test a still fails');
+    assert.equal(w.model.chats().length, 7, 'nothing is nudged after the registration');
+  } finally { await w.stop(); }
+});
+
+test('LM30 stuck on one failing call after files were written: the work is not thrown away; once, the model is told to register it as it is; stuck again, the turn ends protocol', async () => {
+  const w = await world();
+  try {
+    const rd = call('read_file', { path: 'missing.txt' });
+    const events = await run(w, [call('write_file', { path: 'a.txt', content: 'a' }), rd, rd, rd, rd, rd, call('changeset_register', { title: 't', summary: 'stuck, as is', clientKey: 'cs1' }), { text: 'done' }],
+      { reqOver: { message: 'Do the thing.' } });
+    assertRuntimeContract(events, { terminal: 'run.completed' });
+    assert.equal(w.mcp.calls().filter((c) => c.params.name === 'changeset_register').length, 1);
+    const stuck = w.model.chats()[6].messages.slice(-1)[0].content;
+    assert.match(stuck, /repeating the same call.*changeset_register now/);
+  } finally { await w.stop(); }
+  // Stuck again after that: the turn ends as it always did.
+  const w2 = await world();
+  try {
+    const rd = call('read_file', { path: 'missing.txt' });
+    const events = await run(w2, (_b, i) => (i === 0 ? call('write_file', { path: 'a.txt', content: 'a' }) : rd),
+      { reqOver: { message: 'Do the thing.' } });
+    assertRuntimeContract(events, { terminal: 'run.failed' });
+    assert.equal(terminal(events).code, 'protocol');
+  } finally { await w2.stop(); }
 });

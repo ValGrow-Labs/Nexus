@@ -24,7 +24,7 @@ import { chat, type ChatMessage, type ChatTool, type ClientFailure } from './cli
 import type { Target } from './endpoint';
 import { FILE_TOOL_NAMES, checkRelPath, type FileTools } from './fileTools';
 import { McpClient, redactToken } from './mcpClient';
-import { HINT_FINISH, HINT_READ_FIX, HINT_RUN, NOTE_TEXT_CALL, NUDGE_BAD_CALL, NUDGE_EMPTY, NUDGE_FINISH, NUDGE_FORMAT, NUDGE_REGISTER, NUDGE_RUN, hintFix, hintMissing, nudgeFix, nudgeMissing, nudgeNoTools } from './prompt';
+import { HINT_FINISH, HINT_READ_FIX, HINT_RUN, NOTE_TEXT_CALL, NUDGE_BAD_CALL, NUDGE_EMPTY, NUDGE_FINISH, NUDGE_FORMAT, NUDGE_REGISTER, NUDGE_RUN, NUDGE_STUCK, hintFix, hintMissing, nudgeFix, nudgeGiveUp, nudgeMissing, nudgeNoTools } from './prompt';
 import { canonicalToolName, coerceArgs, coerceBySchema, looksLikeCall, recoverTextCalls } from './toolCalls';
 
 /** The most tool calls any turn may make, whatever its cap says. */
@@ -211,6 +211,7 @@ export async function* runLoop(d: LoopDeps): AsyncGenerator<RuntimeEvent> {
   /** Where the last failed run put its first error (`src/a.js line 4`), when it said. */
   let lastWhere: string | null = null;
   let lastFailing: string[] = [];
+  let gaveUp = false;
   const wrote = new Set<string>();
   const hasSandbox = d.mcpSchemas.has('sandbox_exec');
   const missingFiles = (): string[] => d.taskFiles.filter((f) => !wrote.has(f));
@@ -282,7 +283,12 @@ export async function* runLoop(d: LoopDeps): AsyncGenerator<RuntimeEvent> {
           if (registered) { /* the change is registered: nothing is left */ }
           else if (missing.length > 0) { kind = 'missing'; nudge = nudgeMissing(missing); }
           else if (wroteFiles && hasSandbox && lastRun === 'none') { kind = 'run'; nudge = NUDGE_RUN; }
-          else if (wroteFiles && lastRun === 'fail') { kind = 'fix'; nudge = nudgeFix(lastWhere, lastFailing); }
+          else if (wroteFiles && lastRun === 'fail') {
+            // The model could not fix it in two tries: its files are not lost. They are registered as they are, with a summary that says what
+            // still fails; the platform's own gate (the tests run again before review) judges them and the next turn can iterate.
+            if (hasChangeset && (nudgesByKind.get('fix') ?? 0) >= MAX_NUDGES) { kind = 'giveup'; nudge = nudgeGiveUp(lastFailing); }
+            else { kind = 'fix'; nudge = nudgeFix(lastWhere, lastFailing); }
+          }
           else if (hasChangeset && wroteFiles) { kind = 'finish'; nudge = lastRun === 'pass' ? NUDGE_FINISH : NUDGE_REGISTER; }
           if (nudge !== null) {
             if ((nudgesByKind.get(kind) ?? 0) >= MAX_NUDGES) nudge = null; else nudgesByKind.set(kind, (nudgesByKind.get(kind) ?? 0) + 1);
@@ -380,8 +386,20 @@ export async function* runLoop(d: LoopDeps): AsyncGenerator<RuntimeEvent> {
       if (stop3) { yield usageEvent(); yield stop3; return; }
       const note = fromText && i === 0 ? `\n${NOTE_TEXT_CALL}` : '';
       toolMsg(`${ok || content.startsWith('ERROR') ? '' : 'ERROR: '}${content}${note}${hint ? `\n${hint}` : ''}`);
-      if ((fails.get(key) ?? 0) >= REPEAT_FAIL_ABORT) { yield usageEvent(); yield failed('protocol', 'the model kept repeating a failing tool call'); return; }
-      if (sameRun >= REPEAT_SAME_ABORT) { yield usageEvent(); yield failed('protocol', 'the model kept repeating the same tool call'); return; }
+      const stuckFail = (fails.get(key) ?? 0) >= REPEAT_FAIL_ABORT;
+      const stuckSame = sameRun >= REPEAT_SAME_ABORT;
+      if (stuckFail || stuckSame) {
+        // Stuck on one call. Work already written is not thrown away: once, the model is told to register it as it is (the platform's own
+        // gate judges it); a second time, or with nothing written, the turn ends as before.
+        if (hasChangeset && wroteFiles && !registered && !gaveUp) {
+          gaveUp = true; fails.clear(); sameRun = 0;
+          d.messages.push({ role: 'user', content: `${NUDGE_STUCK}${NUDGE_FORMAT}` });
+          continue;
+        }
+        yield usageEvent();
+        yield failed('protocol', stuckFail ? 'the model kept repeating a failing tool call' : 'the model kept repeating the same tool call');
+        return;
+      }
     }
     yield usageEvent();
   }

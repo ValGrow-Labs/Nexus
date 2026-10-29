@@ -113,6 +113,11 @@ const fixWhere = (where: string | null, failing: readonly string[]): string =>
 const FIX_HOW = 'If a test expects something the task does not ask for (a particular id value, say), change the test, not the code.';
 export const nudgeFix = (where: string | null, failing: readonly string[] = []): string =>
   `The last run failed.${fixWhere(where, failing)} Do not read the files again: fix the one that is wrong with write_file (the whole file), then run sandbox_exec again. ${FIX_HOW}`;
+/** The fixes did not work: register the work as it is, saying what fails, so it is kept and reviewed rather than lost. */
+export const nudgeGiveUp = (failing: readonly string[] = []): string =>
+  `Your fixes did not make the tests pass. Do not lose the work: register the change anyway so it can be reviewed. Call changeset_register now with a title, a summary that says which tests still fail${failing.length > 0 ? ` (${failing.join('; ')})` : ''}, and a clientKey (for example "cs1").`;
+/** The model repeats one call: keep the work by registering it as it is. */
+export const NUDGE_STUCK = 'You are repeating the same call and it leads nowhere. Do not lose the work: call changeset_register now with a title, a summary that says what works and what still fails, and a clientKey (for example "cs1").';
 export const NUDGE_FINISH = 'The work is done and the tests pass. Call changeset_register now with a title, a summary and a clientKey (for example "cs1"). That is the last step.';
 export const NUDGE_REGISTER = 'You wrote files but have not registered the change. If the work is finished and the tests pass, call changeset_register now with a title, a summary and a clientKey.';
 export const NOTE_TEXT_CALL = 'Note: that call was written as text and was run anyway. Next time use the tool-calling interface, not text.';
