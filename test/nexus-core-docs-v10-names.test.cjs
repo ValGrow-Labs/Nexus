@@ -102,9 +102,9 @@ test('DOC10-3 section 51.1 names every v10 table and states the stored ceilings 
 
 // ---------- structure ----------
 
-test('DOC10-4 Part IV has sections 49 to 61 in order, and the contents list links each of them', () => {
+test('DOC10-4 Part IV has sections 49 to 62 in order, and the contents list links each of them', () => {
   const heads = PART4.split('\n').filter((l) => /^## \d+\. /.test(l)).map((l) => Number(/^## (\d+)\./.exec(l)[1]));
-  assert.deepEqual(heads, [49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61]);
+  assert.deepEqual(heads, [49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62]);
   const contents = between('## Contents', '---');
   for (const n of heads) assert.ok(new RegExp(`^${n}\\. \\[`, 'm').test(contents), `section ${n} is in the contents`);
   assert.ok(contents.includes('[Part IV: Schema v10 and B2b](#part-iv-schema-v10-and-b2b)'));
@@ -114,6 +114,8 @@ test('DOC10-4 Part IV has sections 49 to 61 in order, and the contents list link
   for (const m of PART4.matchAll(/\]\(#([a-z0-9-]+)\)/g)) assert.ok(slugs.has(m[1]), `link target #${m[1]} exists`);
   // The probe section is added to the Revision 0 list, after section 60.
   assert.match(PART4, /## 61\. The Task 0 probe results and the STOP rules/);
+  // The local-model runtime section follows the probe section.
+  assert.match(PART4, /## 62\. The local-model runtime/);
 });
 
 test('DOC10-5 the two Part III corrections are made: test:exec passed 39 of 39 in stabilization, and nothing says it never passed', () => {
@@ -139,7 +141,8 @@ test('DOC10-6 Part IV points at no git-ignored report or ledger', () => {
 test('DOC10-7 the engine is named only in the adapter, change-set, limits, differences and probe sections', () => {
   const VENDOR = /claude|anthropic|hermes|sonnet|opus|haiku|openai|gpt-/i;
   const allowed = new Set([53, 56, 59, 60, 61]);
-  for (let n = 49; n <= 61; n++) {
+  // Section 62 (the local-model runtime) is checked like every neutral section: it names the server, never the engine.
+  for (let n = 49; n <= 62; n++) {
     if (allowed.has(n)) continue;
     assert.doesNotMatch(section(n), VENDOR, `section ${n} names no engine`);
   }
@@ -278,7 +281,8 @@ test('DOC10-13 the proxy records its decisions, a change set is not promotable, 
 });
 
 test('DOC10-14 the consent disclosure, the new-in-this-release note and the vendor allow-list are quoted as the code has them', () => {
-  const read = (rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8');
+  // Sources are read with CRLF folded to LF: a Windows checkout (core.autocrlf) holds some of them with CRLF, and the patterns below end at `\n`.
+  const read = (rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8').replace(/\r\n/g, '\n');
   // The consent disclosure: the doc quotes the committed string, word for word.
   const model = read('src/renderer/src/nexus/data/executionModel.ts');
   const m = /export const AGENT_STATE_DISCLOSURE =([\s\S]*?);\n/.exec(model);
@@ -346,8 +350,8 @@ test('DOC10-15 the preview verdict, the integration rewrite, the refresh bound a
   assert.match(section(56), /`no_session`/);
 });
 
-test('DOC10-16 the off reasons and their sentences, the five preview sentences and the 17 hashed allow-list lines are stated as the code has them', () => {
-  const read = (rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8');
+test('DOC10-16 the off reasons and their sentences, the five preview sentences and the 20 hashed allow-list lines are stated as the code has them', () => {
+  const read = (rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8').replace(/\r\n/g, '\n');
   const copy = read('src/renderer/src/nexus/data/errorCopy.ts');
   const s54 = section(54);
   const quoted = (name) => {
@@ -369,13 +373,14 @@ test('DOC10-16 the off reasons and their sentences, the five preview sentences a
   assert.deepEqual(sentences.map((x) => x[1]).sort(), ['binary_file', 'hidden_lines', 'too_large', 'truncated', 'unknown', 'unsafe_characters']);
   assert.equal(new Set(sentences.map((x) => x[2])).size, 6, 'six distinct sentences');
   assert.doesNotMatch(sentences[0][2], /agent (added|wrote)/i, 'hidden_lines makes no claim that the agent added a secret');
-  // The vendor allow-list pins each line by hash: 17 lines in all, as the doc says.
+  // The vendor allow-list pins each line by hash: 20 lines in all, as the doc says (17 before the local-model adapter's three:
+  // 2 in localModel/fileTools.ts and 1 in localModel/prompt.ts, its refusal of the agent CLI's per-worktree settings folder).
   const v5 = /const V5_ALLOWED = \{([\s\S]*?)\n\};/.exec(read('test/nexus-core-vendor-neutral.test.cjs'));
   assert.ok(v5);
   const hashes = [...v5[1].matchAll(/^\s*'[0-9a-f]{16}'/gm)].length;
-  assert.equal(hashes, 17);
-  assert.ok(section(59).includes('each of the 17 allowed lines'));
-  assert.ok(section(53).includes('each of the 17 allowed lines'));
+  assert.equal(hashes, 20);
+  assert.ok(section(59).includes('each of the 20 allowed lines'));
+  assert.ok(section(53).includes('each of the 20 allowed lines'));
 });
 
 test('DOC10-17 the base_moved sentence and the unsafe-character set are stated as the code has them', () => {
@@ -418,4 +423,102 @@ test('DOC10-17 the base_moved sentence and the unsafe-character set are stated a
   assert.match(git, /diff-tree/);
   assert.doesNotMatch(git, /submodule_change/);
   assert.match(section(56), /There is no `submodule_change` reason/);
+});
+
+// ---------- section 62: the local-model runtime, and the items and the collect rule that came with it ----------
+
+test('DOC10-18 section 62, the collect by-product rule and limits 81 to 88 are stated as the code has them', () => {
+  const read = (rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8').replace(/\r\n/g, '\n');
+  const s62 = section(62);
+  const lm = loadTs('src/shared/nexus/localModel.ts');
+  // The kind, the loopback rule and the five fixed reasons.
+  assert.equal(lm.LOCAL_MODEL_KIND, 'local-model');
+  assert.ok(s62.includes('`local-model`'));
+  assert.deepEqual([lm.normalizeLoopbackHost('localhost'), lm.normalizeLoopbackHost('127.0.0.1'), lm.normalizeLoopbackHost('[::1]'), lm.normalizeLoopbackHost('127.0.0.2'), lm.normalizeLoopbackHost('example.com')],
+    ['127.0.0.1', '127.0.0.1', '::1', null, null]);
+  for (const r of lm.LOCAL_MODEL_REASONS) assert.ok(s62.includes('`' + r + '`'), `section 62 names ${r}`);
+  assert.equal(lm.LOCAL_MODEL_REASONS.length, 5);
+  assert.ok(s62.includes('`127.0.0.1:11434`'));
+  assert.match(read('src/runner/runtimes/localModel/endpoint.ts'), /DEFAULT_ENDPOINT[^=]*= Object\.freeze\(\{ host: '127\.0\.0\.1', port: 11434 \}\)/);
+  // No proxy for this kind; the runner checks loopback and the canonical hash itself.
+  assert.match(read('src/runner/agentAttempt.ts'), /if \(plan\.runtime\.kind === LOCAL_MODEL_KIND\) \{[\s\S]*?loopbackConsentOk\(plan\.egress\)[\s\S]*?consent_mismatch/);
+  assert.match(s62, /starts \*\*no proxy\*\*/);
+  assert.match(s62, /every host must be a loopback address/);
+  assert.match(s62, /`consentHostsSha256`/);
+  assert.match(s62, /`hosts_sha256`/);
+  // The tools, the loop's bounds, the file limits and the tuning, as the code holds them.
+  const tools = read('src/runner/runtimes/localModel/fileTools.ts');
+  for (const t of ['read_file', 'write_file', 'list_files', 'delete_file']) {
+    assert.ok(tools.includes(`'${t}'`));
+    assert.ok(s62.includes('`' + t + '`'), `section 62 names ${t}`);
+  }
+  assert.match(tools, /readMaxBytes: 256 \* 1024, writeMaxBytes: 256 \* 1024, writeTotalBytes: 8 \* 1024 \* 1024, listMaxEntries: 400, listMaxDepth: 8/);
+  assert.match(s62, /256 KiB[\s\S]*8 MiB[\s\S]*400 entries and 8 levels/);
+  const core = /CORE_MCP_TOOLS: readonly string\[\] = Object\.freeze\(\[([^\]]*)\]\)/.exec(read('src/runner/runtimes/localModel/adapter.ts'));
+  assert.ok(core, 'CORE_MCP_TOOLS found');
+  const coreNames = [...core[1].matchAll(/'([a-z_]+)'/g)].map((m) => m[1]);
+  assert.deepEqual(coreNames, ['context_get', 'sandbox_exec', 'changeset_register']);
+  for (const t of coreNames) assert.ok(s62.includes('`' + t + '`'), `section 62 names ${t}`);
+  const loop = read('src/runner/runtimes/localModel/loop.ts');
+  const num = (name) => Number(new RegExp(`const ${name} = (\\d+);`).exec(loop)[1]);
+  assert.deepEqual([num('MAX_CONSECUTIVE_STRIKES'), num('MAX_TOTAL_STRIKES'), num('REPEAT_FAIL_NOTICE'), num('REPEAT_FAIL_ABORT'), num('REPEAT_SAME_ABORT'), num('MAX_CALLS_PER_REPLY'), num('MAX_NUDGES'), num('MAX_NUDGES_TOTAL')],
+    [4, 12, 3, 5, 6, 8, 2, 10]);
+  assert.match(loop, /export const MAX_TOOL_CALLS = 200;/);
+  assert.match(loop, /numCtx: 16384, numPredict: 4096/);
+  assert.match(loop, /costUsdCents: 0, estimated: false/);
+  assert.match(s62, /four in a row, or twelve in a turn/);
+  assert.match(s62, /failed three times[\s\S]*fifth failure, or six identical calls/);
+  assert.match(s62, /at most twice per kind, ten in all/);
+  assert.match(s62, /`num_ctx` 16384, `num_predict` 4096/);
+  assert.match(s62, /At most 8 calls of a reply are run/);
+  assert.match(s62, /`costUsdCents` is `0` and `estimated` is `false`/);
+  assert.match(s62, /The runtime registers nothing itself/);
+  // The probe asks for kinds, with the closed shape the protocol holds.
+  const proto = loadTs('src/shared/nexus/runnerProtocol.ts');
+  assert.equal(proto.PROBE_KINDS_MAX, 4);
+  assert.equal(proto.PROBE_KIND_RE.source, '^[a-z][a-z0-9_.-]{0,31}$');
+  assert.equal(proto.parseProbeKinds([]), null);
+  assert.deepEqual(proto.parseProbeKinds(['local-model', 'local-model']), ['local-model']);
+  assert.ok(s62.includes('`^[a-z][a-z0-9_.-]{0,31}$`'));
+  assert.match(s62, /one to four distinct runtime-kind ids/);
+  assert.match(s62, /\*\*checks nothing\*\*/);
+  assert.match(s62, /never runs the vendor CLI/);
+  assert.match(read('src/main/nexus/platform.ts'), /\.\.\.\(kinds \? \{ kinds \} : \{\}\)/);
+  // #51's ops, `turn_live`, and where the model is kept.
+  assert.match(read('src/main/nexusIpc/registerNexusIpc.ts'), /\['get', 'grant', 'revoke', 'switch', 'model'\] as const/);
+  for (const op of ['grant', 'switch', 'model']) assert.match(s62, new RegExp('\\| `' + op + '` \\|'));
+  for (const w of ['turn_live', 'runtime_unknown', 'bad_model']) assert.ok(s62.includes('`' + w + '`'), `section 62 names ${w}`);
+  assert.match(read('src/main/nexus/agents/agentService.ts'), /'a turn is running; finish or stop it before switching the runtime', 'turn_live'/);
+  assert.match(read('src/main/nexus/agents/budgetService.ts'), /op: 'model'/);
+  assert.match(read('src/main/nexus/agents/localModelSettings.ts'), /SETTINGS_ENTRY = 'opencode'/);
+  assert.match(s62, /V10_DDL` is unchanged/);
+  // The collect by-products: every pathspec of COLLECT_NOISE_EXCLUDE is named in section 56.3, with the reason.
+  const git = read('src/runner/gitWrite.ts');
+  const noise = /COLLECT_NOISE_EXCLUDE: readonly string\[\] = Object\.freeze\(\[([\s\S]*?)\]\);/.exec(git);
+  assert.ok(noise, 'COLLECT_NOISE_EXCLUDE found');
+  const specs = [...noise[1].matchAll(/':\(glob,exclude\)([^']+)'/g)].map((m) => m[1]);
+  assert.deepEqual(specs, ['**/__pycache__', '**/__pycache__/**', '**/*.pyc', '**/.pytest_cache', '**/.pytest_cache/**']);
+  const s563 = between('### 56.3 ', '### 56.4 ', section(56));
+  for (const p of specs) assert.ok(s563.includes('`' + p + '`'), `section 56.3 names ${p}`);
+  assert.match(s563, /`COLLECT_NOISE_EXCLUDE`/);
+  assert.match(s563, /binary `\.pyc`[\s\S]*Approve was refused/);
+  assert.match(git, /\.\.\.COLLECT_ALWAYS_EXCLUDE, \.\.\.COLLECT_NOISE_EXCLUDE\]/);
+  // Limits 81 to 88 exist and say what was ruled they say (DOC10-11 already pins that the numbering is consecutive).
+  const s59 = section(59);
+  const need = [
+    [/81\. \*\*Only the model server's default address can be granted/, '81'], [/127\.0\.0\.1:11434/, '81 names the default address'],
+    [/82\. \*\*Switching runtime needs a revoke, then a grant/, '82'],
+    [/83\. \*\*The host file tools check a path, then use it/, '83'], [/O_NOFOLLOW/, '83 names O_NOFOLLOW'],
+    [/84\. \*\*A server that is not running keeps the vendor reason code/, '84'], [/`runtime_not_installed`/, '84 names the code'],
+    [/85\. \*\*The chosen model is stored in the consent's audit rows/, '85'],
+    [/86\. \*\*A small local model has not completed a task/, '86'], [/`qwen2\.5-coder:7b`/, '86 names the model'], [/A successful real run is NOT verified/, '86 says not verified'],
+    [/87\. \*\*The real CLI runtime is still not verified with a real login/, '87'],
+    [/88\. \*\*The weather showcase did not use a model through Nexus/, '88'], [/handed to Nexus through the scripted runtime/, '88 says scripted']
+  ];
+  for (const [re, what] of need) assert.match(s59, re, what);
+  for (const h of ['7a2ae935', '960dc77b', 'ca0be7db']) assert.ok(s59.includes('`' + h + '`'), `item 86 cites ${h}`);
+  // The qualification in section 49 keeps the earlier sentence and adds the local-model facts; the caveat of item 64 stays.
+  assert.match(section(49), /No real model has been run/);
+  assert.match(section(49), /did not complete a task/);
+  assert.match(s59, /not verified with a real model/);
 });
