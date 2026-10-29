@@ -154,7 +154,7 @@ test('LS5 the picker rows: one per runtime, labels from the probe, a model list 
   assert.deepEqual([cli.models, cli.model, cli.action.op, cli.action.label, cli.action.disabled, cli.destination], [null, null, 'grant', 'Use this runtime', false, 'cli.example.com:443']);
   assert.deepEqual(local.models, [{ name: 'coder:7b', label: 'coder:7b', disabled: false }, { name: 'plain:1b', label: 'plain:1b (cannot use tools)', disabled: true }]);
   assert.equal(local.action.disabled, true, 'no model is chosen yet');
-  assert.equal(local.text, 'No local model is chosen yet. Choose one in Setup.');
+  assert.equal(local.text, 'No local model is chosen yet. Pick one from the model list under Agent runtime.');
   assert.equal(local.state, 'problem');
   // Picking a model that can use tools readies the button; one that cannot does not.
   const picked = X.runtimeChoices(view([opt(), localOpt()]), { 'local-model': 'coder:7b' })[1];
@@ -164,7 +164,7 @@ test('LS5 the picker rows: one per runtime, labels from the probe, a model list 
   assert.equal(X.runtimeChoices(view([opt(), localOpt()]), { 'local-model': 'unknown:1b' })[1].model, null, 'a name the list does not hold is ignored');
   // With a permission live the button switches; the runtime in use has none.
   const live = X.runtimeChoices(view([opt({ selected: true }), localOpt({ model: 'coder:7b', problem: null })], true));
-  assert.deepEqual([live[0].action, live[0].word, live[0].text.startsWith('In use.')], [null, 'In use', true]);
+  assert.deepEqual([live[0].action, live[0].word, live[0].text.startsWith('In use')], [null, 'In use', false]);
   assert.deepEqual([live[1].action.op, live[1].action.label, live[1].action.disabled], ['switch', 'Switch to this runtime', false]);
   // A local-only list still shows the picker (it has models to choose from).
   assert.equal(X.runtimeChoices(view([localOpt()])).length, 1);
@@ -239,7 +239,7 @@ test('LS7 the sheet and the model add no vendor word, no host and no code to the
     assert.deepEqual(hits, [], f);
   }
   const sheet = read('src/renderer/src/nexus/components/ExecutionSetupSheet.tsx');
-  assert.match(sheet, /runtimeChoices\(consent\.view, picked\)/);
+  assert.match(sheet, /runtimeChoices\(consent\.view, picked, runtimeMemory\.kind\(\)\)/);
   assert.match(sheet, /consent\.send\(/);
   assert.doesNotMatch(sheet, /127\.0\.0\.1|localhost|:11434/);
 });

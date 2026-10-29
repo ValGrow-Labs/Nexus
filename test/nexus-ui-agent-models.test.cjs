@@ -894,3 +894,66 @@ test('V9-1 after a revoke the setup sheet reads #51 again soon: the revoke answe
   const sheet = src('components/ExecutionSetupSheet.tsx');
   assert.match(sheet, /if \(op === 'grant'\) checkAgain\(\);\s*\/\/[^\n]*\s*else consent\.reloadAfter\(CHECK_AGAIN_REREAD_MS \+ 500\);/);
 });
+
+// ---------- V9b: the live click-through fixes ----------
+
+const v9opt = (o = {}) => ({ kind: 'cli-agent', label: 'Test Engine', version: '1', state: 'ready', signedIn: 'yes', selected: false, models: null, model: null, problem: null, hosts: ['cli.example.com:443'], ...o });
+const v9local = (o = {}) => v9opt({ kind: 'local-model', label: 'Local model (Test)', models: [{ name: 'coder:7b', tools: true }], model: null, problem: 'model_not_chosen', hosts: ['127.0.0.1:11434'], ...o });
+const v9view = (runtimes, live = false) => ({ runtimes, consent: { live, caps: null, hostsCount: 0, grantedAt: null, hosts: [] } });
+
+test('V9-2 the not-chosen sentence points at the model list (the person is in Setup when they read it), main and renderer word it the same', () => {
+  const s = 'No local model is chosen yet. Pick one from the model list under Agent runtime.';
+  assert.equal(E.AGENT_REASON_TEXT.local_model_not_chosen, s);
+  assert.equal(ENV.AGENT_REASON_MESSAGES.local_model_not_chosen, s);
+  assert.ok(!s.includes('in Setup'));
+});
+
+test('V9-3 the runtime in use says "In use" once: the word carries it, the text does not repeat it', () => {
+  const rows = X.runtimeChoices(v9view([v9opt({ selected: true }), v9local({ model: 'coder:7b', problem: null })], true));
+  assert.equal(rows[0].word, 'In use');
+  assert.ok(!rows[0].text.startsWith('In use'));
+  assert.equal(rows[0].text, 'The agent program is installed and signed in.');
+});
+
+test('V9-4 the picker is remembered for the session: the model picked and the runtime last in use survive a revoke and a reopened sheet; a revoke never leaves a Grant button that would pick the program', () => {
+  X.runtimeMemory.clear();
+  const live = v9view([v9opt(), v9local({ selected: true, model: 'coder:7b', problem: null })], true);
+  assert.deepEqual(X.runtimeInUse(live), { kind: 'local-model', model: 'coder:7b' });
+  assert.equal(X.runtimeInUse(v9view([v9opt(), v9local()], false)), null, 'nothing in use without a live permission');
+  const u = X.runtimeInUse(live);
+  X.runtimeMemory.rememberInUse(u.kind, u.model);
+  // After the revoke (and a fresh sheet): the model is still picked, the runtime is named as the last one, its button grants it with that model.
+  const after = X.runtimeChoices(v9view([v9opt(), v9local()], false), X.runtimeMemory.models(), X.runtimeMemory.kind());
+  assert.deepEqual([after[1].model, after[1].action.op, after[1].action.disabled], ['coder:7b', 'grant', false]);
+  assert.ok(after[1].text.includes('It was the one in use before the permission ended.'));
+  assert.ok(!after[0].text.includes('before the permission ended'));
+  // The permission row of the default runtime loses its Grant button while the picker is shown and nothing is live; Revoke is untouched.
+  const rows = [{ id: 'agent-consent', label: 'Agent network permission', state: 'problem', word: 'Needs attention', text: 'Not granted. Granting lets x.', action: null, prepare: null, consent: { op: 'grant', label: 'Grant permission' } }];
+  const fixed = X.pickerPermissionRows(rows, { picker: true, live: false });
+  assert.equal(fixed[0].consent, undefined);
+  assert.ok(fixed[0].text.includes('Use a runtime under Agent runtime'));
+  assert.equal(X.pickerPermissionRows(rows, { picker: false, live: false })[0].consent.op, 'grant', 'no picker: the row is as it was');
+  const revoke = [{ ...rows[0], consent: { op: 'revoke', label: 'Revoke permission' } }];
+  assert.equal(X.pickerPermissionRows(revoke, { picker: true, live: true })[0].consent.op, 'revoke');
+  X.runtimeMemory.clear();
+  assert.equal(X.runtimeMemory.kind(), null);
+  const sheet = src('components/ExecutionSetupSheet.tsx');
+  assert.ok(sheet.includes('useState<Record<string, string>>(() => runtimeMemory.models())'));
+  assert.ok(sheet.includes('runtimeMemory.rememberModel(c.kind, model)'));
+  assert.ok(sheet.includes('runtimeMemory.rememberInUse(c.kind, c.model)'));
+  assert.ok(sheet.includes('pickerPermissionRows(baseRows'));
+});
+
+test('V9-5 layout pins: the notice strip is bounded and scrolls (the bench keeps its height), the message box shares a row with its button, the title takes no focus ring', () => {
+  const x = fs.readFileSync(path.join(NEXUS, 'styles', 'execution.css'), 'utf8');
+  assert.ok(x.includes('.nx-xstrip { flex: none; max-height: 32vh; overflow-y: auto; }'));
+  assert.ok(x.includes('.nx-ag__form { grid-template-columns: minmax(0, 1fr) auto;'));
+  assert.ok(fs.readFileSync(path.join(NEXUS, 'styles', 'project.css'), 'utf8').includes('.nx-surface__title:focus, .nx-surface__title:focus-visible { outline: none; }'));
+});
+
+test('V9-6 the project agent is asked with the same words in the panel and in the intent line', () => {
+  const il = src('intent/IntentLine.tsx');
+  assert.ok(il.includes("aria-label={mode === 'agent' ? 'Ask the agent' : 'Send'}"));
+  assert.ok(il.includes("{mode === 'agent' ? 'Ask the agent' : 'Send'}</span>"));
+  assert.ok(src('agent/AgentPanel.tsx').includes("'Ask the agent'}</Button>"));
+});

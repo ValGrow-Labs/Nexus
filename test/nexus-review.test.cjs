@@ -11,7 +11,9 @@ test('groups by kind in a fixed order, paths sorted', () => {
 
 test('empty input gives no groups', () => { assert.deepEqual(groupChanges([]), []); });
 
-test('the phase note says why accept and discard are missing', () => {
+test('the note says why accept and discard are missing here, and where an agent’s change is accepted and merged (V9: it no longer says that accepting "arrives" later)', () => {
   assert.match(REVIEW_PHASE_NOTE, /accept/i);
   assert.match(REVIEW_PHASE_NOTE, /discard/i);
+  assert.match(REVIEW_PHASE_NOTE, /merged/);
+  assert.doesNotMatch(REVIEW_PHASE_NOTE, /arrives|until then/i);
 });

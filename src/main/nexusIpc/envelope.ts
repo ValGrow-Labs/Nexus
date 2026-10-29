@@ -94,7 +94,7 @@ export const AGENT_REASON_MESSAGES: Readonly<Record<string, string>> = Object.fr
   runtime_version_unsupported: 'The installed agent program is not a version Nexus supports.',
   runtime_error: 'The agent could not be checked. Open Setup and check again.',
   runtime_mismatch: 'The agent program installed is not the one that was given permission.',
-  local_model_not_chosen: 'No local model is chosen yet. Choose one in Setup.',
+  local_model_not_chosen: 'No local model is chosen yet. Pick one from the model list under Agent runtime.',
   local_model_endpoint: 'The local model address is not on this computer, or is not the one that was given permission. Check it in Setup.',
   local_model_missing: 'The chosen local model is not installed on this computer. Choose another in Setup.',
   local_model_no_tools: 'The chosen local model cannot use tools, which agent turns need. Choose another in Setup.',

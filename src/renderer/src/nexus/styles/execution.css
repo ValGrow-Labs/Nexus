@@ -2,6 +2,11 @@
    kind viewers, dev deployments, the writing sheet. Tokens only. Status is always words; a rule tells rows apart. */
 .nx-xstrip { display: grid; gap: var(--nx-s2); padding: var(--nx-s2) var(--nx-s4); border-bottom: 1px solid var(--nx-line); background: var(--nx-surface); }
 .nx-xstrip:empty { display: none; }
+/* The notices and the open agent panel may take about a third of the window and scroll inside it, so the bench below keeps a usable height
+   (the panel grows with the conversation log; the bench never has to give up all its room). */
+.nx-xstrip { flex: none; max-height: 32vh; overflow-y: auto; }
+@media (max-height: 760px) { .nx-xstrip { max-height: 28vh; } }
+@media (max-width: 767px) { .nx-xstrip { max-height: none; overflow-y: visible; } }
 .nx-exn { padding: var(--nx-s2) var(--nx-s3); }
 
 /* Approval rows (project/ApprovalsSection.tsx) and dev deployment rows (project/DeploymentsSection.tsx). */
@@ -124,6 +129,11 @@
 .nx-ag__status { font-weight: 600; color: var(--nx-text-2); font-size: 12.5px; }
 .nx-ag__body, .nx-ag__form { display: grid; gap: var(--nx-s2); font-size: 12.5px; }
 .nx-ag__form label { color: var(--nx-text-3); font-weight: 600; font-size: 12px; }
+/* The message box and its button share a row on a wide window, so the open panel stays short. */
+@media (min-width: 768px) {
+  .nx-ag__form { grid-template-columns: minmax(0, 1fr) auto; align-items: end; }
+  .nx-ag__form > p, .nx-ag__form > label, .nx-ag__form > select { grid-column: 1 / -1; }
+}
 .nx-ag__select { padding: 5px 8px; border: 1px solid var(--nx-line-strong); border-radius: var(--nx-r-ctl); background: var(--nx-surface); color: var(--nx-ink); font: 400 12.5px/1.3 var(--nx-font); }
 .nx-ag__sessions, .nx-ag__list { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--nx-s2); }
 .nx-ag__session { display: grid; gap: var(--nx-s1); padding: var(--nx-s2) var(--nx-s3); border: 1px solid var(--nx-line); border-left: 3px solid var(--nx-line-strong); border-radius: var(--nx-r-obj); background: var(--nx-surface); }

@@ -57,6 +57,8 @@
 .nx-passport__actions { display: flex; flex-wrap: wrap; gap: var(--nx-s2); }
 .nx-passport__note { margin: 0; color: var(--nx-text-2); }
 .nx-surface__title { view-transition-name: nx-focus; }
+/* The title takes focus when a tool opens (a landing point for assistive tech, not a control): no ring around it, as on the pages. */
+.nx-surface__title:focus, .nx-surface__title:focus-visible { outline: none; }
 :root[data-nx-vt] .nx-surface__title { view-transition-name: none; }
 ::view-transition-group(nx-focus) { animation-duration: var(--nx-t-shift); animation-timing-function: var(--nx-ease-in); }
 @media (prefers-reduced-motion: reduce) { ::view-transition-group(*), ::view-transition-old(*), ::view-transition-new(*) { animation: none !important; } }

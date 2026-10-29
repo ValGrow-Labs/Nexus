@@ -187,8 +187,8 @@ export function IntentLine({ summoned = false, onClose }: { summoned?: boolean; 
             </ul>
           )}
         </div>
-        <button type="submit" className="nx-btn nx-btn--primary" aria-label="Send" disabled={!draft.trim() || sending}>
-          <Icon name="send" size={15} /><span className="nx-intent__send-text">Send</span>
+        <button type="submit" className="nx-btn nx-btn--primary" aria-label={mode === 'agent' ? 'Ask the agent' : 'Send'} disabled={!draft.trim() || sending}>
+          <Icon name="send" size={15} /><span className="nx-intent__send-text">{mode === 'agent' ? 'Ask the agent' : 'Send'}</span>
         </button>
         {summoned && onClose && (
           <button type="button" className="nx-btn nx-btn--quiet nx-iconbtn" aria-label="Close" title="Close" onClick={onClose}>

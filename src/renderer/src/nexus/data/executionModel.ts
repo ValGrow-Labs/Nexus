@@ -409,10 +409,45 @@ const runtimeWord = (o: AgentRuntimeOptionView): { word: string; text: string; o
 };
 
 /**
+ * What the person last picked in the setup sheet, for this session only (never stored): the runtime that was in use and the model
+ * chosen per runtime. Closing the sheet or revoking the permission does not forget it, so the picker comes back as it was left
+ * and "Use this runtime" grants that same runtime and model again.
+ */
+const memory: { kind: string | null; models: Record<string, string> } = { kind: null, models: {} };
+export const runtimeMemory = {
+  models: (): Record<string, string> => ({ ...memory.models }),
+  kind: (): string | null => memory.kind,
+  rememberModel(kind: string, model: string): void { memory.models[kind] = model; },
+  /** The runtime in use (with its model, when it serves models). */
+  rememberInUse(kind: string, model: string | null): void { memory.kind = kind; if (model) memory.models[kind] = model; },
+  clear(): void { memory.kind = null; memory.models = {}; }
+};
+
+/** The runtime in use in a #51 answer, for the memory: its kind and model. Null when no permission is live. */
+export function runtimeInUse(view: Pick<AgentConsentView, 'runtimes' | 'consent'> | null | undefined): { kind: string; model: string | null } | null {
+  if (!view || !view.consent.live || !Array.isArray(view.runtimes)) return null;
+  const r = view.runtimes.find((o) => o.selected);
+  return r ? { kind: r.kind, model: r.model ?? null } : null;
+}
+
+/**
+ * With the runtime picker shown and no permission live, the permission row has no Grant button: it describes the default runtime,
+ * so granting there would silently use the program instead of the runtime the person picked. Each runtime's own row grants its own.
+ */
+export function pickerPermissionRows(rows: readonly SetupRow[], o: { picker: boolean; live: boolean }): SetupRow[] {
+  if (!o.picker || o.live) return [...rows];
+  return rows.map((r) => {
+    if (r.id !== 'agent-consent' || !r.consent || r.consent.op !== 'grant') return r;
+    const { consent: _grant, ...rest } = r;
+    return { ...rest, text: 'Not granted. Agent turns need it. Use a runtime under Agent runtime to grant it; the destination it reaches is shown on that runtime’s row.' };
+  });
+}
+
+/**
  * The picker's rows from #51's runtimes. Empty unless the probe reported more than one runtime (or one that serves models): with a
  * single runtime the sheet is as it always was. `chosen`: the model the person picked per runtime in the open sheet.
  */
-export function runtimeChoices(view: Pick<AgentConsentView, 'runtimes' | 'consent'> | null | undefined, chosen: Readonly<Record<string, string>> = {}): RuntimeChoice[] {
+export function runtimeChoices(view: Pick<AgentConsentView, 'runtimes' | 'consent'> | null | undefined, chosen: Readonly<Record<string, string>> = {}, lastKind: string | null = null): RuntimeChoice[] {
   const list = view && Array.isArray(view.runtimes) ? view.runtimes : [];
   if (list.length === 0 || (list.length < 2 && list.every((r) => r.models === null))) return [];
   const live = view!.consent.live;
@@ -428,7 +463,8 @@ export function runtimeChoices(view: Pick<AgentConsentView, 'runtimes' | 'consen
     const usable = models === null ? w.ok : serverOk && picked;
     const text = models !== null && !o.selected && serverOk && picked ? 'The local model server is running and the chosen model can use tools.' : w.text;
     return { kind: o.kind, label: o.label ?? 'Agent runtime', selected: o.selected, state: usable || (o.selected && w.ok) ? 'ok' : w.word === 'Not checked' ? 'unknown' : 'problem', word: o.selected && w.ok ? 'In use' : usable && !w.ok ? 'Ready' : w.word,
-      text: o.selected ? `In use. ${w.text}` : text, destination, models, model,
+      // The word says "In use" once: the text repeats it only when the program has a problem the word does not show.
+      text: o.selected ? (w.ok ? w.text : `In use. ${w.text}`) : !live && lastKind === o.kind ? `${text} It was the one in use before the permission ended.` : text, destination, models, model,
       action: o.selected ? null : { op: live ? 'switch' : 'grant', label: live ? 'Switch to this runtime' : 'Use this runtime', disabled: !usable } };
   });
 }

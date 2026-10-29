@@ -1,8 +1,8 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import type { ImageProfileArg } from '@shared/nexus/ipc';
 import { nexusClient } from '../data/nexusClient';
 import { execFailText } from '../data/errorCopy';
-import { checkedLine, consentHostsOf, noticeFor, runtimeChoices, setupLead, setupSheet, type RuntimeChoice } from '../data/executionModel';
+import { checkedLine, consentHostsOf, noticeFor, pickerPermissionRows, runtimeChoices, runtimeInUse, runtimeMemory, setupLead, setupSheet, type RuntimeChoice } from '../data/executionModel';
 import { CHECK_AGAIN_REREAD_MS, useApprovals, useHealth, useHealthPoll, withIntent } from '../data/useExecution';
 import { useAgentConsent } from '../data/useAgents';
 import { agentFailText } from '../agent/agentModel';
@@ -38,13 +38,17 @@ function SetupBody({ onClose }: { onClose: () => void }) {
   // shown on that row and nowhere else.
   const consent = useAgentConsent(true);
   // Everything but the destinations comes from the shared health (the one fresh probe); #51 supplies only the destinations.
-  const rows = health ? setupSheet(health, { estimates, pending: pendingProfiles, hosts: consentHostsOf(consent.view) }) : [];
+  const baseRows = health ? setupSheet(health, { estimates, pending: pendingProfiles, hosts: consentHostsOf(consent.view) }) : [];
   // "Check again" refreshes health first; #51 is read again once that re-read has had its time (the probe lands before the next look).
   const checkAgain = () => { askAgain(); consent.reloadAfter(CHECK_AGAIN_REREAD_MS + 500); };
   const [busy, setBusy] = useState<string | null>(null);
   // The runtime picker (shown only when the probe reported more than one runtime): the model picked per runtime in this open sheet.
-  const [picked, setPicked] = useState<Record<string, string>>({});
-  const choices = runtimeChoices(consent.view, picked);
+  // Remembered for the session: a revoke, or closing and opening the sheet again, keeps the runtime and model that were picked.
+  const [picked, setPicked] = useState<Record<string, string>>(() => runtimeMemory.models());
+  const inUse = runtimeInUse(consent.view);
+  useEffect(() => { if (inUse) runtimeMemory.rememberInUse(inUse.kind, inUse.model); }, [inUse?.kind, inUse?.model]);
+  const choices = runtimeChoices(consent.view, picked, runtimeMemory.kind());
+  const rows = pickerPermissionRows(baseRows, { picker: choices.length > 0, live: !!consent.view?.consent.live });
   const [note, setNote] = useState<{ text: string; alert: boolean } | null>(null);
   const notice = noticeFor(availability);
   const lead = setupLead(availability, rows);
@@ -73,6 +77,7 @@ function SetupBody({ onClose }: { onClose: () => void }) {
     if (busy || !c.action || c.action.disabled) return;
     setBusy(`runtime:${c.kind}`); setNote(null);
     const model = c.model !== null ? { model: c.model } : {};
+    runtimeMemory.rememberInUse(c.kind, c.model);
     const r = await consent.send(c.action.op === 'switch' ? { op: 'switch', runtime: c.kind, ...model } : { op: 'grant', runtime: c.kind, ...model });
     setBusy(null);
     setNote(r.ok ? { text: c.action.op === 'switch' ? 'The agent runtime was changed.' : 'The network permission was granted for that runtime.', alert: false } : { text: agentFailText(r), alert: true });
@@ -82,6 +87,7 @@ function SetupBody({ onClose }: { onClose: () => void }) {
   // A model picked for the runtime in use changes at once (no new permission); for another runtime it only readies the button.
   const pickModel = async (c: RuntimeChoice, model: string) => {
     setPicked((p) => ({ ...p, [c.kind]: model }));
+    runtimeMemory.rememberModel(c.kind, model);
     if (!c.selected || busy) return;
     setBusy(`model:${c.kind}`); setNote(null);
     const r = await consent.send({ op: 'model', model });

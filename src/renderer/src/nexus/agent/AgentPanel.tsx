@@ -81,7 +81,7 @@ export function AgentPanel({ projectId, workspaceId }: { projectId: string; work
                 </>
               )}
               <label htmlFor={ids.field}>Message to the agent</label>
-              <textarea id={ids.field} className="nx-cs__comment" rows={3} maxLength={8000} value={message} onChange={(e) => { setMessage(e.target.value); setNote(null); }}
+              <textarea id={ids.field} className="nx-cs__comment" rows={2} maxLength={8000} value={message} onChange={(e) => { setMessage(e.target.value); setNote(null); }}
                 placeholder="Describe the change you want" />
               <div className="nx-passport__actions">
                 <Button variant="primary" type="submit" disabled={busy !== null || message.trim() === ''}>{busy === 'send' ? 'Sending…' : 'Ask the agent'}</Button>
