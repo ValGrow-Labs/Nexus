@@ -118,6 +118,8 @@ export const nudgeGiveUp = (failing: readonly string[] = []): string =>
   `Your fixes did not make the tests pass. Do not lose the work: register the change anyway so it can be reviewed. Call changeset_register now with a title, a summary that says which tests still fail${failing.length > 0 ? ` (${failing.join('; ')})` : ''}, and a clientKey (for example "cs1").`;
 /** The model repeats one call: keep the work by registering it as it is. */
 export const NUDGE_STUCK = 'You are repeating the same call and it leads nowhere. Do not lose the work: call changeset_register now with a title, a summary that says what works and what still fails, and a clientKey (for example "cs1").';
+/** The turn's time is nearly used up with work written and not registered. */
+export const NUDGE_TIME = 'Time is almost up. Do not lose the work: call changeset_register now with a title, a summary that says what works and what still fails, and a clientKey (for example "cs1").';
 export const NUDGE_FINISH = 'The work is done and the tests pass. Call changeset_register now with a title, a summary and a clientKey (for example "cs1"). That is the last step.';
 export const NUDGE_REGISTER = 'You wrote files but have not registered the change. If the work is finished and the tests pass, call changeset_register now with a title, a summary and a clientKey.';
 export const NOTE_TEXT_CALL = 'Note: that call was written as text and was run anyway. Next time use the tool-calling interface, not text.';

@@ -24,7 +24,7 @@ import { chat, type ChatMessage, type ChatTool, type ClientFailure } from './cli
 import type { Target } from './endpoint';
 import { FILE_TOOL_NAMES, checkRelPath, type FileTools } from './fileTools';
 import { McpClient, redactToken } from './mcpClient';
-import { HINT_FINISH, HINT_READ_FIX, HINT_RUN, NOTE_TEXT_CALL, NUDGE_BAD_CALL, NUDGE_EMPTY, NUDGE_FINISH, NUDGE_FORMAT, NUDGE_REGISTER, NUDGE_RUN, NUDGE_STUCK, hintFix, hintMissing, nudgeFix, nudgeGiveUp, nudgeMissing, nudgeNoTools } from './prompt';
+import { HINT_FINISH, HINT_READ_FIX, HINT_RUN, NOTE_TEXT_CALL, NUDGE_BAD_CALL, NUDGE_EMPTY, NUDGE_FINISH, NUDGE_FORMAT, NUDGE_REGISTER, NUDGE_RUN, NUDGE_STUCK, NUDGE_TIME, hintFix, hintMissing, nudgeFix, nudgeGiveUp, nudgeMissing, nudgeNoTools } from './prompt';
 import { canonicalToolName, coerceArgs, coerceBySchema, looksLikeCall, recoverTextCalls } from './toolCalls';
 
 /** The most tool calls any turn may make, whatever its cap says. */
@@ -36,6 +36,7 @@ const REPEAT_FAIL_ABORT = 5;
 const REPEAT_SAME_ABORT = 6;
 const MAX_CALLS_PER_REPLY = 8;
 const MAX_NUDGES = 2;
+const TIME_MARGIN_MIN_MS = 4 * 60_000;
 /** Every nudge of a turn together (each kind is also limited to MAX_NUDGES until the model makes progress). */
 const MAX_NUDGES_TOTAL = 10;
 const DELTA_MAX_BYTES_PER_TURN = 256 * 1024;
@@ -212,6 +213,8 @@ export async function* runLoop(d: LoopDeps): AsyncGenerator<RuntimeEvent> {
   let lastWhere: string | null = null;
   let lastFailing: string[] = [];
   let gaveUp = false;
+  let timeWarned = false;
+  const wallMs = Math.max(1, d.deadline - at());
   const wrote = new Set<string>();
   const hasSandbox = d.mcpSchemas.has('sandbox_exec');
   const missingFiles = (): string[] => d.taskFiles.filter((f) => !wrote.has(f));
@@ -227,6 +230,12 @@ export async function* runLoop(d: LoopDeps): AsyncGenerator<RuntimeEvent> {
     const stop = ended();
     if (stop) { yield usageEvent(); yield stop; return; }
     if (modelCalls >= maxModelCalls) { yield usageEvent(); yield failed('limit', 'the turn went over its model-call limit'); return; }
+    // Time is nearly up with work written and not registered: say so once, so the work is kept rather than lost to the wall clock.
+    // One slow reply can take minutes, so the margin is the larger of four minutes and a fifth of the turn's wall clock, never more than half of it.
+    if (!timeWarned && hasChangeset && wroteFiles && !registered && d.deadline - at() < Math.min(Math.max(TIME_MARGIN_MIN_MS, Math.floor(wallMs * 0.2)), Math.floor(wallMs * 0.5))) {
+      timeWarned = true;
+      d.messages.push({ role: 'user', content: `${NUDGE_TIME}${NUDGE_FORMAT}` });
+    }
     compact(d.messages, d.tuning.numCtx);
     const remaining = d.deadline - at();
     const r = await chat(d.target, { model: d.model, messages: d.messages, tools: [...d.tools], numCtx: d.tuning.numCtx, numPredict: d.tuning.numPredict },

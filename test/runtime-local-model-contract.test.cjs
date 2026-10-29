@@ -829,3 +829,20 @@ test('LM30 stuck on one failing call after files were written: the work is not t
     assert.equal(terminal(events).code, 'protocol');
   } finally { await w2.stop(); }
 });
+
+test('LM31 the wall clock is nearly used up with work written and not registered: the model is told once to register it now; a turn with time left, or nothing written, is not told', async () => {
+  const w = await world();
+  try {
+    // A 4 s wall clock: the margin is half of it, so after the 2.5 s reply the warning comes before the next model call.
+    const events = await run(w, [call('write_file', { path: 'a.txt', content: 'a' }), { delayMs: 2500, then: call('write_file', { path: 'b.txt', content: 'b' }) },
+      call('changeset_register', { title: 't', summary: 's', clientKey: 'cs1' }), { text: 'done' }],
+      { reqOver: { message: 'Do the thing.', limits: { wallClockMs: 4000, maxTurns: 30 } } });
+    assertRuntimeContract(events, { terminal: 'run.completed' });
+    const chats = w.model.chats();
+    const told = chats.filter((c) => c.messages.some((m) => m.role === 'user' && /Time is almost up/.test(m.content)));
+    assert.ok(told.length >= 1, 'the warning reached the model');
+    const times = chats.map((c) => c.messages.filter((m) => m.role === 'user' && /Time is almost up/.test(m.content)).length);
+    assert.ok(times.every((n) => n <= 1), 'only once in any history');
+    assert.equal(chats[0].messages.filter((m) => /Time is almost up/.test(m.content)).length, 0, 'not told before anything was written');
+  } finally { await w.stop(); }
+});
