@@ -463,6 +463,23 @@ test('collect never stages the agent tool\'s settings folder, whatever scope mai
   }
 });
 
+test('collect never stages the by-products of a test run (Python bytecode, pytest\'s cache), whatever scope main supplied, and still stages the real work next to them', async () => {
+  const w = world({ 'a.txt': 'a\n' });
+  await ensureWorktree(w.g, w.task, { dataRoot: w.dataRoot });
+  fs.mkdirSync(path.join(w.wt, 'src', '__pycache__'), { recursive: true });
+  fs.writeFileSync(path.join(w.wt, 'src', '__pycache__', 'm.cpython-311.pyc'), Buffer.from([0, 1, 2, 0, 255]));
+  fs.writeFileSync(path.join(w.wt, 'src', 'loose.pyc'), Buffer.from([0, 9, 0]));
+  fs.mkdirSync(path.join(w.wt, '.pytest_cache'), { recursive: true });
+  fs.writeFileSync(path.join(w.wt, '.pytest_cache', 'README.md'), 'cache\n');
+  fs.writeFileSync(path.join(w.wt, 'src', 'm.py'), 'x = 1\n');
+  for (const scope of [[], ['**'], ['src/**']]) {
+    const f = await collect(w.g, w.collectTask({ scope }), { dataRoot: w.dataRoot });
+    assert.deepEqual(f.paths, ['src/m.py'], JSON.stringify(scope));
+    const tree = git(w.repo, ['ls-tree', '-r', '--name-only', f.head]).stdout;
+    assert.equal(/__pycache__|\.pyc|\.pytest_cache/.test(tree), false, tree);
+  }
+});
+
 test('collect with several scope entries stages the entries that match even when another matches nothing (one add per entry); deletions count; all-unmatched stays "nothing changed"', async () => {
   const w = world({ 'a.txt': 'a\n', 'src/x.txt': 'x\n', 'docs/d.md': 'd\n' });
   await ensureWorktree(w.g, w.task, { dataRoot: w.dataRoot });

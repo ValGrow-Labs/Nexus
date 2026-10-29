@@ -481,6 +481,15 @@ export const COLLECT_ALWAYS_EXCLUDE: readonly string[] = Object.freeze([
 ]);
 
 /**
+ * Pathspecs every collect appends too: what a test or build run leaves behind as a by-product (Python bytecode and pytest's
+ * cache). It is never the author's work, and a binary `.pyc` in a change set makes the preview incomplete, so Approve would be
+ * refused (found by the real Docker showcase). A project's own `.gitignore` is not relied on: a fixture or a new repository has none.
+ */
+export const COLLECT_NOISE_EXCLUDE: readonly string[] = Object.freeze([
+  ':(glob,exclude)**/__pycache__', ':(glob,exclude)**/__pycache__/**', ':(glob,exclude)**/*.pyc', ':(glob,exclude)**/.pytest_cache', ':(glob,exclude)**/.pytest_cache/**'
+]);
+
+/**
  * Scans a zero-context unified diff (`git diff -U0`) for added lines, classifying each by `diffLineSecret` (blocking)
  * and, outside a lockfile, `looksSecret` (advisory). Only the path and the 1-based line number of a hit are kept: the
  * line's text is read here and discarded; it is never returned, logged or stored (D-B14).
@@ -599,7 +608,7 @@ export async function collect(g: HardenedGit, t: { repoPath: string; worktreePat
   // silently dropped the work in the entries that did match. An entry that matches nothing stages nothing (tolerated);
   // any other failure stops. `-A` keeps its meaning per entry (new, modified and deleted paths under it).
   const specs = scopePathspecs(t.scope);
-  const excludes = [...specs.filter(isExcludeSpec), ...COLLECT_ALWAYS_EXCLUDE];
+  const excludes = [...specs.filter(isExcludeSpec), ...COLLECT_ALWAYS_EXCLUDE, ...COLLECT_NOISE_EXCLUDE];
   for (const spec of specs.filter((s) => !isExcludeSpec(s))) {
     const add = await g.run(t.worktreePath, ['add', '-A', '--', spec, ...excludes], { neutral: n, worktree: wt, signal: o.signal, timeoutMs: 10 * GIT_TIMEOUT_MS, eol: true });
     if (add.code !== 0 && !/did not match any files/.test(add.stderr)) throw new GitFailure('git_failed', 'add failed');
