@@ -26,6 +26,7 @@
 .nx-workbench { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 /* The bench never gives up below 340px: on a short window the workbench scrolls instead (the notices and the open agent panel sit above it). */
 .nx-workbench { overflow-y: auto; }
+.nx-workbench > .nx-spine { flex: none; }
 .nx-bench { display: grid; grid-template-columns: 48px minmax(0, 1fr) 280px; min-height: 340px; flex: 1 0 340px; }
 .nx-rail { display: grid; align-content: start; gap: var(--nx-s1); padding: var(--nx-s2) 6px; border-right: 1px solid var(--nx-line); background: var(--nx-surface); }
 .nx-rail__item { height: 34px; display: grid; place-items: center; border: 0; border-radius: var(--nx-r-ctl); background: none; color: var(--nx-text-3); cursor: pointer; }

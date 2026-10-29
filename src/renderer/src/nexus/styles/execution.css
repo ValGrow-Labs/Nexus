@@ -2,10 +2,10 @@
    kind viewers, dev deployments, the writing sheet. Tokens only. Status is always words; a rule tells rows apart. */
 .nx-xstrip { display: grid; gap: var(--nx-s2); padding: var(--nx-s2) var(--nx-s4); border-bottom: 1px solid var(--nx-line); background: var(--nx-surface); }
 .nx-xstrip:empty { display: none; }
-/* The notices and the open agent panel may take about a third of the window and scroll inside it, so the bench below keeps a usable height
+/* The notices and the open agent panel may take about a quarter of the window and scroll inside it, so the bench below keeps a usable height
    (the panel grows with the conversation log; the bench never has to give up all its room). */
-.nx-xstrip { flex: none; max-height: 32vh; overflow-y: auto; }
-@media (max-height: 760px) { .nx-xstrip { max-height: 28vh; } }
+.nx-xstrip { flex: none; max-height: 26vh; overflow-y: auto; }
+@media (max-height: 760px) { .nx-xstrip { max-height: 24vh; } }
 @media (max-width: 767px) { .nx-xstrip { max-height: none; overflow-y: visible; } }
 .nx-exn { padding: var(--nx-s2) var(--nx-s3); }
 
