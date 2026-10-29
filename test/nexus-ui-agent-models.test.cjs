@@ -946,7 +946,7 @@ test('V9-4 the picker is remembered for the session: the model picked and the ru
 
 test('V9-5 layout pins: the notice strip is bounded and scrolls (the bench keeps its height), the message box shares a row with its button, the title takes no focus ring', () => {
   const x = fs.readFileSync(path.join(NEXUS, 'styles', 'execution.css'), 'utf8');
-  assert.ok(x.includes('.nx-xstrip { flex: none; max-height: 26vh; overflow-y: auto; }'));
+  assert.ok(x.includes('.nx-xstrip { flex: none; max-height: 30vh; overflow-y: auto; }'));
   assert.ok(x.includes('.nx-ag__form { grid-template-columns: minmax(0, 1fr) auto;'));
   const pc = fs.readFileSync(path.join(NEXUS, 'styles', 'project.css'), 'utf8');
   assert.ok(pc.includes('.nx-workbench { overflow-y: auto; }'));
