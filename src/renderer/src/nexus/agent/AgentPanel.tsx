@@ -5,17 +5,21 @@ import { useSessions, useTurnJobs } from '../data/useAgents';
 import { usePlatform } from '../data/platformStore';
 import { GLOSSARY } from '../data/glossary';
 import { useExecutionUi } from '../project/execContext';
+import { nextStep } from '../project/nextStepModel';
+import { useNexusUi } from '../state/uiStore';
 import { Button } from '../ui/Button';
 import { ApprovalList } from '../project/ApprovalsSection';
 import { SessionLog } from './SessionLog';
-import { CHOOSE_RUNTIME_BUTTON, REPO_APPROVAL_WAIT_TEXT, agentFailText, agentPanelModel, messageKey, startArgs } from './agentModel';
+import { CHOOSE_RUNTIME_BUTTON, REPO_APPROVAL_WAIT_TEXT, agentFailText, agentPanelModel } from './agentModel';
 
 /** How often the "working for 2 minutes" line is refreshed while a request runs (a slow tick: it is not a clock). */
 const PROGRESS_TICK_MS = 15_000;
+/** While a request is shown as live, its jobs are read again this often, so a missed change message can never leave it "working". */
+const LIVE_REFRESH_MS = 5_000;
 
 /** The AI helper on the project page: where it stands (getting ready, working, waiting for you), a message box when it can take one,
  *  and the project's conversations with their logs. A prerequisite that is not met is a sentence with the way forward, never a dead button. */
-export function AgentPanel({ projectId, workspaceId }: { projectId: string; workspaceId: string }) {
+export function AgentPanel({ projectId, workspaceId, reviewReady = 0, onReview }: { projectId: string; workspaceId: string; reviewReady?: number; onReview?: () => void }) {
   const ui = useExecutionUi();
   const { health, availability } = useHealth();
   const sessions = useSessions(projectId);
@@ -27,40 +31,38 @@ export function AgentPanel({ projectId, workspaceId }: { projectId: string; work
   const approvals = useApprovals(projectId);
   const repoWaiting = useMemo(() => (approvals.data ?? []).filter((a) => a.status === 'pending' && a.reason === 'repo.write_refs'), [approvals.data]);
   const [open, setOpen] = useState(false);
-  const [message, setMessage] = useState('');
-  const [target, setTarget] = useState<string>('new');
   const [busy, setBusy] = useState<string | null>(null);
   const [note, setNote] = useState<{ text: string; alert: boolean } | null>(null);
   const [logOf, setLogOf] = useState<string | null>(null);
   // The starting point a failed request asked for was saved from here: the old failure is answered until the next message.
   const [snapshotStarted, setSnapshotStarted] = useState(false);
-  const ids = { field: useId(), target: useId(), body: useId() };
+  const ids = { body: useId() };
   const running = panel.progress !== null;
   useEffect(() => {
     if (!running) return;
+    setSnapshotStarted(false);
     setNow(Date.now());
     const t = setInterval(() => setNow(Date.now()), PROGRESS_TICK_MS);
     return () => clearInterval(t);
   }, [running]);
+  useEffect(() => {
+    if (!running && panel.working === null) return;
+    const t = setInterval(() => { useExecStore.getState().bump(['jobs']); sessions.reload(); }, LIVE_REFRESH_MS);
+    return () => clearInterval(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [running, panel.working]);
   // A request that starts working opens the panel so it is seen; the person can close it again.
   useEffect(() => { if (panel.working || repoWaiting.length > 0) setOpen(true); }, [panel.working, repoWaiting.length]);
-  const openRows = panel.sessions.filter((s) => s.canSend);
-  const chosen = target !== 'new' && openRows.some((s) => s.id === target) ? target : 'new';
+  const focusIntent = useNexusUi((s) => s.focusIntent);
+  const step = nextStep({ panel, reviewReady, repoApprovalWaiting: repoWaiting.length > 0 });
+  const press = () => {
+    if (!step.action) return;
+    if (step.action.kind === 'ask') focusIntent();
+    else if (step.action.kind === 'setup') ui?.openSetup();
+    else onReview?.();
+  };
 
   const refresh = () => { usePlatform.getState().bumpRev(); useExecStore.getState().bump(['jobs']); sessions.reload(); };
-  const send = async () => {
-    if (busy) return;
-    // The pending-intent key holds a hash of the message, never the message itself.
-    const key = `agent:start:${projectId}:${chosen}:${messageKey(message)}`;
-    const built = startArgs({ projectId, workspaceId, sessionId: chosen === 'new' ? null : chosen, message, intentId: 'pending' });
-    if ('problem' in built) { setNote({ text: built.problem, alert: true }); return; }
-    setBusy('send'); setNote(null); setSnapshotStarted(false);
-    const r = await withIntent(key, (intentId) => nexusClient.agentStart({ ...built.args, intentId }));
-    setBusy(null);
-    if (r.ok) { setMessage(''); setNote({ text: `Sent. The AI helper works in a ${GLOSSARY.safeCopy.name}. You can keep using Nexus: its progress shows here.`, alert: false }); setLogOf(r.data.session.id); }
-    else setNote({ text: agentFailText(r), alert: true });
-    refresh();
-  };
   // A request that failed for want of a starting point: it is saved from here (the same action as the item page's).
   const snapshot = async () => {
     if (busy) return;
@@ -84,6 +86,11 @@ export function AgentPanel({ projectId, workspaceId }: { projectId: string; work
   const ending = panel.ending && repoWaiting.length === 0 && !snapshotStarted ? panel.ending : null;
   return (
     <section className="nx-ag" aria-labelledby={ids.body}>
+      <div className="nx-ag__next" data-tone={step.tone} role="status">
+        <p className="nx-ag__next-title">{step.title}</p>
+        <p className="nx-ag__next-text">{step.text}</p>
+        {step.action && <div className="nx-passport__actions"><Button variant="primary" onClick={press}>{step.action.label}</Button></div>}
+      </div>
       <div className="nx-ag__head">
         <h2 id={ids.body} className="nx-xq__title">AI helper</h2>
         <span className="nx-ag__status" role="status">{status}</span>
@@ -99,26 +106,7 @@ export function AgentPanel({ projectId, workspaceId }: { projectId: string; work
               {ui && <li><Button variant={panel.chooseRuntime ? 'primary' : 'quiet'} onClick={ui.openSetup}>{panel.chooseRuntime ? CHOOSE_RUNTIME_BUTTON : GLOSSARY.getReady.name}</Button></li>}
             </ul>
           )}
-          {panel.kind === 'ready' && (
-            <form className="nx-ag__form" onSubmit={(e) => { e.preventDefault(); void send(); }}>
-              <p className="nx-muted">{panel.lead}</p>
-              {openRows.length > 0 && (
-                <>
-                  <label htmlFor={ids.target}>Send to</label>
-                  <select id={ids.target} className="nx-ag__select" value={chosen} onChange={(e) => setTarget(e.target.value)}>
-                    <option value="new">A new conversation</option>
-                    {openRows.map((s) => <option key={s.id} value={s.id}>An open conversation ({s.turns})</option>)}
-                  </select>
-                </>
-              )}
-              <label htmlFor={ids.field} className="nx-visually-hidden">Message to the AI helper</label>
-              <textarea id={ids.field} className="nx-cs__comment" rows={2} maxLength={8000} value={message} onChange={(e) => { setMessage(e.target.value); setNote(null); }}
-                placeholder="Describe the change you want" />
-              <div className="nx-passport__actions">
-                <Button variant="primary" type="submit" disabled={busy !== null || message.trim() === ''}>{busy === 'send' ? 'Sending…' : 'Ask the AI helper'}</Button>
-              </div>
-            </form>
-          )}
+          {panel.kind === 'ready' && <p className="nx-muted">{panel.lead} Ask in the box at the bottom of the page.</p>}
           {/* While it works: what it is doing, for how long, that you can leave, and what happens next. */}
           {panel.progress && (
             <div className="nx-ag__progress" aria-label="Progress of the AI helper">

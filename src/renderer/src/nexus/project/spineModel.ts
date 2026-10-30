@@ -118,6 +118,13 @@ export function hasArtifactNodes(groups: SpineGroup[]): boolean {
   return groups.some((g) => g.nodes.some((n) => n.kind === 'artifact'));
 }
 
+/** What a saved item is called on the chain: the starting point and the tests in plain words, any other item by its own name. */
+export function nodeTitle(n: Extract<SpineNode, { kind: 'artifact' }>): string {
+  if (n.artifactKind === 'repository') return 'Starting point';
+  if (n.artifactKind === 'test_suite') return 'Your tests';
+  return n.name;
+}
+
 export function nodeLabel(n: SpineNode): string {
   if (n.kind === 'artifact') return `${kindLabel(n.artifactKind)} ${n.name}, version ${n.versionNo}, ${statusLabel(n.status)}`;
   if (n.kind === 'changes') return `Changes not saved yet, ${n.fileCount} ${n.fileCount === 1 ? 'file' : 'files'}`;

@@ -21,6 +21,9 @@ import { buildSpine, nodeLabel, spineLine } from './spineModel';
 import type { SpineNode } from './spineModel';
 import { useProjectGit } from './useProjectGit';
 import { Spine } from './Spine';
+import { ProjectHeader } from './ProjectHeader';
+import { ProgressSection } from './ProgressSection';
+import { changeSetRows } from './changeSetModel';
 import { ToolRail } from './ToolRail';
 import { FocusSurface } from './FocusSurface';
 import { Passport } from './PassportPanel';
@@ -307,6 +310,8 @@ function Workbench({ project, tool }: { project: Project; tool: ProjectTool }) {
     projectJobs.data ? { jobs: projectJobs.data, builds: draftBuilds } : null),
   [versionChecks.words, versionChecks.validators, artifacts, projectDeployments.data, projectJobs.data, draftBuilds]);
   const rails = useGroupRails(project.id, groups, artifacts, versionChecks.validators, draftBuilds);
+  // Suggested changes waiting for a decision: the card at the top points at them.
+  const reviewReady = useMemo(() => changeSetRows(artifacts).filter((r) => r.reviewable).length, [artifacts]);
   const hasSde = (idx.byProject.get(project.id) ?? []).some((r) => r.status === 'active' && r.workspaceId === 'sde');
   // A brand-new project: the three steps of "Your first build", until it has any suggested changes.
   const firstLine = firstBuildLine({ hasAiHelper: hasSde, loaded: artifactsLoaded, artifacts });
@@ -325,15 +330,18 @@ function Workbench({ project, tool }: { project: Project; tool: ProjectTool }) {
     <ExecutionUiContext.Provider value={execUi}>
     <div className="nx-workbench">
       {mobile && <MobileRuns projectId={project.id} />}
-      <Spine groups={groups} selectedId={tool === 'completion' || tool === 'runs' ? '' : node.id} onSelect={onSelect}
-        line={line} onRetryLine={reloadArtifacts} truncated={artifactsTruncated} focusRequest={focusRequest} onFocused={focused} checks={checks} rails={rails} />
+      <ProjectHeader name={project.name} kind={groups[0]?.label ?? 'Project'} git={git} />
       <div className="nx-xstrip">
         {firstLine && <FirstBuildLine line={firstLine} onOpen={execUi.openSetup} />}
         <ExecutionNotice availability={availability} onSetup={execUi.openSetup} />
         <ApprovalsSection projectId={project.id} except={hasSde ? ['repo.write_refs'] : []} />
         {/* B2b: the AI helper is offered only where Software takes part: no other workspace claims to work yet. */}
-        {hasSde && <AgentPanel projectId={project.id} workspaceId="sde" />}
+        {hasSde && <AgentPanel projectId={project.id} workspaceId="sde" reviewReady={reviewReady} onReview={() => navigate({ name: 'project', id: project.id, tool: 'changes' })} />}
       </div>
+      <ProgressSection>
+        <Spine groups={groups} selectedId={tool === 'completion' || tool === 'runs' ? '' : node.id} onSelect={onSelect}
+          line={line} onRetryLine={reloadArtifacts} truncated={artifactsTruncated} focusRequest={focusRequest} onFocused={focused} checks={checks} rails={rails} />
+      </ProgressSection>
       <div className="nx-bench">
         <ToolRail projectId={project.id} rootPath={project.rootPath} tool={tool} hasChanges={hasChanges} onOpenTerminal={openTerminal}
           extra={!wide && (

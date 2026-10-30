@@ -516,7 +516,7 @@ test('source pins: the merge asks only the channel (the dialog is main\'s), Acce
   assert.match(rv, /nexusClient\.changeSetAccept\(/);
   assert.match(rv, /nexusClient\.reviewDecide\(/);
   assert.doesNotMatch(rv, /confirm\(|window\.confirm|showMessageBox/, 'the confirmation is main\'s native dialog, never a renderer one');
-  assert.doesNotMatch(rv + src('agent/AgentPanel.tsx').replace(/setInterval\(\(\) => setNow\(Date\.now\(\)\), PROGRESS_TICK_MS\)/, '') + src('data/useAgents.ts').replace(/setInterval\(\(\) => read\(0\), CONSENT_REASK_MS\)/, ''), /setInterval/, 'no background polling (the one tick is a local clock for "working for 2 minutes" while a request is live: it asks main for nothing)');
+  assert.doesNotMatch(rv + src('agent/AgentPanel.tsx').replace(/setInterval\(\(\) => setNow\(Date\.now\(\)\), PROGRESS_TICK_MS\)/, '').replace(/setInterval\(\(\) => \{ useExecStore\.getState\(\)\.bump\(\['jobs'\]\); sessions\.reload\(\); \}, LIVE_REFRESH_MS\)/, '') + src('data/useAgents.ts').replace(/setInterval\(\(\) => read\(0\), CONSENT_REASK_MS\)/, ''), /setInterval/, 'no background polling (the one tick is a local clock for "working for 2 minutes" while a request is live: it asks main for nothing)');
   const hooks = src('data/useAgents.ts');
   assert.equal((hooks.match(/setInterval\(/g) || []).length, 1, 'only the open setup sheet re-asks');
   assert.match(hooks, /if \(!open\) return;/);
@@ -984,7 +984,7 @@ test('V9-4 the picker is remembered for the session: the model picked and the ru
 
 test('V9-5 layout pins: the notice strip is bounded and scrolls (the bench keeps its height), the message box shares a row with its button, the title takes no focus ring', () => {
   const x = fs.readFileSync(path.join(NEXUS, 'styles', 'execution.css'), 'utf8');
-  assert.ok(x.includes('.nx-xstrip { flex: none; max-height: 30vh; overflow-y: auto; }'));
+  assert.ok(x.includes('.nx-xstrip { flex: none; }'), 'the notices and the panel are in normal flow: no cap, no inner scroll, nothing overlaps (V9e)');
   assert.ok(x.includes('.nx-ag__form { grid-template-columns: minmax(0, 1fr) auto;'));
   const pc = fs.readFileSync(path.join(NEXUS, 'styles', 'project.css'), 'utf8');
   assert.ok(pc.includes('.nx-workbench { overflow-y: auto; }'));
@@ -999,7 +999,8 @@ test('V9-6 the project agent is asked with the same words in the panel and in th
   assert.equal(ask, 'Ask the AI helper');
   assert.ok(il.includes('aria-label={words.button}'));
   assert.ok(il.includes('{words.button}</span>'));
-  assert.ok(src('agent/AgentPanel.tsx').includes(`'${ask}'}</Button>`));
+  // One place to ask on the project page: the bottom bar. The panel has no message box (V9e).
+  assert.ok(!src('agent/AgentPanel.tsx').includes('<textarea'));
 });
 
 test('V9-7 an answer that lists fewer runtimes than the sheet showed (a revoke answers before the probe refills) keeps the missing rows, no longer in use; a complete answer is taken as is', () => {
@@ -1098,4 +1099,49 @@ test('V9d-3 a merged change reads "Merged" (the repository status holds no accep
   assert.equal(SPINE.checkedOutHead([{ sha: 'only' }]).sha, 'only', 'no HEAD mark in the page: the newest, as before');
   assert.equal(SPINE.checkedOutHead([]), null);
   assert.ok(src('project/useProjectGit.ts').includes('checkedOutHead(log)'));
+});
+
+// ---------- V9e: the project page says what is happening, in one place ----------
+
+const NS = loadTs('src/renderer/src/nexus/project/nextStepModel.ts');
+const SPN = loadTs('src/renderer/src/nexus/project/spineModel.ts');
+
+test('V9e-1 one box says what is happening and the one thing to do next; a request with no live job never reads as working', () => {
+  const panelOf = (o = {}) => A.agentPanelModel({ health: health(), availability: READY, sessions: [], sessionsFail: null, ...o });
+  const ready = NS.nextStep({ panel: panelOf(), reviewReady: 0, repoApprovalWaiting: false });
+  assert.equal(ready.tone, 'ready');
+  assert.deepEqual(ready.action, { kind: 'ask', label: 'Ask the AI helper' });
+  assert.ok(ready.text.includes('box at the bottom of the page'));
+  assert.equal(NS.nextStep({ panel: panelOf(), reviewReady: 2, repoApprovalWaiting: false }).tone, 'review');
+  assert.equal(NS.nextStep({ panel: panelOf(), reviewReady: 1, repoApprovalWaiting: false }).action.kind, 'review');
+  const waiting = NS.nextStep({ panel: panelOf(), reviewReady: 1, repoApprovalWaiting: true });
+  assert.equal(waiting.tone, 'waiting'); assert.equal(waiting.action, null);
+  const notAllowed = NS.nextStep({ panel: panelOf({ health: health({ agent: agentView({ consent: { live: false, caps: null, hostsCount: 1, grantedAt: null } }) }) }), reviewReady: 0, repoApprovalWaiting: false });
+  assert.equal(notAllowed.tone, 'setup'); assert.equal(notAllowed.action.kind, 'setup');
+  // A conversation main keeps `running` after its request ended, with no live job: ready, never working.
+  const idle = panelOf({ sessions: [session({ status: 'running', liveJobId: null })], jobs: new Map([['J1', job({ state: 'partial', outcome: 'no_change', createdAt: 5 })]]) });
+  assert.equal(idle.progress, null);
+  assert.equal(idle.working, null);
+  assert.equal(NS.nextStep({ panel: idle, reviewReady: 0, repoApprovalWaiting: false }).tone, 'ready');
+  const live = panelOf({ sessions: [session({ status: 'running', liveJobId: 'J1' })], jobs: new Map([['J1', job({ state: 'running', createdAt: 5, startedAt: 5 })]]), now: 20_000 });
+  const w = NS.nextStep({ panel: live, reviewReady: 0, repoApprovalWaiting: false });
+  assert.equal(w.tone, 'working'); assert.equal(w.action, null);
+  const sourceOfPanel = src('agent/AgentPanel.tsx');
+  assert.ok(sourceOfPanel.includes('LIVE_REFRESH_MS'));
+  assert.ok(sourceOfPanel.includes("useExecStore.getState().bump(['jobs']); sessions.reload();"));
+  assert.ok(!sourceOfPanel.includes('<textarea'), 'the bottom bar is the one place to ask');
+});
+
+test('V9e-2 the page order and plain words: header, notice strip (only when something blocks), progress closed by default; the disk advice stays in Get this computer ready', () => {
+  const bench = src('project/ProjectBench.tsx');
+  const iHeader = bench.indexOf('<ProjectHeader'); const iStrip = bench.indexOf('<div className="nx-xstrip">'); const iProg = bench.indexOf('<ProgressSection>'); const iBench = bench.indexOf('<div className="nx-bench">');
+  assert.ok(iHeader > 0 && iHeader < iStrip && iStrip < iProg && iProg < iBench);
+  assert.ok(src('project/ProgressSection.tsx').includes('useState(false)'), 'closed by default');
+  assert.ok(src('components/ExecutionNotice.tsx').includes("availability.kind === 'ready') return null"), 'a recommendation is not shown on the project page');
+  const base = { kind: 'artifact', artifactKind: 'repository', name: 'Repository', versionNo: 1, status: 'active', isCurrent: true };
+  assert.equal(SPN.nodeTitle(base), 'Starting point');
+  assert.equal(SPN.nodeTitle({ ...base, artifactKind: 'test_suite', name: 'Test suite' }), 'Your tests');
+  assert.equal(SPN.nodeTitle({ ...base, artifactKind: 'change_set', name: 'Add a model' }), 'Add a model');
+  const text = JSON.stringify(NS.nextStep({ panel: A.agentPanelModel({ health: health(), availability: READY, sessions: [], sessionsFail: null }), reviewReady: 1, repoApprovalWaiting: false }));
+  assert.ok(!/\b(repository|commit|branch|job|worktree)\b/i.test(text), 'plain words');
 });

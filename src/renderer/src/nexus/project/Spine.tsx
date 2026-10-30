@@ -1,6 +1,6 @@
 import { useEffect, useRef, type KeyboardEvent } from 'react';
 import type { SpineGroup, SpineLine } from './spineModel';
-import { nodeLabel, tabStopId } from './spineModel';
+import { nodeLabel, nodeTitle, tabStopId } from './spineModel';
 import { SPINE_TRUNCATED_TEXT, kindLabel, statusLabel } from './artifactModel';
 import { provenanceStyle } from '../ui/ProvenanceMark';
 import { LifecycleRail } from '../workspaces/LifecycleRail';
@@ -58,8 +58,8 @@ export function Spine({ groups, selectedId, onSelect, line, onRetryLine, truncat
                     <button type="button" ref={(el) => { if (el) refs.current.set(n.id, el); }}
                       className={`nx-node${n.status === 'draft' ? ' nx-node--draft' : ''}`} aria-current={sel ? 'true' : undefined}
                       aria-label={checks?.get(n.id) ? `${nodeLabel(n)}, ${checks.get(n.id)}` : nodeLabel(n)} tabIndex={n.id === active ? 0 : -1} onClick={(e) => onSelect(n.id, e.currentTarget)} onKeyDown={(e) => onKey(e, idx)}>
-                      <span className="nx-node__k">{kindLabel(n.artifactKind)} · {statusLabel(n.status)}{checks?.get(n.id) ? ` · ${checks.get(n.id)}` : ''}</span>
-                      <span className="nx-node__n" title={n.name}>{n.name}</span>
+                      <span className="nx-node__k">{n.artifactKind === 'repository' || n.artifactKind === 'test_suite' ? '' : `${kindLabel(n.artifactKind)} · `}{statusLabel(n.status)}{checks?.get(n.id) ? ` · ${checks.get(n.id)}` : ''}</span>
+                      <span className="nx-node__n" title={nodeTitle(n)}>{nodeTitle(n)}</span>
                       <span className="nx-node__v nx-id">v{n.versionNo}</span>
                     </button>
                   </li>
