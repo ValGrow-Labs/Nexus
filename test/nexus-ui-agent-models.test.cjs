@@ -303,14 +303,22 @@ test('UA6 the agent\'s messages are labelled display only, and a tool call shows
 test('UA7 every unmet prerequisite is a sentence, never a button that would be refused; missing permission reads exactly the brief sentence', () => {
   const panel = (h, availability = READY, extra = {}) => A.agentPanelModel({ health: h, availability, sessions: [], sessionsFail: null, ...extra });
   const noConsent = panel(health({ agent: agentView({ consent: { live: false, caps: null, hostsCount: 1, grantedAt: null } }) }));
-  assert.deepEqual(noConsent.blockers, ['Agent turns need your network permission. Open Setup to grant it.']);
+  // Track D (first-run): with no runtime permission the panel points to the guide "Choose how Nexus builds for you" with one sentence (and
+  // the panel's one button); it no longer says "network permission" first, and never leads with the state of a program that may not be wanted.
+  assert.deepEqual(noConsent.blockers, [A.CHOOSE_RUNTIME_TEXT]);
+  assert.equal(noConsent.chooseRuntime, true);
   assert.equal(noConsent.canAsk, false); assert.equal(noConsent.setup, true); assert.equal(noConsent.kind, 'setup');
-  assert.equal(A.CONSENT_MISSING_TEXT, 'Agent turns need your network permission. Open Setup to grant it.');
+  assert.equal(A.CONSENT_MISSING_TEXT, 'Agent turns need your network permission. Open Setup to grant it.', 'the sentence for a refused start is unchanged');
+  assert.equal(A.CHOOSE_RUNTIME_BUTTON, 'Choose how Nexus builds for you');
+  assert.doesNotMatch(A.CHOOSE_RUNTIME_TEXT, VENDOR);
+  // Even a program that is not installed does not lead the panel while nothing is chosen: the guide speaks for it.
+  const noProgram = panel(health({ agent: agentView({ state: 'not_installed', consent: { live: false, caps: null, hostsCount: 0, grantedAt: null } }) }));
+  assert.deepEqual(noProgram.blockers, [A.CHOOSE_RUNTIME_TEXT]);
+  assert.equal(panel(health()).chooseRuntime, false, 'a live permission: no guide');
   const cases = [
     [{ state: 'not_installed' }, /not installed/], [{ state: 'not_signed_in', signedIn: 'no' }, /not signed in/], [{ state: 'version_unsupported' }, /not a version Nexus supports/],
-    [{ state: 'unavailable' }, /could not be checked/],
-    // Never probed and no permission yet: nothing to ask with (a live permission with a stale check is askable, below).
-    [{ state: 'unknown', signedIn: 'unknown', consent: { live: false, caps: null, hostsCount: 0, grantedAt: null } }, /has not been checked/]
+    [{ state: 'unavailable' }, /could not be checked/]
+    // (Never probed and no permission yet is the guide's case, above.)
   ];
   for (const [o, re] of cases) {
     const p = panel(health({ agent: agentView(o) }));

@@ -211,9 +211,12 @@ test('LS6 the setup rows of the local kind say what is true of it (no program, n
 test('LS6b the agent panel words the local runtime\'s problems and nothing else changes', () => {
   const h = (agent) => ({ db: { version: 10, platform: true, handoffs: true, execution: true, subReason: null }, agent });
   const blockers = (agent) => A.agentPanelModel({ health: h(agent), availability: { kind: 'ready', advisories: [] }, sessions: [], sessionsFail: null }).blockers;
-  assert.deepEqual(blockers(agentRow({ state: 'not_installed' })), [E.AGENT_REASON_TEXT.local_model_server_down]);
-  assert.deepEqual(blockers(agentRow({ problem: 'model_missing', consent: { live: true, caps: null, hostsCount: 1, grantedAt: 1 } })), [E.AGENT_REASON_TEXT.local_model_missing]);
-  assert.deepEqual(blockers(agentRow({ kind: undefined, state: 'not_installed' })), [E.AGENT_REASON_TEXT.runtime_not_installed], 'another runtime keeps its own sentence');
+  // With a permission live the panel words the runtime's own problem; with none (Track D, first run) it points to the guide instead (agent-models UA7).
+  const live = { consent: { live: true, caps: null, hostsCount: 1, grantedAt: 1 } };
+  assert.deepEqual(blockers(agentRow({ state: 'not_installed', ...live })), [E.AGENT_REASON_TEXT.local_model_server_down]);
+  assert.deepEqual(blockers(agentRow({ problem: 'model_missing', ...live })), [E.AGENT_REASON_TEXT.local_model_missing]);
+  assert.deepEqual(blockers(agentRow({ kind: undefined, state: 'not_installed', ...live })), [E.AGENT_REASON_TEXT.runtime_not_installed], 'another runtime keeps its own sentence');
+  assert.deepEqual(blockers(agentRow({ state: 'not_installed' })), [A.CHOOSE_RUNTIME_TEXT], 'no permission yet: the guide, whatever the runtime');
 });
 
 test('LS6c (C1) the local runtime unsupported state (no model can use tools) reads as the "cannot use tools" sentence in the rows, the picker and the panel; another runtime keeps the program-version sentence', () => {
@@ -224,9 +227,10 @@ test('LS6c (C1) the local runtime unsupported state (no model can use tools) rea
   assert.deepEqual([choice.word, choice.text, choice.action.disabled], ['Needs attention', NO_TOOLS, true]);
   const h = (agent) => ({ db: { version: 10, platform: true, handoffs: true, execution: true, subReason: null }, agent });
   const blockers = (agent) => A.agentPanelModel({ health: h(agent), availability: { kind: 'ready', advisories: [] }, sessions: [], sessionsFail: null }).blockers;
-  assert.deepEqual(blockers(agentRow({ state: 'version_unsupported', problem: 'model_no_tools' })), [NO_TOOLS]);
+  const live = { consent: { live: true, caps: null, hostsCount: 1, grantedAt: 1 } };
+  assert.deepEqual(blockers(agentRow({ state: 'version_unsupported', problem: 'model_no_tools', ...live })), [NO_TOOLS]);
   // The vendor runtime's row and blocker are unchanged.
-  assert.deepEqual(blockers(agentRow({ kind: undefined, state: 'version_unsupported' })), [E.AGENT_REASON_TEXT.runtime_version_unsupported]);
+  assert.deepEqual(blockers(agentRow({ kind: undefined, state: 'version_unsupported', ...live })), [E.AGENT_REASON_TEXT.runtime_version_unsupported]);
   assert.match(X.agentSetupRows(agentRow({ kind: undefined, state: 'version_unsupported' }))[0].text, /not a version Nexus supports/);
   assert.equal(E.AGENT_REASON_TEXT.local_model_no_tools, ENV.AGENT_REASON_MESSAGES.local_model_no_tools);
 });

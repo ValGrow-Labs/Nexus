@@ -5,6 +5,7 @@ import { execFailText } from '../data/errorCopy';
 import { checkedLine, consentHostsOf, noticeFor, pickerPermissionRows, runtimeChoices, runtimeInUse, runtimeMemory, setupLead, setupSheet, type RuntimeChoice } from '../data/executionModel';
 import { CHECK_AGAIN_REREAD_MS, useApprovals, useHealth, useHealthPoll, withIntent } from '../data/useExecution';
 import { useAgentConsent } from '../data/useAgents';
+import { runtimeGuide, type GuideWay } from '../data/runtimeGuideModel';
 import { useOptionalShellActions } from '../shellActions';
 import { agentFailText } from '../agent/agentModel';
 import { ApprovalList } from '../project/ApprovalsSection';
@@ -53,10 +54,23 @@ function SetupBody({ onClose }: { onClose: () => void }) {
   useEffect(() => { if (inUse) runtimeMemory.rememberInUse(inUse.kind, inUse.model); }, [inUse?.kind, inUse?.model]);
   useEffect(() => { if (inUse && inUse.provider) runtimeMemory.rememberProvider(inUse.kind, inUse.provider); }, [inUse?.kind, inUse?.provider]);
   const choices = runtimeChoices(consent.view, picked, runtimeMemory.kind(), pickedProviders);
-  const rows = pickerPermissionRows(baseRows, { picker: choices.length > 0, live: !!consent.view?.consent.live });
+  // First run (no permission granted): the guide "Choose how Nexus builds for you" speaks for the agent. The program's own rows (which would
+  // lead with an uninstalled program) and the permission row wait until a way is chosen; an agent that is off keeps its one row.
+  const guide = health?.agent?.state === 'off' ? null : runtimeGuide(consent.view, choices);
+  const shownRows = pickerPermissionRows(baseRows, { picker: choices.length > 0, live: !!consent.view?.consent.live });
+  const rows = guide ? shownRows.filter((r) => !r.id.startsWith('agent')) : shownRows;
   const [note, setNote] = useState<{ text: string; alert: boolean } | null>(null);
   const notice = noticeFor(availability);
   const lead = setupLead(availability, rows);
+  // "Add my key" opens Settings on the section that holds the keys (the sheet closes first).
+  const addKey = () => { if (shell) { onClose(); shell.openSettings('Agents & Models'); } };
+  const pressWay = (way: GuideWay, which: 'action' | 'secondary') => {
+    const a = way[which];
+    if (!a || a.disabled) return;
+    if (a.op === 'add-key') addKey();
+    else if (way.choice) void useRuntime(way.choice);
+    else void changeConsent('grant');
+  };
 
   const prepare = async (profile: string) => {
     if (busy || !PROFILES.includes(profile)) return;
@@ -120,6 +134,51 @@ function SetupBody({ onClose }: { onClose: () => void }) {
     checkAgain();
   };
 
+  // The provider, model and key-help controls of one runtime row: the picker below and the first-run guide's options use the same ones.
+  const runtimeControls = (c: RuntimeChoice, withKeyHelp: boolean) => (
+    <>
+      {c.providers && c.providers.length > 0 && (
+        <>
+          <span className="nx-xs__action">
+            <label>Provider
+              <select className="nx-xs__select" aria-label={`Provider for ${c.label}`} disabled={busy !== null}
+                value={c.provider ?? ''} onChange={(e) => { void pickProvider(c, e.target.value); }}>
+                {c.provider === null && <option value="" disabled>Choose a provider</option>}
+                {c.providers.map((p) => <option key={p.id} value={p.id}>{p.keyPresent ? p.label : `${p.label} (no key saved)`}</option>)}
+              </select>
+            </label>
+          </span>
+          <span className="nx-xs__action">
+            <label>Model
+              <select className="nx-xs__select" aria-label={`Model for ${c.label}`} disabled={busy !== null}
+                value={c.model ?? ''} onChange={(e) => { void pickModel(c, e.target.value); }}>
+                {c.model === null && <option value="" disabled>Choose a model</option>}
+                {(c.providers.find((p) => p.id === c.provider)?.models ?? []).map((m) => <option key={m.name} value={m.name} disabled={m.disabled}>{m.label}</option>)}
+              </select>
+            </label>
+          </span>
+          {withKeyHelp && c.keyHelp && (
+            <span className="nx-xs__action" role="note">
+              {c.keyHelp.text}{' '}
+              {c.keyHelp.settings && shell && <Button onClick={() => { onClose(); shell.openSettings('Agents & Models'); }}>Open Settings</Button>}
+            </span>
+          )}
+        </>
+      )}
+      {c.models && (
+        <span className="nx-xs__action">
+          <label>Model
+            <select className="nx-xs__select" aria-label={`Model for ${c.label}`} disabled={busy !== null}
+              value={c.model !== null && c.models.some((m) => m.name === c.model) ? c.model : ''} onChange={(e) => { void pickModel(c, e.target.value); }}>
+              {!(c.model !== null && c.models.some((m) => m.name === c.model)) && <option value="" disabled>{c.models.length > 0 ? 'Choose a model' : 'No models installed'}</option>}
+              {c.models.map((m) => <option key={m.name} value={m.name} disabled={m.disabled}>{m.label}</option>)}
+            </select>
+          </label>
+        </span>
+      )}
+    </>
+  );
+
   return (
     <div className="nx-xs">
       <header className="nx-xs__head">
@@ -127,6 +186,35 @@ function SetupBody({ onClose }: { onClose: () => void }) {
         <h2 id="nx-xs-title" className="nx-xs__title">Execution setup</h2>
       </header>
       {lead ? <p className="nx-xs__lead">{lead}</p> : notice && <p className="nx-xs__lead">{notice.text}</p>}
+      {guide && (
+        <section aria-labelledby="nx-xs-guide" className="nx-xg">
+          <h3 id="nx-xs-guide" className="nx-xs__sub">{guide.title}</h3>
+          <p className="nx-xg__intro">{guide.lead}</p>
+          <p className="nx-muted">{guide.note}</p>
+          <ul className="nx-xg__ways" aria-label={guide.title}>
+            {guide.ways.map((way) => (
+              <li key={way.id} className="nx-xg__way" data-state={way.state} data-free={way.free ? 'true' : 'false'}>
+                <h4 className="nx-xg__title">{way.title}</h4>
+                <p className="nx-xg__text">{way.lead}</p>
+                {way.providers.length > 0 && <p className="nx-muted">Free providers Nexus can use: {way.providers.join(', ')}.</p>}
+                <p className="nx-xg__status"><span className="nx-xs__word">{way.word}</span> <span>{way.status}</span></p>
+                {way.steps.length > 0 && <ol className="nx-xg__steps">{way.steps.map((t) => <li key={t}>{t}</li>)}</ol>}
+                {way.controls && way.choice && <div className="nx-xg__controls">{runtimeControls(way.choice, false)}</div>}
+                {(way.action || way.secondary) && (
+                  <div className="nx-xg__buttons">
+                    {way.action && (way.action.op !== 'add-key' || shell) && (
+                      <Button variant="primary" disabled={busy !== null || way.action.disabled} onClick={() => pressWay(way, 'action')}>
+                        {way.choice && busy === `runtime:${way.choice.kind}` ? 'Working…' : way.action.label}
+                      </Button>
+                    )}
+                    {way.secondary && shell && <Button disabled={busy !== null} onClick={() => pressWay(way, 'secondary')}>{way.secondary.label}</Button>}
+                  </div>
+                )}
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
       {health ? (
         <ul className="nx-xs__rows" aria-label="Execution setup">
           {rows.map((r) => (
@@ -151,7 +239,7 @@ function SetupBody({ onClose }: { onClose: () => void }) {
       ) : (
         <p className="nx-muted" role="status">{availability.kind === 'unknown' && !availability.text ? 'Reading this computer’s setup…' : 'The setup cannot be read while execution is off.'}</p>
       )}
-      {choices.length > 0 && (
+      {choices.length > 0 && !guide && (
         <section aria-labelledby="nx-xs-runtimes">
           <h3 id="nx-xs-runtimes" className="nx-xs__sub">Agent runtime</h3>
           <ul className="nx-xs__rows" aria-label="Agent runtime">
@@ -160,45 +248,7 @@ function SetupBody({ onClose }: { onClose: () => void }) {
                 <span className="nx-xs__label">{c.label}</span>
                 <span className="nx-xs__word">{c.word}</span>
                 <span className="nx-xs__text">{c.text}{!c.selected && c.destination ? ` Using it lets Nexus reach only ${c.destination}.` : ''}</span>
-                {c.providers && c.providers.length > 0 && (
-                  <>
-                    <span className="nx-xs__action">
-                      <label>Provider
-                        <select className="nx-xs__select" aria-label={`Provider for ${c.label}`} disabled={busy !== null}
-                          value={c.provider ?? ''} onChange={(e) => { void pickProvider(c, e.target.value); }}>
-                          {c.provider === null && <option value="" disabled>Choose a provider</option>}
-                          {c.providers.map((p) => <option key={p.id} value={p.id}>{p.keyPresent ? p.label : `${p.label} (no key saved)`}</option>)}
-                        </select>
-                      </label>
-                    </span>
-                    <span className="nx-xs__action">
-                      <label>Model
-                        <select className="nx-xs__select" aria-label={`Model for ${c.label}`} disabled={busy !== null}
-                          value={c.model ?? ''} onChange={(e) => { void pickModel(c, e.target.value); }}>
-                          {c.model === null && <option value="" disabled>Choose a model</option>}
-                          {(c.providers.find((p) => p.id === c.provider)?.models ?? []).map((m) => <option key={m.name} value={m.name} disabled={m.disabled}>{m.label}</option>)}
-                        </select>
-                      </label>
-                    </span>
-                    {c.keyHelp && (
-                      <span className="nx-xs__action" role="note">
-                        {c.keyHelp.text}{' '}
-                        {c.keyHelp.settings && shell && <Button onClick={() => { onClose(); shell.openSettings('Agents & Models'); }}>Open Settings</Button>}
-                      </span>
-                    )}
-                  </>
-                )}
-                {c.models && (
-                  <span className="nx-xs__action">
-                    <label>Model
-                      <select className="nx-xs__select" aria-label={`Model for ${c.label}`} disabled={busy !== null}
-                        value={c.model !== null && c.models.some((m) => m.name === c.model) ? c.model : ''} onChange={(e) => { void pickModel(c, e.target.value); }}>
-                        {!(c.model !== null && c.models.some((m) => m.name === c.model)) && <option value="" disabled>{c.models.length > 0 ? 'Choose a model' : 'No models installed'}</option>}
-                        {c.models.map((m) => <option key={m.name} value={m.name} disabled={m.disabled}>{m.label}</option>)}
-                      </select>
-                    </label>
-                  </span>
-                )}
+                {runtimeControls(c, true)}
                 {c.action && (
                   <span className="nx-xs__btn">
                     <Button disabled={busy !== null || c.action.disabled} onClick={() => { void useRuntime(c); }}>{busy === `runtime:${c.kind}` ? 'Working…' : c.action.label}</Button>

@@ -13,9 +13,13 @@ import { HOSTED_MODEL_KIND } from '@shared/nexus/hostedModel';
 import { LOCAL_PROBLEM_TEXT, noticeFor, sizeLabel, type ExecAvailability } from '../data/executionModel';
 import { agentTurnHeadline, waitPhaseText } from '../runs/jobRunModel';
 import { kindLabel, statusLabel } from '../project/artifactModel';
+import { GUIDE_TITLE } from '../data/runtimeGuideModel';
 
 /** The one sentence for missing permission (F24): no host is named outside the setup sheet's consent row. */
 export const CONSENT_MISSING_TEXT = AGENT_REASON_TEXT.consent_missing;
+/** Said in the panel while no runtime permission is granted: one sentence and one button that opens the first-run guide in Setup (no engine, provider or program is named). */
+export const CHOOSE_RUNTIME_TEXT = 'Nexus needs a way to build for you. You can use free online AI, a model on this computer, or a plan you already have.';
+export const CHOOSE_RUNTIME_BUTTON = GUIDE_TITLE;
 export const USAGE_LABEL = 'reported by the agent runtime';
 export const USAGE_ESTIMATED_LABEL = 'estimated by Nexus: the runtime did not report one';
 export const DISPLAY_ONLY_NOTE = 'What the agent wrote is shown for reading only. It is not evidence: only the checks and records are.';
@@ -92,6 +96,8 @@ export interface AgentPanelView {
   canAsk: boolean;
   /** True when "Open Setup" is the way forward. */
   setup: boolean;
+  /** True when no runtime permission is granted: the way forward is the guide "Choose how Nexus builds for you" (the one button), not a list of program problems. */
+  chooseRuntime: boolean;
   /** "Working" while a turn runs, "Waiting for you" while one asks for an approval; null otherwise. */
   working: 'Working' | 'Waiting for you' | null;
   /** A line under the panel that is not a blocker (the check is stale and the send will redo it). */
@@ -144,7 +150,7 @@ export function continuableSession(sessions: readonly SessionView[] | null | und
 }
 
 export function agentPanelModel(i: AgentPanelInput): AgentPanelView {
-  const empty: Omit<AgentPanelView, 'kind' | 'lead' | 'blockers' | 'canAsk' | 'setup'> = { working: null, sessions: [], usageToday: null, note: null, readError: null, failure: null };
+  const empty: Omit<AgentPanelView, 'kind' | 'lead' | 'blockers' | 'canAsk' | 'setup'> = { chooseRuntime: false, working: null, sessions: [], usageToday: null, note: null, readError: null, failure: null };
   // Agent work off (the part is not in place): one sentence, no setup to offer.
   if (i.sessionsFail) {
     const c = errorCopy(i.sessionsFail.code, i.sessionsFail.reason, i.sessionsFail.subReason);
@@ -164,11 +170,14 @@ export function agentPanelModel(i: AgentPanelInput): AgentPanelView {
   // The cached check of the program is older than main keeps it (state `unknown`) while a permission is live: the program was
   // checked before, and #42 checks it again by itself when you send, so the panel asks rather than blocks.
   const staleButAskable = a !== null && a.state === 'unknown' && a.consent.live;
+  // No runtime permission yet: whatever the default program's state, the first thing to do is choose how Nexus builds (the guide in Setup).
+  // Nothing is said about a program that may not even be wanted, and nothing assumes one paid plan.
+  const chooseRuntime = a !== null && !a.consent.live;
   if (!a) blockers.push(AGENT_REASON_TEXT.runtime_unknown);
+  else if (chooseRuntime) blockers.push(CHOOSE_RUNTIME_TEXT);
   else {
     const rt = staleButAskable ? null : runtimeBlocker(a);
     if (rt) blockers.push(rt);
-    else if (!a.consent.live) blockers.push(CONSENT_MISSING_TEXT);
     else if (a.consent.caps && a.consent.caps.dayUsdCents > 0 && a.usageToday.usdCents >= a.consent.caps.dayUsdCents) blockers.push(AGENT_REASON_TEXT.budget_exhausted);
   }
   const rows: SessionRowView[] = [...(i.sessions ?? [])].sort((x, y) => y.updatedAt - x.updatedAt).map((s) => {
@@ -195,7 +204,7 @@ export function agentPanelModel(i: AgentPanelInput): AgentPanelView {
   return {
     kind: canAsk ? 'ready' : 'setup',
     lead: canAsk ? ISOLATION_NOTE : blockers[0],
-    blockers, canAsk, setup: !canAsk, working, sessions: rows,
+    blockers, canAsk, setup: !canAsk, chooseRuntime, working, sessions: rows,
     usageToday: a && a.consent.live ? usageTodayLine(a.usageToday) : null,
     note: canAsk && staleButAskable ? RECHECK_ON_SEND_TEXT : canAsk && a !== null && a.state === 'ready' && a.signedIn !== 'yes' && a.kind !== HOSTED_MODEL_KIND ? SIGNIN_UNCONFIRMED_TEXT : null, readError, failure
   };

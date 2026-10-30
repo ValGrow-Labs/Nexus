@@ -7,7 +7,7 @@ import { useExecutionUi } from '../project/execContext';
 import { Button } from '../ui/Button';
 import { ApprovalList } from '../project/ApprovalsSection';
 import { SessionLog } from './SessionLog';
-import { REPO_APPROVAL_WAIT_TEXT, agentFailText, agentPanelModel, messageKey, startArgs } from './agentModel';
+import { CHOOSE_RUNTIME_BUTTON, REPO_APPROVAL_WAIT_TEXT, agentFailText, agentPanelModel, messageKey, startArgs } from './agentModel';
 
 /** The agent in the bench: where it stands (set up, working, waiting for you), a message box when it can take one, and the
  *  project's conversations with their logs. A prerequisite that is not met is a sentence with the way forward, never a dead button. */
@@ -81,7 +81,8 @@ export function AgentPanel({ projectId, workspaceId }: { projectId: string; work
           {panel.kind === 'setup' && (
             <ul className="nx-xa__why" aria-label="What the agent needs">
               {panel.blockers.map((b) => <li key={b}><span>{b}</span></li>)}
-              {ui && <li><Button variant="quiet" onClick={ui.openSetup}>Open Setup</Button></li>}
+              {/* No runtime chosen: one sentence above and one button that opens the guide in Setup. */}
+              {ui && <li><Button variant={panel.chooseRuntime ? 'primary' : 'quiet'} onClick={ui.openSetup}>{panel.chooseRuntime ? CHOOSE_RUNTIME_BUTTON : 'Open Setup'}</Button></li>}
             </ul>
           )}
           {panel.kind === 'ready' && (
