@@ -153,7 +153,7 @@ export function AgentPanel({ projectId, workspaceId, reviewReady = 0, onReview, 
         {/* How the last request ended, with the reason in plain words and one next step. */}
         {ending && (
           <p className={ending.tone === 'failed' ? 'nx-passport__note nx-ag__end' : 'nx-ag__end'} role="status" data-tone={ending.tone}>
-            <strong>{ending.title}.</strong> {ending.text}{ending.reply ? <> <span className="nx-ag__reply">The AI helper replied: {ending.reply}</span></> : null}{ending.next ? ` Next: ${ending.next.charAt(0).toLowerCase()}${ending.next.slice(1)}` : ''}{' '}
+            <strong>{ending.title}.</strong> {ending.text}{ending.reply ? <> <span className="nx-ag__reply">{ending.reply}</span></> : null}{ending.next ? ` Next: ${ending.next.charAt(0).toLowerCase()}${ending.next.slice(1)}` : ''}{' '}
             {ending.snapshot && <Button variant="primary" disabled={busy !== null} onClick={() => { void snapshot(); }}>{busy === 'snapshot' ? 'Starting…' : 'Save a starting point'}</Button>}
           </p>
         )}

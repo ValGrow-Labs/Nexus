@@ -257,3 +257,7 @@
 .nx-dock-rail__dot { position: absolute; top: -3px; right: -3px; width: 10px; height: 10px; border-radius: 50%; background: var(--nx-border-strong); border: 2px solid var(--nx-surface); }
 .nx-dock-rail__dot[data-attention="true"] { background: var(--nx-ink); }
 .nx-dock--drawer { position: fixed; right: 12px; top: calc(var(--nx-bar-h) + 8px); bottom: 20px; width: min(420px, calc(100vw - 24px)); z-index: 30; border: 1px solid var(--nx-border-strong); box-shadow: var(--nx-shadow-float); }
+/* The request box in the dock: the text field takes the full width on its own line, its label, chip and buttons wrap under it. */
+.nx-ag__input .nx-intent__row { flex-wrap: wrap; row-gap: var(--nx-s2); }
+.nx-ag__input .nx-intent__field { order: -1; flex: 1 1 100%; min-height: 56px; max-height: 160px; }
+.nx-ag__input .nx-intent__chip { max-width: 100%; flex: 1 1 auto; }
