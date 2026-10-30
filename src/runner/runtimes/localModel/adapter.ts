@@ -34,14 +34,14 @@ export const ADAPTER_LABEL = 'Local model (Ollama)';
 /** `RunRequest.model.provider` for this kind. */
 export const LOCAL_MODEL_PROVIDER = 'local-model';
 
-const MODEL_RE = /^[A-Za-z0-9._:/@-]{1,128}$/;
+export const MODEL_RE = /^[A-Za-z0-9._:/@-]{1,128}$/;
 const PROBE_TIMEOUT_MS = 4000;
 const PROBE_MAX_BYTES = 1024 * 1024;
 const PROBE_TOOL_CHECKS = 6;
 /** The models the setup row lists with their tool support (each costs one `/api/show`, asked in parallel). */
 const PROBE_LISTED_MODELS = 16;
-const CONTEXT_MAX_BYTES = 24 * 1024;
-const SKILLS_MAX_BYTES = 16 * 1024;
+export const CONTEXT_MAX_BYTES = 24 * 1024;
+export const SKILLS_MAX_BYTES = 16 * 1024;
 /**
  * The runner tools a small model is offered by default: the ones the work loop needs. The token's other tools (artifact reads, job
  * status and logs, job and review requests, requirement drafts) are only a distraction to a model of a few billion parameters (it
@@ -78,7 +78,7 @@ export interface LocalModelAdapterOptions {
   now?: () => number;
 }
 
-async function readHead(file: string, max: number): Promise<string | null> {
+export async function readHead(file: string, max: number): Promise<string | null> {
   let fh: Awaited<ReturnType<typeof fsp.open>> | null = null;
   try {
     fh = await fsp.open(file, 'r');

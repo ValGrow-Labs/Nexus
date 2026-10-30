@@ -833,3 +833,89 @@ test('taskkill is launched only by its resolved absolute path', () => {
   assert.ok(isTaskkillBinary(bin));
   for (const bad of ['taskkill', 'taskkill.exe', 'C:\\x\\taskkill.exe.bat', '']) assert.equal(isTaskkillBinary(bad), false, bad);
 });
+
+// ---------- the hosted-model runtime's API key (H3): an optional in-memory plan field, shaped, never stored, logged or echoed ----------
+
+const HOSTED_KEY = 'testkey-Zq8mV3nR7pLx2WcD5aHb';
+const HOSTED_HOSTS = [{ host: 'api.groq.com', port: 443 }, { host: 'generativelanguage.googleapis.com', port: 443 }];
+
+/** Every byte of every file under a folder, as one string (the key must be in none of them). */
+function allFileText(dir) {
+  let out = '';
+  for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+    const p = path.join(dir, e.name);
+    if (e.isDirectory()) out += allFileText(p); else { try { out += `${p}\n${fs.readFileSync(p, 'latin1')}\n`; } catch { /* unreadable: nothing to scan */ } }
+  }
+  return out;
+}
+
+test('HOSTEDKEY plan.runtime.apiKey is accepted only for the hosted-model kind and only as visible ASCII of 8 to 512 characters; a refusal never names the key', async () => {
+  const w = await world();
+  const hash = hostsSha256(HOSTED_HOSTS);
+  const make = (kind, apiKey) => {
+    const plan = agentPlan(w, { kind, egress: { allow: HOSTED_HOSTS, consentHostsSha256: hash } });
+    if (apiKey !== undefined) plan.runtime.apiKey = apiKey;
+    return plan;
+  };
+  const problem = (plan) => w.core.agentPlanProblemOf(plan.attemptId, plan);
+  assert.equal(problem(make('hosted-model', HOSTED_KEY)), null);
+  assert.equal(problem(make('hosted-model')), null, 'no key: the adapter fails auth at the turn, the plan is not refused');
+  assert.equal(problem(make('hosted-model', 'a'.repeat(8))), null);
+  assert.equal(problem(make('hosted-model', 'z'.repeat(512))), null);
+  const REFUSED = 'the turn\'s API key is not acceptable for this runtime';
+  for (const bad of ['', 'short', 'a'.repeat(513), 'has space in it', 'tab\tkey-1234567', 'new\nline-1234567', 'café-key-1234567', 7, null, {}, []]) {
+    const plan = make('hosted-model', bad);
+    assert.equal(problem(plan), REFUSED, JSON.stringify(bad));
+    assert.ok(!String(problem(plan)).includes(typeof bad === 'string' && bad.length > 3 ? bad : '\u0000never'));
+  }
+  for (const kind of ['cli-agent', 'local-model', 'scripted']) assert.equal(problem(make(kind, HOSTED_KEY)), REFUSED, `${kind} takes no key`);
+  // Through the real start path: a bad_plan, nothing created, and not one posted message or log line holds the key.
+  const BAD = `${HOSTED_KEY} with a space`;
+  const refused = await startRefused(w, make('hosted-model', BAD));
+  assert.equal(refused.reason, 'bad_plan');
+  assert.ok(!w.driver.ops().includes('create'));
+  const refusedLocal = await startRefused(w, make('cli-agent', HOSTED_KEY));
+  assert.equal(refusedLocal.reason, 'bad_plan');
+  const seen = JSON.stringify(w.got) + JSON.stringify(w.logs ?? []) + allFileText(w.dir);
+  assert.ok(!seen.includes(HOSTED_KEY) && !seen.includes('with a space'), 'the key is in no posted message, log line or file');
+});
+
+test('HOSTEDKEY a hosted turn through the runner holds the key in memory only: it is the provider\'s auth header and in no posted event, progress record, log line, attempt log or file', async () => {
+  const mockOpenAi = require('./helpers/mockOpenAiServer.cjs');
+  const model = await mockOpenAi.start({ script: [
+    { calls: [{ name: 'write_file', args: { path: 'a.txt', content: 'hello from the hosted model' } }] },
+    { calls: [{ name: 'context_get', args: {} }] },
+    { text: 'finished' }
+  ], repeatLast: true });
+  try {
+    let proxies = 0; let closed = 0;
+    const startProxy = async (o) => { proxies++; assert.deepEqual(o.allow, HOSTED_HOSTS); return { url: 'http://127.0.0.1:1', port: 1, decisions: 0, dropped: 0, close: async () => { closed++; } }; };
+    const w = await world({ agentRuntime: { startProxy, hostedTestSeam: { plain: { host: '127.0.0.1', port: model.port } } } });
+    const plan = agentPlan(w, { kind: 'hosted-model', egress: { allow: HOSTED_HOSTS, consentHostsSha256: hostsSha256(HOSTED_HOSTS) }, message: 'Write a.txt' });
+    plan.runtime.apiKey = HOSTED_KEY;
+    plan.runtime.request.model = { provider: 'groq', model: 'llama-3.3-70b-versatile' };
+    await startAgent(w, plan);
+    await w.waitOp('attempt.exited', plan.attemptId, 'hosted turn exited');
+    const exited = w.one('attempt.exited', plan.attemptId);
+    assert.equal(exited.exit.code, 0);
+    const events = w.of('attempt.runtime', plan.attemptId).map((m) => m.event);
+    assert.ok(events.some((e) => e.t === 'tool.started' && e.tool === 'write_file'));
+    assert.ok(events.some((e) => e.t === 'tool.started' && e.tool === 'context_get'));
+    assert.equal(events[events.length - 1].t, 'run.completed');
+    assert.equal(proxies, 1, 'the host egress proxy bound to the consent was started for the turn');
+    assert.equal(closed, 1);
+    assert.equal(fs.readFileSync(path.join(plan.worktree.hostPath, 'a.txt'), 'utf8'), 'hello from the hosted model');
+    // The provider got the key as its auth header (and nowhere else in the request).
+    const chats = model.chatRecords();
+    assert.ok(chats.length >= 3);
+    for (const r of chats) {
+      assert.equal(r.headers.authorization, `Bearer ${HOSTED_KEY}`);
+      assert.ok(!JSON.stringify({ ...r, headers: { ...r.headers, authorization: '' } }).includes(HOSTED_KEY));
+    }
+    // Every sink of the runner: posted messages (events, progress, exit), the runner's own log, the attempt log file, every file in the data home.
+    const sinks = { posted: JSON.stringify(w.got), logs: JSON.stringify(w.logs ?? []), files: allFileText(w.dir) };
+    for (const [name, text] of Object.entries(sinks)) assert.ok(!text.includes(HOSTED_KEY), `the key is not in the ${name}`);
+    assert.ok(w.got.length > 5 && sinks.files.length > 0, 'the scan saw real output');
+    for (const m of w.of('attempt.runtime', plan.attemptId)) assert.ok(parseRunnerMessage(m));
+  } finally { await model.stop(); }
+});

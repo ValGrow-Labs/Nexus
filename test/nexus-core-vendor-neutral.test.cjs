@@ -103,7 +103,10 @@ test('V4 the runner protocol accepts any well-formed runtime kind and favours no
  * per-worktree `.claude` folder, which its file tools and prompt refuse to touch (the same reason as the entries below).
  */
 const V5_DIRS = ['src/main/nexus', 'src/main/nexusIpc', 'src/main/nexusExec', 'src/runner', 'src/renderer/src/nexus', 'src/shared/nexus'];
-const V5_SKIP = (rel) => rel.startsWith('src/runner/runtimes/cliAgent/') || rel === 'src/shared/nexus/runtime.ts';
+// The hosted-model runtime's preset table (src/runner/runtimes/hostedModel/presets.ts) is the one file that holds provider host names, endpoint
+// paths and model names (ruling H1); its provider-word hits are not listed line by line. Every OTHER file of that folder is scanned like the rest,
+// and V6 below keeps the provider names themselves inside that folder.
+const V5_SKIP = (rel) => rel.startsWith('src/runner/runtimes/cliAgent/') || rel === 'src/shared/nexus/runtime.ts' || rel === 'src/runner/runtimes/hostedModel/presets.ts';
 /**
  * file -> the sha256 (first 16 hex) of each trimmed line that carries an engine word, in file order. A word that moves to another
  * line, or a new line with one, changes the hashes and fails; the comment after each hash is the line's start, for the reader.
@@ -167,4 +170,20 @@ test('V5 no engine name outside the cliAgent adapter except an explicit, exact a
   assert.ok(fs.existsSync(path.join(ROOT, 'src/runner/runtimes/cliAgent')), 'the adapter folder');
   // The allow-listed shared hits are none: shared contracts stay vendor-neutral (V1), so no allow-list entry may name src/shared.
   assert.ok(Object.keys(V5_ALLOWED).every((rel) => !rel.startsWith('src/shared/')));
+});
+
+/**
+ * V6 (hosted-model runtime, ruling H1): a hosted provider's name and host live ONLY in the runtime's preset table folder
+ * (src/runner/runtimes/hostedModel/**). Main, the IPC layer, the renderer, the shared contracts and every other runner file carry the
+ * provider as an opaque id from the probe, so a new provider is a data change in one place. Tests and docs are not scanned.
+ */
+const PROVIDER_WORDS = /groq|gemini|generativelanguage|googleapis/i;
+test('V6 hosted provider names and hosts appear only under src/runner/runtimes/hostedModel/ (main, IPC, renderer, shared and the rest of the runner stay neutral)', () => {
+  const files = v5Files().filter((rel) => !rel.startsWith('src/runner/runtimes/hostedModel/'));
+  assert.ok(files.length > 300, `the walk sees the Nexus code (${files.length})`);
+  const found = files.flatMap((rel) => read(rel).split(/\r?\n/).map((line, i) => [i + 1, line]).filter(([, l]) => PROVIDER_WORDS.test(l)).map(([n, l]) => `${rel}:${n}: ${l.trim().slice(0, 100)}`));
+  assert.deepEqual(found, []);
+  // The folder that may name them exists and does (the table), so the scan above is not vacuous.
+  assert.match(read('src/runner/runtimes/hostedModel/presets.ts'), PROVIDER_WORDS);
+  assert.equal(PROVIDER_WORDS.test('const x = "groq"'), true);
 });

@@ -140,7 +140,26 @@ export interface RuntimeSetup {
    * reports tool support (at most RUNTIME_MODELS_MAX). Main offers these as the choices and checks the chosen one against them.
    */
   models?: RuntimeModelInfo[];
+  /**
+   * Only a runtime that reaches a choice of hosted providers (the hosted-model kind): each provider's opaque id, its display label, the
+   * host names it needs (port 443 each; the flat `egressHosts` above is the union of every provider's) and the models its table lists
+   * with whether each can call tools. Offline preset data: it says nothing about whether a key exists. At most RUNTIME_PROVIDERS_MAX.
+   */
+  providers?: RuntimeProviderInfo[];
 }
+
+/** One hosted provider as a runtime's setup lists it. `id` is opaque to main and the renderer (`^[a-z][a-z0-9-]{0,31}$`). */
+export interface RuntimeProviderInfo { id: string; label: string; hosts: string[]; models: RuntimeModelInfo[] }
+/** The most providers a setup lists, and the most host names one provider names. */
+export const RUNTIME_PROVIDERS_MAX = 8;
+export const RUNTIME_PROVIDER_HOSTS_MAX = 4;
+
+/**
+ * An API key as it travels in an agent plan (`plan.runtime.apiKey`, hosted-model runtime only): visible ASCII, no space, 8 to 512
+ * characters. It is held in the runner's memory for the turn and nowhere else: never logged, stored, echoed or put in an event.
+ */
+export const RUNTIME_API_KEY_RE = /^[\x21-\x7e]{8,512}$/;
+export const isRuntimeApiKey = (x: unknown): x is string => typeof x === 'string' && RUNTIME_API_KEY_RE.test(x);
 
 /** What a bounded git read found. A diff's `patch` is capped at 1 MiB per side (`truncated` when cut). */
 export type GitReadResult =
@@ -559,7 +578,10 @@ function arrMax<T>(c: Check<T>, max: number, min = 0): Check<T[]> {
 const runtimeSetup = obj<RuntimeSetup>({ signedIn: oneOf(['yes', 'no', 'unknown'] as const), flagsOk: bool,
   label: str({ min: 1, re: /^[^\x00-\x1f\x7f]{1,64}$/ }),
   egressHosts: arrMax(obj({ host: str({ re: EGRESS_HOST_RE }), port: intIn(1, 65535) }), RUNTIME_SETUP_MAX_HOSTS) },
-  { models: arrMax(obj<RuntimeModelInfo>({ name: str({ re: MODEL_NAME_RE }), tools: bool }), RUNTIME_MODELS_MAX) });
+  { models: arrMax(obj<RuntimeModelInfo>({ name: str({ re: MODEL_NAME_RE }), tools: bool }), RUNTIME_MODELS_MAX),
+    providers: arrMax(obj<RuntimeProviderInfo>({ id: str({ re: RUNTIME_KIND_RE }), label: str({ min: 1, re: /^[^\x00-\x1f\x7f]{1,64}$/ }),
+      hosts: arrMax(str({ re: EGRESS_HOST_RE, min: 1 }), RUNTIME_PROVIDER_HOSTS_MAX, 1),
+      models: arrMax(obj<RuntimeModelInfo>({ name: str({ re: MODEL_NAME_RE }), tools: bool }), RUNTIME_MODELS_MAX) }), RUNTIME_PROVIDERS_MAX) });
 
 const RUNTIME_EVENT_CHECKS: Check<RuntimeEvent>[] = [
   obj({ t: lit('run.started'), runRef: runtimeRef, at: count }),

@@ -1,7 +1,8 @@
 /**
  * The local-model runtime's tool loop: ask the model, run the tools it calls, give it the results, until it stops (a reply
  * with no tool call), a cap is hit, the turn is cancelled or something fails. One generator, no state outside it; the events
- * it yields are the turn's own and end with exactly one terminal event.
+ * it yields are the turn's own and end with exactly one terminal event. The model call is the one replaceable part (`chatFn`): the
+ * hosted-model runtime (src/runner/runtimes/hostedModel/) runs this same loop over its own wire client.
  *
  * Weak models are the normal case, so the loop is built to survive them without ever widening what they may do:
  * - a call with a near-miss name or string-typed arguments is repaired (toolCalls.ts); a call written as JSON in the text of a
@@ -20,7 +21,7 @@
  * content, the bearer or a server's error text is ever put in an event.
  */
 import type { RunRequest, RuntimeEvent } from '../../../shared/nexus/runtime';
-import { chat, type ChatMessage, type ChatTool, type ClientFailure } from './client';
+import { chat, type ChatMessage, type ChatReply, type ChatTool, type ClientFailure } from './client';
 import type { Target } from './endpoint';
 import { FILE_TOOL_NAMES, checkRelPath, type FileTools } from './fileTools';
 import { McpClient, redactToken } from './mcpClient';
@@ -56,12 +57,24 @@ export const DEFAULT_TUNING: Readonly<LoopTuning> = Object.freeze({
   numCtx: 16384, numPredict: 4096, chatTimeoutMs: 15 * 60_000, chatMaxBytes: 4 * 1024 * 1024, toolResultMaxChars: 6_000, execOutputMaxChars: 3_500
 });
 
+/**
+ * What a model call is handed and gives back when the loop does not talk to a local server itself: the hosted-model runtime
+ * supplies its own `chatFn` (its wire client, retries and error mapping) and the loop stays the same. A failure carries the run's
+ * own failure code and a fixed sentence (never a server's text).
+ */
+export interface LoopChatArgs { messages: ChatMessage[]; tools: ChatTool[]; timeoutMs: number; maxBytes: number; signal: AbortSignal; deadline: number; now: () => number }
+export type LoopChatResult = { ok: true; value: ChatReply } | { ok: false; code: 'runtime_error' | 'auth' | 'limit' | 'protocol'; message: string };
+export type ChatFn = (a: LoopChatArgs) => Promise<LoopChatResult>;
+
 export interface LoopDeps {
   req: RunRequest;
   /** Aborted by a cancel or by the wall clock; `endedBy` says which. */
   signal: AbortSignal;
   endedBy: () => 'wall' | 'cancel' | null;
-  target: Extract<Target, { ok: true }>;
+  /** The local server's checked address (the default chat path); not needed with a `chatFn`. */
+  target?: Extract<Target, { ok: true }>;
+  /** Replaces the local server's chat call (the hosted-model runtime). */
+  chatFn?: ChatFn;
   model: string;
   messages: ChatMessage[];
   /** What the model is offered: the file tools and the runner's. */
@@ -172,7 +185,7 @@ function failMessage(kind: ClientFailure, status?: number): string {
 }
 
 /** Older tool output is dropped, newest kept, when the history would not fit the context window. */
-function compact(messages: ChatMessage[], numCtx: number): void {
+export function compact(messages: ChatMessage[], numCtx: number): void {
   const budget = Math.floor(numCtx * 3 * 0.6);
   const size = (): number => messages.reduce((n, m) => n + m.content.length + (m.tool_calls ? JSON.stringify(m.tool_calls).length : 0), 0);
   if (size() <= budget) return;
@@ -192,7 +205,7 @@ export async function* runLoop(d: LoopDeps): AsyncGenerator<RuntimeEvent> {
   const hasChangeset = d.mcpSchemas.has('changeset_register');
   const usage = { inputTokens: 0, outputTokens: 0, cacheCreationTokens: 0, cacheReadTokens: 0, toolCalls: 0 };
   const usageEvent = (): RuntimeEvent => ({ t: 'usage', ...usage, costUsdCents: 0, estimated: false });
-  const failed = (code: 'runtime_error' | 'limit' | 'protocol', message: string): RuntimeEvent => ({ t: 'run.failed', at: at(), code, message });
+  const failed = (code: 'runtime_error' | 'auth' | 'limit' | 'protocol', message: string): RuntimeEvent => ({ t: 'run.failed', at: at(), code, message });
   const ended = (): RuntimeEvent | null => {
     const why = d.endedBy();
     if (why === 'wall') return failed('limit', 'the turn ran past its wall clock');
@@ -238,13 +251,18 @@ export async function* runLoop(d: LoopDeps): AsyncGenerator<RuntimeEvent> {
     }
     compact(d.messages, d.tuning.numCtx);
     const remaining = d.deadline - at();
-    const r = await chat(d.target, { model: d.model, messages: d.messages, tools: [...d.tools], numCtx: d.tuning.numCtx, numPredict: d.tuning.numPredict },
-      { timeoutMs: Math.min(d.tuning.chatTimeoutMs, Math.max(1000, remaining + 1000)), maxBytes: d.tuning.chatMaxBytes, signal: d.signal });
+    const bounds = { timeoutMs: Math.min(d.tuning.chatTimeoutMs, Math.max(1000, remaining + 1000)), maxBytes: d.tuning.chatMaxBytes, signal: d.signal };
+    let r: LoopChatResult;
+    if (d.chatFn) r = await d.chatFn({ messages: d.messages, tools: [...d.tools], ...bounds, deadline: d.deadline, now: d.now });
+    else {
+      const lr = await chat(d.target!, { model: d.model, messages: d.messages, tools: [...d.tools], numCtx: d.tuning.numCtx, numPredict: d.tuning.numPredict }, bounds);
+      r = lr.ok ? lr : { ok: false, code: 'runtime_error', message: failMessage(lr.kind, lr.status) };
+    }
     modelCalls++;
     if (!r.ok) {
       const stopped = ended();
       yield usageEvent();
-      yield stopped ?? failed('runtime_error', failMessage(r.kind, r.status));
+      yield stopped ?? failed(r.code, r.message);
       return;
     }
     const reply = r.value;

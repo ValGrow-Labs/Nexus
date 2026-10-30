@@ -636,7 +636,7 @@ test('LM21 the registry builds the kind and the probe reports it next to the oth
   assert.equal(rt.kind, 'local-model');
   for (const m of ['describe', 'health', 'start', 'cancel']) assert.equal(typeof rt[m], 'function', m);
   const kinds = registry.probeAdapters().map((a) => a.kind);
-  assert.deepEqual(kinds, ['cli-agent', 'local-model']);
+  assert.deepEqual(kinds, ['cli-agent', 'local-model', 'hosted-model']);
   for (const a of registry.probeAdapters()) for (const m of ['describe', 'health', 'setup']) assert.equal(typeof a[m], 'function', m);
   assert.throws(() => registry.runtimeFor('no-such-kind', { token: TOKEN, mcpUrl: '' }), /no runtime is registered/);
 });

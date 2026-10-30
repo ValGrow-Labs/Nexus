@@ -354,7 +354,10 @@ export interface EnginePlan extends PlanBase {
  * One agent turn (B2b): the runtime runs on the host under the runner, its file tools confined to the session worktree
  * by policy; every command it runs goes through `sandbox_exec` into `container` (network `none`, the worktree bound at
  * `/workspace`). `runtime.token` is the turn's capability token: it travels only over the MessagePort, never in argv, a
- * file, a log or a database row. `egress.allow`: the hosts the agent process itself may reach through the runner's
+ * file, a log or a database row. `runtime.apiKey` (hosted-model runtime only, optional): the user's provider API key, resolved by
+ * main at lease time and held in the runner's memory for the turn exactly like the token (visible ASCII, 8 to 512 characters); it is
+ * never stored in a plan copy, log, event, file or argv, and the adapter sends it only as the chosen provider's auth header.
+ * `egress.allow`: the hosts the agent process itself may reach through the runner's
  * loopback proxy (the live consent's hosts). `egress.consentHostsSha256`: the live consent record's `hosts_sha256`, which
  * main reads at turn start (never derived from `allow`); required (64 lowercase hex) when `allow` is non-empty, absent
  * only for an empty `allow` (deny-all). The runner hands it UNCHANGED to the host egress proxy, which refuses a list
@@ -364,7 +367,7 @@ export interface AgentPlan extends PlanBase {
   kind: 'agent';
   container: ContainerSpec;
   worktree: { hostPath: string; gitDir: string; ref: string; base: string; editable: string[] };
-  runtime: { kind: RuntimeKind; request: RunRequest; token: string };
+  runtime: { kind: RuntimeKind; request: RunRequest; token: string; apiKey?: string };
   egress: { allow: { host: string; port: number }[]; consentHostsSha256?: string };
   caps: { turnTokens: number; turnUsdCents: number; dayRemainingUsdCents: number; toolCalls: number };
   /**

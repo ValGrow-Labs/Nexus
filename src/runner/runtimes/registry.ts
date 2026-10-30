@@ -1,11 +1,13 @@
 /**
- * The agent runtime registry (B2b Tasks 11 and 13): picks the `AgentRuntime` for one turn by its `RuntimeKind`. Three kinds
+ * The agent runtime registry (B2b Tasks 11 and 13): picks the `AgentRuntime` for one turn by its `RuntimeKind`. Four kinds
  * exist in this build: `scripted` (in-process, no child process: src/runner/runtimes/scripted.ts), `cli-agent` (the
  * vendor-neutral kind every real engine adapter runs under: src/runner/runtimes/cliAgent/, the engine's own native
  * executable run on the host, confined to the turn's own worktree by policy, every actual command run through
  * `sandbox_exec` into the container) and `local-model` (src/runner/runtimes/localModel/: a tool-calling loop in the runner
  * process against a model server on this machine, reached over loopback only; its file tools are confined to the worktree and
- * every command still runs through `sandbox_exec`).
+ * every command still runs through `sandbox_exec`) and `hosted-model` (src/runner/runtimes/hostedModel/: the same tool loop against a
+ * free hosted API, reached over HTTPS through the turn's host egress proxy at exactly the chosen provider's host, with the user's key
+ * held in memory and sent only as that provider's auth header).
  *
  * This file spawns nothing. The `cli-agent` adapter is the one spawn site for the engine: it resolves the native
  * executable itself (production never sets `agentBin`), builds the engine's environment from an allow-list (never the
@@ -18,11 +20,13 @@
 import type { AgentRuntime, RuntimeKind } from '../../shared/nexus/runtime';
 import { CLI_AGENT_KIND, createCliAgentAdapter, type Preflight, type TurnCaps } from './cliAgent/adapter';
 import { sanitizeOverlay } from './cliAgent/testSeam';
+import { HOSTED_MODEL_KIND, createHostedModelAdapter } from './hostedModel/adapter';
+import type { HostedTestSeam } from './hostedModel/transport';
 import { LOCAL_MODEL_KIND, createLocalModelAdapter } from './localModel/adapter';
 import type { RuntimeProbeAdapter } from './probe';
 import { SCRIPTED_KIND, ScriptedRuntime, type ScriptedStep } from './scripted';
 
-export { CLI_AGENT_KIND, LOCAL_MODEL_KIND, SCRIPTED_KIND };
+export { CLI_AGENT_KIND, HOSTED_MODEL_KIND, LOCAL_MODEL_KIND, SCRIPTED_KIND };
 
 /** What one turn needs to build its runtime: the bearer for MCP calls, and (kind-specific) how to reach the engine. */
 export interface RuntimeTurnContext {
@@ -37,7 +41,10 @@ export interface RuntimeTurnContext {
   agentEnv?: NodeJS.ProcessEnv;
   /** `cli-agent` only, TEST SEAM: argv placed before the engine's own argv (a stand-in's script path). */
   agentArgvPrefix?: readonly string[];
-  /** `cli-agent` only: the turn's loopback egress proxy URL, once the proxy is running (null before). The engine never starts without one. */
+  /**
+   * The turn's loopback egress proxy URL, once the proxy is running (null before). `cli-agent`: the engine never starts without one.
+   * `hosted-model`: every request to the provider goes through it (a CONNECT tunnel, then TLS); without one no request is made.
+   */
   egressProxyUrl?: () => string | null;
   /** `cli-agent` only: the turn's caps (tokens, tool calls, spend), enforced by the adapter as well. */
   caps?: TurnCaps;
@@ -50,6 +57,14 @@ export interface RuntimeTurnContext {
   taskkillBin?: string;
   /** `local-model` only: the hosts the live consent granted (the plan's `egress.allow`); the request's endpoint must be one of them. Without it only the default loopback address is consented. */
   consentedHosts?: readonly { host: string; port: number }[];
+  /**
+   * `hosted-model` only: the user's provider API key (`plan.runtime.apiKey`), IN MEMORY for this turn. Sent only as the chosen provider's
+   * auth header; never logged, stored or put in an event. Absent: the turn fails `auth`. (`consentedHosts` above is shared with
+   * `local-model`: for this kind the chosen provider's host must be one of them.)
+   */
+  apiKey?: string;
+  /** `hosted-model` only, TEST SEAM: how the allowed target is connected (a loopback mock, a test trust root); production never sets it. */
+  hostedTestSeam?: HostedTestSeam;
 }
 
 /** The version and flag check of an executable, kept across turns (keyed by the executable, its size and mtime). */
@@ -71,13 +86,20 @@ export function runtimeFor(kind: RuntimeKind, ctx: RuntimeTurnContext): AgentRun
       token: ctx.token, mcpUrl: ctx.mcpUrl, consentedHosts: ctx.consentedHosts, caps: ctx.caps, mcpTools: ctx.mcpTools, fetchImpl: ctx.fetchImpl
     });
   }
+  if (kind === HOSTED_MODEL_KIND) {
+    return createHostedModelAdapter({
+      token: ctx.token, mcpUrl: ctx.mcpUrl, apiKey: ctx.apiKey, proxyUrl: ctx.egressProxyUrl, consentedHosts: ctx.consentedHosts, caps: ctx.caps,
+      mcpTools: ctx.mcpTools, fetchImpl: ctx.fetchImpl, seam: ctx.hostedTestSeam
+    });
+  }
   throw new Error(`no runtime is registered for ${String(kind)}`);
 }
 
 /**
- * The adapters the runner's probe reports (production: the `cli-agent` adapter, sharing the preflight cache with turns, and the
- * `local-model` adapter, which only reads from the loopback model server when asked). Runs nothing by itself.
+ * The adapters the runner's probe reports (production: the `cli-agent` adapter, sharing the preflight cache with turns, the
+ * `local-model` adapter, which only reads from the loopback model server when asked, and the `hosted-model` adapter, which answers from
+ * its preset table with no network call and no key). Runs nothing by itself.
  */
 export function probeAdapters(): RuntimeProbeAdapter[] {
-  return [createCliAgentAdapter({ preflightCache: PREFLIGHT_CACHE }), createLocalModelAdapter()];
+  return [createCliAgentAdapter({ preflightCache: PREFLIGHT_CACHE }), createLocalModelAdapter(), createHostedModelAdapter()];
 }

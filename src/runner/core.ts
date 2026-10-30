@@ -40,7 +40,7 @@ import {
   type ParsedOutput, type SandboxProfile, type SandboxProbe, type ServicePlan, type StagedOutput, type ToolPlan
 } from '../shared/nexus/execution';
 import {
-  EGRESS_EVENT_MAX, parseProbeKinds, parseRunnerMessage, ULID_RE, type AttemptFailureClass, type AttemptPhase, type CancelReason, type ExitReason, type McpReplyResult,
+  EGRESS_EVENT_MAX, isRuntimeApiKey, parseProbeKinds, parseRunnerMessage, ULID_RE, type AttemptFailureClass, type AttemptPhase, type CancelReason, type ExitReason, type McpReplyResult,
   type RefusalReason, type RunnerToMain, type SandboxExecGrant
 } from '../shared/nexus/runnerProtocol';
 import { expectedNetworkName } from '../shared/nexus/preflightCheck';
@@ -71,7 +71,8 @@ import { findAttemptDir, readPlanRecord, reconcileAnswer, releaseByLabels, remov
 import { startHostEgressProxy } from './hostEgressProxy';
 import type { AgentRuntime } from '../shared/nexus/runtime';
 import type { ScriptedStep } from './runtimes/scripted';
-import { runtimeFor } from './runtimes/registry';
+import { HOSTED_MODEL_KIND, runtimeFor } from './runtimes/registry';
+import type { HostedTestSeam } from './runtimes/hostedModel/transport';
 import { LOCAL_MODEL_KIND, loopbackEndpoint, normalizeLoopbackHost } from '../shared/nexus/localModel';
 import { RuntimeProber, type RuntimeProbeAdapter } from './runtimes/probe';
 import { DEPS_VOLUME_RE, DockerError, SpecError } from './sandbox/dockerDriver';
@@ -158,6 +159,8 @@ export interface RunnerDeps {
     /** Test seams: a runtime built per plan (replacing the registry's), and the host proxy starter. */
     makeRuntime?: (plan: AgentPlan) => AgentRuntime;
     startProxy?: typeof startHostEgressProxy;
+    /** Test seam: how a `hosted-model` turn's allowed provider target is connected (a loopback mock, a test trust root). Production sets none. */
+    hostedTestSeam?: HostedTestSeam;
   };
 }
 
@@ -763,6 +766,8 @@ stderr: ${r.stderr}` : ''}`
     }
     if (!sawWorktree) return 'the agent container has no worktree mount';
     if (typeof plan.runtime.token !== 'string' || plan.runtime.token.length === 0) return 'the turn has no capability token';
+    // The provider API key (hosted-model only): an optional in-memory field, shaped (visible ASCII, 8..512) and never named in a refusal.
+    if (plan.runtime.apiKey !== undefined && (plan.runtime.kind !== HOSTED_MODEL_KIND || !isRuntimeApiKey(plan.runtime.apiKey))) return 'the turn\'s API key is not acceptable for this runtime';
     // The live consent's hash comes from main, never from `allow`: required (64 hex) with any host, absent only for deny-all.
     const consent = plan.egress.consentHostsSha256;
     if (plan.egress.allow.length > 0 ? typeof consent !== 'string' || !/^[0-9a-f]{64}$/.test(consent) : consent !== undefined && (typeof consent !== 'string' || !/^[0-9a-f]{64}$/.test(consent))) {
@@ -1173,6 +1178,8 @@ stderr: ${r.stderr}` : ''}`
         caps: plan.caps,
         mcpTools: plan.mcpTools,
         consentedHosts: plan.egress?.allow,
+        apiKey: plan.runtime.apiKey,
+        hostedTestSeam: this.deps.agentRuntime?.hostedTestSeam,
         steps: this.deps.agentRuntime?.scriptFor?.(plan) ?? [],
         fetchImpl: this.deps.agentRuntime?.fetchImpl,
         agentBin: this.deps.agentRuntime?.agentBin,
