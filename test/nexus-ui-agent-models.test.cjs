@@ -1145,3 +1145,15 @@ test('V9e-2 the page order and plain words: header, notice strip (only when some
   const text = JSON.stringify(NS.nextStep({ panel: A.agentPanelModel({ health: health(), availability: READY, sessions: [], sessionsFail: null }), reviewReady: 1, repoApprovalWaiting: false }));
   assert.ok(!/\b(repository|commit|branch|job|worktree)\b/i.test(text), 'plain words');
 });
+
+test('V9f the request bar has its own row under the page and never covers content: the shell is a grid whose last rows are the bar, the page row can shrink and scrolls, the bar is not fixed or absolute', () => {
+  const sh = fs.readFileSync(path.join(NEXUS, 'styles', 'shell.css'), 'utf8');
+  assert.ok(sh.includes('grid-template-rows: var(--nx-bar-h) minmax(0, 1fr) auto auto; height: 100%;'));
+  assert.ok(sh.includes('.nx-main { min-height: 0; overflow: auto; }'));
+  const ag = fs.readFileSync(path.join(NEXUS, 'styles', 'agent.css'), 'utf8');
+  const bar = ag.split('\n').find((l) => l.startsWith('.nx-intent {')) || '';
+  assert.ok(bar.includes('position: sticky') && !/position:\s*(fixed|absolute)/.test(bar));
+  const pc = fs.readFileSync(path.join(NEXUS, 'styles', 'project.css'), 'utf8');
+  assert.ok(pc.includes('.nx-workbench { overflow-y: auto; }') && pc.includes('min-height: 340px; flex: 1 0 340px;'), 'the page scrolls instead of squeezing or overlapping');
+  assert.ok(pc.includes('padding: var(--nx-s6) var(--nx-s6) 120px'), 'the work area keeps room under its last line');
+});
