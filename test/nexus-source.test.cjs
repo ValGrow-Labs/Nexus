@@ -9,17 +9,17 @@ const src = (over) => ({ kind: 'source', id: 'source', vcs: 'git', branch: 'main
 const ready = (over) => ({ status: 'ready', isRepo: true, branch: 'main', head: { sha: 'abc1234ff', shortSha: 'abc1234', subject: 'Fix totals', time: now / 1000 - 7200 }, changed: [], ...over });
 
 test('git provenance states branch, commit and age', () => {
-  assert.equal(provenanceLine(src(), ready(), now), 'Repository on branch main. Last commit abc1234 Fix totals, 2h ago.');
+  assert.equal(provenanceLine(src(), ready(), now), 'Current line of work: main. Last saved version: abc1234 Fix totals, 2h ago.');
 });
 
 test('a failed branch or log read is unknown, never "detached" or "no commits"', () => {
   const line = provenanceLine(src({ branch: null, head: null }), ready({ branch: null, head: null, unknown: { branch: true, head: true } }), now);
-  assert.equal(line, 'Repository. Branch unknown. Last commit unknown.');
-  assert.doesNotMatch(line, /not on a branch|No commits/);
+  assert.equal(line, 'Current line of work unknown. Last saved version unknown.');
+  assert.doesNotMatch(line, /Not on a named line|Nothing saved yet/);
 });
 
-test('a truly detached, empty repository says so', () => {
-  assert.equal(provenanceLine(src({ branch: null, head: null }), ready({ branch: null, head: null }), now), 'Repository, not on a branch. No commits yet.');
+test('a truly detached, empty project says so', () => {
+  assert.equal(provenanceLine(src({ branch: null, head: null }), ready({ branch: null, head: null }), now), 'Not on a named line of work. Nothing saved yet.');
 });
 
 test('non-git states are not described by this line', () => {

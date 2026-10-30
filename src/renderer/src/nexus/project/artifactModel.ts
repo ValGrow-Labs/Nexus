@@ -12,22 +12,25 @@ import { getDomain } from '@shared/nexus/domains';
 import { blockingValidatorsFor } from '@shared/nexus/validators';
 import { errorCopy } from '../data/errorCopy';
 
+/** What each kind of saved item is called to a person (the glossary: a commit is a saved version, a change set is suggested changes). */
 const KIND_LABEL: Record<string, string> = {
-  git_commit: 'Commit', text_file: 'Text file', handoff_receipt: 'Received',
-  // B2a kinds that the plain words would misname.
-  repository: 'Repository snapshot', problem_statement: 'Problem statement', diagnostic_report: 'Diagnostic report'
+  git_commit: 'Saved version', text_file: 'File', handoff_receipt: 'Received item',
+  repository: 'Starting point', problem_statement: 'Problem description', diagnostic_report: 'Problem report',
+  change_set: 'Suggested changes', test_suite: 'Tests', build: 'Build', application: 'App', requirement: 'Requirement'
 };
 
-/** "Commit", "Text file", "Received"; any other kind reads as its words ("change_set" → "Change set"). */
+/** "Saved version", "File", "Received item"; any other kind reads as its words ("test_plan" → "Test plan"). */
 export function kindLabel(kind: string): string {
   const known = KIND_LABEL[kind];
   if (known) return known;
   const words = kind.replace(/[_-]+/g, ' ').trim();
-  return words ? words[0].toUpperCase() + words.slice(1) : 'Artifact';
+  return words ? words[0].toUpperCase() + words.slice(1) : 'Saved item';
 }
 
-/** A kind in its workspace's own words (the registry's vocabulary: a DA problem statement is a "Business question"). */
+/** A kind in its workspace's own words (the registry's vocabulary: a DA problem statement is a "Business question"). Software
+ *  keeps the plain names above, whatever its registry vocabulary says. */
 export function kindLabelIn(kind: string, workspaceId: string | null | undefined): string {
+  if (workspaceId === 'sde' && KIND_LABEL[kind]) return KIND_LABEL[kind];
   const v = workspaceId ? getDomain(workspaceId)?.vocabulary[kind] : undefined;
   return v ? v.singular : kindLabel(kind);
 }
@@ -35,16 +38,23 @@ export function kindLabelIn(kind: string, workspaceId: string | null | undefined
 /** True when versions of this kind are checked before they leave draft (their validation state means something). */
 export const kindIsChecked = (kind: string): boolean => blockingValidatorsFor(kind).length > 0;
 
-const STATUS_LABEL: Record<VersionStatus, string> = { draft: 'draft', candidate: 'ready', active: 'active', failed: 'failed', deprecated: 'deprecated' };
+/** A version is a draft, ready, in use (the one the project uses now) or replaced. */
+const STATUS_LABEL: Record<VersionStatus, string> = { draft: 'draft', candidate: 'ready', active: 'in use', failed: 'failed', deprecated: 'replaced' };
 
 /** Status is always said in words, never by colour alone. */
 export function statusLabel(status: VersionStatus): string {
   return STATUS_LABEL[status] ?? status;
 }
 
-/** "derived_from" → "derived from". */
+/** The links between versions in plain words; any other one reads as its own words ("found_in" → "found in"). */
+const RELATION_WORDS: Record<string, string> = {
+  derived_from: 'made from', extracted_from: 'taken from', built_from: 'built from', assembled_from: 'put together from', evidenced_by: 'shown by',
+  verified_by: 'checked by', depends_on: 'needs', executes: 'runs', fixes: 'fixes'
+};
+
+/** "derived_from" → "made from". */
 export function relationLabel(relation: string): string {
-  return relation.replace(/_/g, ' ');
+  return RELATION_WORDS[relation] ?? relation.replace(/_/g, ' ');
 }
 
 // ---------- version actions (the rules) ----------
@@ -109,7 +119,7 @@ export const NO_ARTIFACTS: ArtifactsState = { artifacts: [], loaded: false, erro
  * The Spine's note when the project has more artifacts than the read returns. The read is capped at 1000
  * artifacts in creation order (oldest first), so the note says which ones are shown.
  */
-export const SPINE_TRUNCATED_TEXT = 'Only the first 1000 artifacts of this project are shown, oldest first.';
+export const SPINE_TRUNCATED_TEXT = 'Only the first 1000 saved items of this project are shown, oldest first.';
 
 /** The next state after a nexus:artifacts:byProject answer. */
 export function nextArtifacts(prev: ArtifactsState, r: NexusResult<ArtifactSummaryView[]>): ArtifactsState {
@@ -133,7 +143,7 @@ export interface PassportVersionRow {
   current: boolean;
   /** The version the Spine node shows. */
   shown: boolean;
-  /** What the version holds: "Commit <full sha>", "File <path>", "Received through a handoff"; null while unknown. */
+  /** What the version holds: "Saved version <id>", "File <path>", "Received through a handoff"; null while unknown. */
   content: string | null;
   /** A git version's subject, only when the project's own git log knows that commit. */
   subject: string | null;
@@ -169,7 +179,7 @@ export interface ArtifactPassportInput {
 
 function contentText(c: VersionContent | undefined): string | null {
   if (!c) return null;
-  if (c.type === 'git') return `Commit ${c.commit}`;
+  if (c.type === 'git') return `Saved version ${c.commit}`;
   if (c.type === 'text') return `File ${c.path}`;
   if (c.type === 'receipt') return 'Received through a handoff';
   return null;
@@ -196,9 +206,9 @@ export function artifactPassportView(i: ArtifactPassportInput): ArtifactPassport
   const a = i.detail.artifact;
   const versions = [...i.detail.versions].sort((x, y) => y.versionNo - x.versionNo);
   const current = versions.find((v) => v.id === a.currentVersionId) ?? null;
-  const rows: { label: string; value: string }[] = [{ label: 'Kind', value: kindLabel(a.kind) }];
+  const rows: { label: string; value: string }[] = [{ label: 'Type', value: kindLabel(a.kind) }];
   if (i.owner) rows.push({ label: 'Workspace', value: i.owner.active ? i.owner.label : `${i.owner.label} (withdrawn)` });
-  rows.push({ label: 'Current version', value: current ? `Version ${current.versionNo}` : 'None yet' });
+  rows.push({ label: 'Version in use', value: current ? `Version ${current.versionNo}` : 'None yet' });
   rows.push({ label: 'Versions', value: String(versions.length) });
   if (a.status === 'archived') rows.push({ label: 'Status', value: 'Archived' });
   if (a.description) rows.push({ label: 'Description', value: a.description });
@@ -270,11 +280,11 @@ export function actionFailed(_s: ActionState, error: string): ActionState {
 }
 
 /** A promote or roll back lost its compare-and-set: another version was made current first. */
-export const PROMOTE_CONFLICT_TEXT = 'The current version changed; the list is refreshed';
+export const PROMOTE_CONFLICT_TEXT = 'Another version was put in use first, so nothing changed. The list has been updated.';
 /** A link that would make a loop. */
-export const LINK_CYCLE_TEXT = 'That version already depends on this one, so it cannot also be its source. Nothing was linked.';
+export const LINK_CYCLE_TEXT = 'That version was already made from this one, so this one cannot be made from it too. Nothing was added.';
 /** A source the service refused as a draft or as another project's version. */
-export const LINK_INVALID_TEXT = 'That version cannot be a source here: it is still a draft or belongs to another project. Nothing was linked.';
+export const LINK_INVALID_TEXT = 'That version cannot be used here. It is still a draft, or it belongs to another project. Nothing was added.';
 
 /** The sentence for a failed Passport action. */
 export function actionFailureText(kind: PassportActionKind, r: Pick<NexusFail, 'code' | 'reason' | 'subReason'>): string {
@@ -300,11 +310,11 @@ export function shouldReloadAfterAction(r: Pick<NexusFail, 'code' | 'reason'>): 
 }
 
 const ACTION_TEXT: Record<PassportActionKind, { idle: string; pending: string }> = {
-  markReady: { idle: 'Mark ready', pending: 'Marking ready…' },
-  promote: { idle: 'Make current', pending: 'Making current…' },
-  rollback: { idle: 'Roll back', pending: 'Rolling back…' },
+  markReady: { idle: 'Mark as ready', pending: 'Marking as ready…' },
+  promote: { idle: 'Use this version', pending: 'Switching to this version…' },
+  rollback: { idle: 'Go back to this version', pending: 'Going back…' },
   discard: { idle: 'Discard', pending: 'Discarding…' },
-  link: { idle: 'Link a source…', pending: 'Linking…' }
+  link: { idle: 'Add what it was made from…', pending: 'Adding…' }
 };
 
 /** A button's words, idle or while its own action runs. */
@@ -315,32 +325,32 @@ export function actionLabel(kind: PassportActionKind, pending: boolean): string 
 /** The status line while an action runs; focus rests on it so it never falls to the page. */
 export function actionPendingText(kind: PassportActionKind, versionNo: number): string {
   switch (kind) {
-    case 'markReady': return `Marking version ${versionNo} ready…`;
-    case 'promote': return `Making version ${versionNo} current…`;
-    case 'rollback': return `Rolling back to version ${versionNo}…`;
+    case 'markReady': return `Marking version ${versionNo} as ready…`;
+    case 'promote': return `Switching to version ${versionNo}…`;
+    case 'rollback': return `Going back to version ${versionNo}…`;
     case 'discard': return `Discarding version ${versionNo}…`;
-    case 'link': return `Linking a source to version ${versionNo}…`;
+    case 'link': return `Adding what version ${versionNo} was made from…`;
   }
 }
 
 /** The confirmation question for a destructive action. */
 export function confirmText(kind: 'discard' | 'rollback', versionNo: number, currentNo: number | null): string {
-  if (kind === 'discard') return `Discard version ${versionNo}? It stays in the history as discarded and can no longer be made ready or current.`;
+  if (kind === 'discard') return `Discard version ${versionNo}? It stays in the list as discarded, but you cannot mark it as ready or use it again.`;
   return currentNo !== null
-    ? `Make version ${versionNo} current again? Version ${currentNo} stops being current.`
-    : `Make version ${versionNo} current again?`;
+    ? `Go back to version ${versionNo}? Version ${currentNo} will stop being in use.`
+    : `Go back to version ${versionNo}?`;
 }
 
 /** The sentence after a successful action. */
 export function actionDoneText(kind: PassportActionKind, versionNo: number, o: { created?: number; sourceLabel?: string } = {}): string {
   switch (kind) {
     case 'markReady': return `Version ${versionNo} is ready.`;
-    case 'promote': return `Version ${versionNo} is now current.`;
-    case 'rollback': return `Rolled back: version ${versionNo} is current again.`;
+    case 'promote': return `Version ${versionNo} is now in use.`;
+    case 'rollback': return `Went back: version ${versionNo} is in use again.`;
     case 'discard': return `Version ${versionNo} was discarded.`;
     case 'link': {
       const what = o.sourceLabel ?? 'That version';
-      return o.created === 0 ? `${what} was already a source of version ${versionNo}.` : `${what} is now a source of version ${versionNo}.`;
+      return o.created === 0 ? `Version ${versionNo} was already made from ${what}.` : `Version ${versionNo} is now made from ${what}.`;
     }
   }
 }

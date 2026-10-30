@@ -43,7 +43,7 @@ export function NexusMenu() {
               >
                 <Icon name={item.icon} size={16} />
                 <span className="nx-menu__text">{item.label}</span>
-                {item.planned && <span className="nx-menu__note">Planned</span>}
+                {item.planned && <span className="nx-menu__note">Coming later</span>}
               </button>
             );
           })}

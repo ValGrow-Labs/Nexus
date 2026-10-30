@@ -10,7 +10,7 @@ import { navigate } from '../router/useRoute';
 import { PASSPORT_HANDOFF_READS, canHandOff, hasReceiver, type HandoffStart } from '../handoffs/handoffModel';
 import { Button } from '../ui/Button';
 import { Popover } from '../ui/Sheet';
-import { projectOwned, type ArtifactNode, type ArtifactSummary } from './spineModel';
+import { plainPreviewWord, projectOwned, type ArtifactNode, type ArtifactSummary } from './spineModel';
 import { ActionBar } from './ActionBar';
 import { DeploymentsSection } from './DeploymentsSection';
 import { EvidenceSection } from './EvidenceSection';
@@ -71,7 +71,7 @@ function useArtifactPassport(artifactId: string, shownVersionNo: number, rootPat
         }
         setState({
           loaded: { detail, contents, subjects, up: up && up.ok ? up.data : null, down: down && down.ok ? down.data : null },
-          error: (up && !up.ok) || (down && !down.ok) ? 'Some links of this version could not be read.' : null
+          error: (up && !up.ok) || (down && !down.ok) ? 'Nexus could not read everything this version is linked to.' : null
         });
       } catch {
         // An unexpected throw (for example from the git log read): never an unhandled rejection.
@@ -102,7 +102,7 @@ function useLinkCandidates(enabled: boolean, artifactId: string, artifacts: Arti
         const reads = await Promise.all(key ? key.split(',').map((id) => nexusClient.artifactGet(id)) : []);
         if (!alive) return;
         const details = reads.flatMap((r) => (r.ok ? [r.data] : []));
-        setState({ details, loaded: true, error: reads.some((r) => !r.ok) ? 'Some versions could not be read, so they are not offered.' : null });
+        setState({ details, loaded: true, error: reads.some((r) => !r.ok) ? 'Nexus could not read some versions, so they are not offered.' : null });
       } catch {
         if (alive) setState((s) => ({ details: s.details, loaded: true, error: errorCopy('internal').text }));
       }
@@ -116,12 +116,12 @@ function Links({ title, links, truncated, empty, children }: { title: string; li
   return (
     <section>
       <h2>{title}</h2>
-      {links === null ? <p className="nx-muted">Not available.</p> : links.length === 0 ? <p className="nx-muted">{empty}</p> : (
+      {links === null ? <p className="nx-muted">Nexus could not read this just now.</p> : links.length === 0 ? <p className="nx-muted">{empty}</p> : (
         <ul className="nx-apx__links">
           {links.map((l) => <li key={l.versionId}><span>{l.label}</span> <span className="nx-muted">{l.relation}, {l.status}</span></li>)}
         </ul>
       )}
-      {truncated && <p className="nx-muted">More links exist than are shown here.</p>}
+      {truncated && <p className="nx-muted">There are more than the ones shown here.</p>}
       {children}
     </section>
   );
@@ -172,7 +172,7 @@ export function ArtifactPassport({ project, node, artifacts, onSpine = true, onH
   const [pickerOpened, setPickerOpened] = useState(false);
 
   const artifact = loaded ? loaded.detail.artifact : null;
-  // An application's health check runs only on a dev deployment: its version words read the deployments of each
+  // An application's app check runs only on a test run of your app: its version words read the test runs of each
   // version and the shown version's blocking results, so a draft never reads "Checking…" while nothing checks it.
   const isApp = artifact?.kind === 'application';
   const deployments = useDeployments(project.id);
@@ -198,7 +198,7 @@ export function ArtifactPassport({ project, node, artifacts, onSpine = true, onH
     return m;
   };
   const wordOf = (v: VersionView): string | null => (isApp
-    ? applicationChecksWord({ status: v.status, validationState: v.validationState, validators: validatorsOf(v.id), deployments: deploymentsOf(v.id) })
+    ? plainPreviewWord(applicationChecksWord({ status: v.status, validationState: v.validationState, validators: validatorsOf(v.id), deployments: deploymentsOf(v.id) }))
     : checksWord(v.validationState, v.status));
   const ownerRow = artifact && artifact.ownerParticipationId
     ? (idx.byProject.get(project.id) ?? []).find((r) => r.id === artifact.ownerParticipationId) ?? null
@@ -275,10 +275,10 @@ export function ArtifactPassport({ project, node, artifacts, onSpine = true, onH
     return (
       <aside className="nx-passport" aria-labelledby="nx-passport-title">
         <header>
-          <p className="nx-passport__kind">Artifact</p>
+          <p className="nx-passport__kind">Saved item</p>
           <h2 id="nx-passport-title" className="nx-passport__title">{node.name}</h2>
         </header>
-        {error ? <p className="nx-passport__note" role="alert">{error}</p> : <p className="nx-muted" role="status">Reading the artifact…</p>}
+        {error ? <p className="nx-passport__note" role="alert">{error}</p> : <p className="nx-muted" role="status">Reading this saved item…</p>}
       </aside>
     );
   }
@@ -292,7 +292,7 @@ export function ArtifactPassport({ project, node, artifacts, onSpine = true, onH
         <h2 id="nx-passport-title" className="nx-passport__title">{view.title}</h2>
       </header>
       <section>
-        <h2>Artifact</h2>
+        <h2>Details</h2>
         <dl>{view.rows.map((r) => <Fragment key={r.label}><dt>{r.label}</dt><dd>{r.value}</dd></Fragment>)}</dl>
       </section>
       <section>
@@ -308,7 +308,7 @@ export function ArtifactPassport({ project, node, artifacts, onSpine = true, onH
               <li key={row.id} aria-current={row.current ? 'true' : undefined}>
                 <span className="nx-id">v{row.versionNo}</span>
                 <span className="nx-apx__version">
-                  <span>{row.status}{row.current ? ', current' : ''}{row.shown && !row.current ? (onSpine ? ', shown on the spine' : ', shown here') : ''}</span>
+                  <span>{row.status}{row.shown && !row.current ? (onSpine ? ', shown on the timeline' : ', shown here') : ''}</span>
                   {v && kindIsChecked(artifact.kind) && wordOf(v) && <span className="nx-muted">{wordOf(v)}</span>}
                   {row.content && <span className="nx-apx__content">{row.content}</span>}
                   {row.subject && <span className="nx-muted">{row.subject}</span>}
@@ -327,9 +327,9 @@ export function ArtifactPassport({ project, node, artifacts, onSpine = true, onH
                         );
                       })}
                       {handOff && ownerRow && (
-                        <Button disabled={pending !== null} ariaLabel={`Hand off version ${v.versionNo}`}
+                        <Button disabled={pending !== null} ariaLabel={`Send version ${v.versionNo} to another workspace`}
                           onClick={() => onHandOff?.({ projectId: project.id, ownerParticipationId: ownerRow.id, artifactId: artifact.id, artifactName: artifact.name, versionId: v.id, versionNo: v.versionNo })}>
-                          Hand off…
+                          Send to another workspace…
                         </Button>
                       )}
                     </span>
@@ -355,28 +355,28 @@ export function ArtifactPassport({ project, node, artifacts, onSpine = true, onH
       {shownVersion && !isApp && <EvidenceSection key={shownVersion.id} version={shownVersion} kind={artifact.kind} checked={kindIsChecked(artifact.kind)} />}
       {shownVersion && isApp && <EvidenceSection key={shownVersion.id} version={shownVersion} kind={artifact.kind} checked preview={{ deployments: deploymentsOf(shownVersion.id) }} />}
       {shownVersion && artifact.ownerWorkspaceId && ownerActive && artifact.status === 'active' && (
-        <ActionBar projectId={project.id} workspaceId={artifact.ownerWorkspaceId} title="Actions"
+        <ActionBar projectId={project.id} workspaceId={artifact.ownerWorkspaceId} title="What you can do"
           version={{ id: shownVersion.id, kind: artifact.kind, status: shownVersion.status, buildId: shownBuildId }} />
       )}
       {shownVersion && projectOwned(artifact) && artifact.status === 'active' && workspacesActingOn(artifact.kind, activeWorkspaces).map((w) => (
-        <ActionBar key={w} projectId={project.id} workspaceId={w} title={`${viewOf(w).label} actions`}
+        <ActionBar key={w} projectId={project.id} workspaceId={w} title={`What you can do in ${viewOf(w).label}`}
           version={{ id: shownVersion.id, kind: artifact.kind, status: shownVersion.status }} />
       ))}
       {artifact.kind === 'application' && artifact.ownerWorkspaceId && (
         <DeploymentsSection projectId={project.id} workspaceId={artifact.ownerWorkspaceId} versionIds={loaded.detail.versions.map((x) => x.id)} />
       )}
-      <Links title="Sources" links={view.upstream} truncated={view.upstreamTruncated} empty="No sources recorded for this version.">
+      <Links title="Made from" links={view.upstream} truncated={view.upstreamTruncated} empty="Nothing is recorded as the source of this version.">
         {linkable && shownVersion && (
           <div className="nx-apx__link">
             {pending !== null ? (
               <Button disabled>{actionLabel('link', pending.kind === 'link')}</Button>
             ) : (
-              <Popover kind="listbox" label={`Versions to link as sources of version ${shownVersion.versionNo}`} triggerClassName="nx-btn" trigger={<span>{actionLabel('link', false)}</span>}
+              <Popover kind="listbox" label={`Versions that version ${shownVersion.versionNo} was made from`} triggerClassName="nx-btn" trigger={<span>{actionLabel('link', false)}</span>}
                 onOpen={() => setPickerOpened(true)} itemsKey={`${candidates.loaded}:${choices.map((c) => c.versionId).join(',')}`}>
                 {(close) => !candidates.loaded ? (
-                  <p className="nx-muted nx-apx__pick-note" role="status">Reading versions to link…</p>
+                  <p className="nx-muted nx-apx__pick-note" role="status">Reading the versions you can choose…</p>
                 ) : choices.length === 0 ? (
-                  <p className="nx-muted nx-apx__pick-note">No ready or active version of another artifact is available to link.</p>
+                  <p className="nx-muted nx-apx__pick-note">No other saved item has a version that is ready or in use, so there is nothing to choose.</p>
                 ) : choices.map((c) => (
                   <button key={c.versionId} type="button" role="option" tabIndex={-1} aria-selected={false} className="nx-menu__item"
                     disabled={pending !== null} onClick={() => { close(); void act('link', shownVersion, c); }}>
@@ -387,7 +387,7 @@ export function ArtifactPassport({ project, node, artifacts, onSpine = true, onH
               </Popover>
             )}
             {pickerOpened && candidates.error && <p className="nx-muted">{candidates.error}</p>}
-            {pickerOpened && candidates.capped && <p className="nx-muted">Only the {LINK_CANDIDATE_ARTIFACTS} most recently changed artifacts are offered.</p>}
+            {pickerOpened && candidates.capped && <p className="nx-muted">Only the {LINK_CANDIDATE_ARTIFACTS} saved items changed most recently are offered.</p>}
           </div>
         )}
       </Links>
@@ -395,8 +395,8 @@ export function ArtifactPassport({ project, node, artifacts, onSpine = true, onH
       {canWrite && (
         <section>
           <h2>Handoffs</h2>
-          {!carrying.loaded ? <p className="nx-muted" role="status">Reading handoffs…</p>
-            : carrying.rows.length === 0 ? (carrying.ok && !carrying.error && <p className="nx-muted">No handoff carries a version of this artifact.</p>) : (
+          {!carrying.loaded ? <p className="nx-muted" role="status">Reading the handoffs…</p>
+            : carrying.rows.length === 0 ? (carrying.ok && !carrying.error && <p className="nx-muted">This saved item has not been sent to another workspace.</p>) : (
               <ul className="nx-apx__links">
                 {carrying.rows.map((c) => (
                   <li key={c.id}>
@@ -407,7 +407,7 @@ export function ArtifactPassport({ project, node, artifacts, onSpine = true, onH
               </ul>
             )}
           {carrying.error && <p className="nx-muted">{carrying.error}</p>}
-          {carrying.capped && <p className="nx-muted">Only the {PASSPORT_HANDOFF_READS} most recent handoffs of this project are checked.</p>}
+          {carrying.capped && <p className="nx-muted">Only the {PASSPORT_HANDOFF_READS} newest handoffs of this project were looked at.</p>}
         </section>
       )}
       {pending && <p ref={resultRef} tabIndex={-1} className="nx-apx__status" role="status">{actionPendingText(pending.kind, versionsById.get(pending.versionId)?.versionNo ?? 0)}</p>}

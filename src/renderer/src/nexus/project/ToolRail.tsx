@@ -5,10 +5,10 @@ import { useShellActions } from '../shellActions';
 import { Icon, type NexusIconName } from '../icons';
 
 const ROUTES: { tool: ProjectTool; label: string; icon: NexusIconName }[] = [
-  { tool: 'bench', label: 'Bench', icon: 'bench' },
-  { tool: 'changes', label: 'Changes', icon: 'changes' },
-  { tool: 'completion', label: 'Completion', icon: 'completion' },
-  { tool: 'runs', label: 'Runs', icon: 'runs' }
+  { tool: 'bench', label: 'Work area', icon: 'bench' },
+  { tool: 'changes', label: 'Suggested changes', icon: 'changes' },
+  { tool: 'completion', label: 'Checklist', icon: 'completion' },
+  { tool: 'runs', label: 'Tasks', icon: 'runs' }
 ];
 
 /** Vertical project tools: the routed tools, then the two app actions. */
@@ -25,10 +25,10 @@ export function ToolRail({ projectId, rootPath, tool, hasChanges, onOpenTerminal
         </button>
       ))}
       <span className="nx-rail__sep" data-desktop-only aria-hidden="true" />
-      <button type="button" className="nx-rail__item" data-desktop-only title="Files" aria-label="Open files" onClick={() => actions.openIde(rootPath)}>
+      <button type="button" className="nx-rail__item" data-desktop-only title="Files" aria-label="Open your project's files" onClick={() => actions.openIde(rootPath)}>
         <Icon name="files" size={17} />
       </button>
-      <button type="button" className="nx-rail__item" data-desktop-only title="Terminal" aria-label="Open terminal" onClick={onOpenTerminal}>
+      <button type="button" className="nx-rail__item" data-desktop-only title="Terminal" aria-label="Open a terminal in this project" onClick={onOpenTerminal}>
         <Icon name="terminal" size={17} />
       </button>
       {extra}

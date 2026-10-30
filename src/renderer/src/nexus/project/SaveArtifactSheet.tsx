@@ -111,13 +111,13 @@ export function SaveArtifactSheet({ project, initial, artifacts, onClose, onSave
     <Sheet open onClose={safeClose} side="right" labelledBy="nx-svx-title">
       <form className="nx-svx" onSubmit={(e) => { e.preventDefault(); void submit(); }}>
         <header className="nx-svx__head">
-          <p className="nx-svx__kind">{source.kind === 'commit' ? 'Commit' : 'Text file'}</p>
-          <h2 id="nx-svx-title" className="nx-svx__title">Save as artifact</h2>
+          <p className="nx-svx__kind">{source.kind === 'commit' ? 'Saved version' : 'File'}</p>
+          <h2 id="nx-svx-title" className="nx-svx__title">Add to saved items</h2>
         </header>
 
         {source.kind === 'commit' ? (
           <label className="nx-svx__field">
-            <span className="nx-svx__label">Commit</span>
+            <span className="nx-svx__label">Saved version</span>
             <select className="nx-input nx-svx__control" value={source.sha} disabled={pending}
               onChange={(e) => { const c = commits.find((x) => x.sha === e.target.value); if (c) changeSource({ kind: 'commit', sha: c.sha, subject: c.subject }); }}>
               {commits.map((c) => <option key={c.sha} value={c.sha}>{c.shortSha} {c.subject}</option>)}
@@ -137,7 +137,7 @@ export function SaveArtifactSheet({ project, initial, artifacts, onClose, onSave
                   ) : (
                     <button type="button" className="nx-svx__entry" aria-pressed={source.relPath === f.relPath} disabled={f.tooLarge}
                       onClick={() => changeSource({ kind: 'file', relPath: f.relPath })}>
-                      <span>{f.name}</span>{f.tooLarge && <span className="nx-muted"> over 64 KB</span>}
+                      <span>{f.name}</span>{f.tooLarge && <span className="nx-muted"> too big (over 64 KB)</span>}
                     </button>
                   )}
                 </li>
@@ -154,20 +154,20 @@ export function SaveArtifactSheet({ project, initial, artifacts, onClose, onSave
           <span className="nx-svx__label">Workspace</span>
           <select className="nx-input nx-svx__control" value={state.workspaceId ?? ''} disabled={pending || choices.length === 0}
             onChange={(e) => setState((s) => selectWorkspace(s, e.target.value, source, choices, artifacts))}>
-            {choices.map((c) => <option key={c.workspaceId} value={c.workspaceId}>{c.isPrimary ? `${c.label} (primary)` : c.label}</option>)}
+            {choices.map((c) => <option key={c.workspaceId} value={c.workspaceId}>{c.isPrimary ? `${c.label} (main)` : c.label}</option>)}
           </select>
         </label>
-        {choices.length === 0 && <p className="nx-muted">This project takes part in no workspace, so nothing can be saved yet.</p>}
+        {choices.length === 0 && <p className="nx-muted">This project is not in any workspace yet, so nothing can be saved. Add it to a workspace first.</p>}
 
         <fieldset className="nx-svx__field" disabled={pending}>
           <legend className="nx-svx__label">Save to</legend>
           <label className="nx-svx__choice">
             <input type="radio" name="nx-svx-target" checked={state.target.mode === 'new'}
               onChange={() => setState((s) => setTarget(s, { mode: 'new', name: s.target.mode === 'new' ? s.target.name : '' }))} />
-            <span>New artifact</span>
+            <span>New saved item</span>
           </label>
           {state.target.mode === 'new' && (
-            <input className="nx-input nx-svx__control" aria-label="Artifact name" maxLength={200} value={state.target.name}
+            <input className="nx-input nx-svx__control" aria-label="Name of the saved item" maxLength={200} value={state.target.name}
               onChange={(e) => { const name = e.target.value; setState((s) => setTarget(s, { mode: 'new', name })); }} />
           )}
           <label className="nx-svx__choice">
@@ -176,12 +176,12 @@ export function SaveArtifactSheet({ project, initial, artifacts, onClose, onSave
             <span>New version of…</span>
           </label>
           {state.target.mode === 'existing' && (
-            <select className="nx-input nx-svx__control" aria-label="Artifact to add a version to" value={state.target.artifactId ?? ''}
+            <select className="nx-input nx-svx__control" aria-label="Saved item to add a version to" value={state.target.artifactId ?? ''}
               onChange={(e) => { const artifactId = e.target.value; setState((s) => setTarget(s, { mode: 'existing', artifactId })); }}>
               {targets.map((t) => <option key={t.artifactId} value={t.artifactId}>{t.latestVersionNo ? `${t.name} (now at version ${t.latestVersionNo})` : t.name}</option>)}
             </select>
           )}
-          {targets.length === 0 && <p className="nx-muted">No {source.kind === 'commit' ? 'commit' : 'text file'} artifact in this workspace yet.</p>}
+          {targets.length === 0 && <p className="nx-muted">There is no saved item of this type in this workspace yet.</p>}
         </fieldset>
 
         {steer && ws && (

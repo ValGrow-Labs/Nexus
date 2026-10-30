@@ -2,6 +2,7 @@ import { getWorkspace } from '../workspaces/registry';
 import type { WorkspaceId } from '../workspaces/types';
 import { getDomain } from '@shared/nexus/domains';
 import { isDomainOnly } from '../workspaces/lifecycleModel';
+import { plainDomainLabel } from '../workspaces/plainDomainCopy';
 
 /** A registry domain with no workspace (Data Scientist in B2a): `#/w/<id>` opens its honest domain page. */
 export type DomainPageId = string;
@@ -82,19 +83,19 @@ export function formatRoute(r: Route): string {
 }
 
 const TITLES: Record<string, string> = {
-  home: 'Home', welcome: 'Welcome', browse: 'Environments', workspaces: 'Workspaces', projects: 'Projects', project: 'Project',
-  artifacts: 'Artifacts', handoffs: 'Handoffs', deployments: 'Deployments', agents: 'Agents', 'not-found': 'Not found'
+  home: 'Home', welcome: 'Welcome', browse: 'Choose a workspace', workspaces: 'Workspaces', projects: 'Projects', project: 'Project',
+  artifacts: 'Saved items', handoffs: 'Handoffs', deployments: 'Publishing', agents: 'Agents', 'not-found': 'Page not found'
 };
 
-const TOOL_TITLES: Record<ProjectTool, string> = { bench: 'Project', changes: 'Changes', completion: 'Completion', runs: 'Runs' };
+const TOOL_TITLES: Record<ProjectTool, string> = { bench: 'Project', changes: 'Suggested changes', completion: 'Checklist', runs: 'Tasks' };
 
 export function routeTitle(r: Route): string {
   if (r.name === 'workspace') {
     const ws = getWorkspace(r.id);
-    return ws ? `${ws.label} workspace` : getDomain(r.id)?.label ?? r.id;
+    return ws ? `${ws.label} workspace` : plainDomainLabel(r.id) ?? getDomain(r.id)?.label ?? r.id;
   }
   if (r.name === 'project') return TOOL_TITLES[r.tool];
-  if (r.name === 'artifacts' && r.id !== undefined) return 'Artifact';
+  if (r.name === 'artifacts' && r.id !== undefined) return 'Saved item';
   if (r.name === 'handoffs' && r.id !== undefined) return 'Handoff';
   return TITLES[r.name];
 }

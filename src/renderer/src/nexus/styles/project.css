@@ -106,6 +106,15 @@
 .nx-review__diff > p, .nx-review__diff > .nx-review__empty { padding: var(--nx-s3); }
 @media (max-width: 767px) { .nx-review__layout { grid-template-columns: minmax(0, 1fr); } }
 
-/* Lifecycle steps not in this release (workspaces/LifecycleRail.tsx) wear the draft hatch (on their marker and their compact segment; never a filled tile). */
+/* Lifecycle steps that come later (workspaces/LifecycleRail.tsx) wear the draft hatch (on their marker and their compact segment; never a filled tile). */
 .nx-lrail__step[data-future="true"]::before { border-style: dashed; background: repeating-linear-gradient(-45deg, var(--nx-hatch) 0 1px, transparent 1px 3px); }
 .nx-lrail__bar li[data-future="true"] { background: repeating-linear-gradient(-45deg, var(--nx-hatch) 0 1px, transparent 1px 3px); }
+
+/* "Your first build" line on a brand-new project (project/FirstBuildLine.tsx): three numbered steps and one button. */
+.nx-fbl { display: grid; gap: var(--nx-s2); padding: var(--nx-s3) var(--nx-s4); border: 1px solid var(--nx-line); border-radius: var(--nx-r-obj); background: var(--nx-surface); }
+.nx-fbl__title { margin: 0; font-size: 14px; font-weight: 600; }
+.nx-fbl__steps { display: flex; flex-wrap: wrap; gap: var(--nx-s2) var(--nx-s4); margin: 0; padding: 0; list-style: none; }
+.nx-fbl__steps li { display: inline-flex; align-items: center; gap: var(--nx-s2); }
+.nx-fbl__n { display: inline-grid; place-items: center; width: 20px; height: 20px; border: 1px solid var(--nx-line); border-radius: 50%; font-size: 12px; }
+.nx-fbl__lead { margin: 0; }
+.nx-fbl .nx-btn { justify-self: start; }

@@ -26,7 +26,7 @@ export const kindForSource = (s: SaveSource): 'git_commit' | 'text_file' => (s.k
 
 export interface ExistingTarget { artifactId: string; name: string; latestVersionNo: number | null }
 
-/** Artifacts a new version may be added to: same kind, not archived, owned by that participation. */
+/** Saved items a new version may be added to: same kind, not archived, owned by that participation. */
 export function existingTargets(artifacts: ArtifactSummary[], ws: Pick<WorkspaceChoice, 'participationId' | 'workspaceId'> | null, kind: string): ExistingTarget[] {
   if (!ws) return [];
   return artifacts
@@ -122,7 +122,7 @@ export function steerTarget(s: SaveSheetState, source: SaveSource, choices: Work
 }
 
 export const steerText = (name: string, workspaceLabel: string): string =>
-  `An artifact named “${name}” already exists in ${workspaceLabel}. Add this as a new version of it instead of making a second one.`;
+  `A saved item named “${name}” already exists in ${workspaceLabel}. Add this as a new version of it instead of making a second one.`;
 
 // ---------- the request ----------
 

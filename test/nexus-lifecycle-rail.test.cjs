@@ -29,30 +29,30 @@ test('the bundled projection is exactly what main sends over #22 (dto.ts domainV
 // review and iteration REAL at B2b (CURRENT_SUB_PHASE), and the rail reads the DELIVERED sub-phase. B2b Task 16 proved the SDE
 // flow end to end (scripted) and set DELIVERED_SUB_PHASE = B2b, so SDE now shows all twelve steps in this release; the B2a
 // reading (nine in this release, three not) is still what a view built at B2a says, so the claim stays tied to the constant.
-test('LR1 SDE as delivered (B2b): twelve steps in this release, none "Not in this release"', () => {
+test('LR1 SDE as delivered (B2b): twelve steps that work now, none "Coming later"', () => {
   const r = rail('sde');
   assert.equal(view('sde').currentSubPhase, 'B2b', 'the view carries the delivered sub-phase');
   assert.equal(r.steps.length, 12);
   assert.deepEqual(r.steps.filter((s) => s.future), []);
-  assert.ok(r.steps.every((s) => s.status === 'REAL' && s.word === 'In this release'));
-  for (const s of r.steps.filter((x) => x.subPhase === 'B2b')) assert.ok(s.note && !/^Not in this release/.test(s.note), s.id);
+  assert.ok(r.steps.every((s) => s.status === 'REAL' && s.word === 'Works now'));
+  for (const s of r.steps.filter((x) => x.subPhase === 'B2b')) assert.ok(s.note && !/^Coming later/.test(s.note), s.id);
   assert.deepEqual(r.steps.filter((s) => s.subPhase === 'B2b').map((s) => s.id), ['ai-implementation', 'review', 'iteration']);
   assert.deepEqual(view('sde').lifecycle.filter((s) => !s.delivered), [], 'the #22 view marks every SDE step delivered');
   assert.equal(r.availability, null);
   assert.equal(r.supported, true);
 });
 
-test('LR1 SDE read at B2a (what B2a delivered): nine steps in this release, three not ("Not in this release: arrives with AI-assisted changes")', () => {
+test('LR1 SDE read at B2a (what B2a delivered): nine steps work now, three come later ("Coming later: it arrives with changes made by the AI helper")', () => {
   const r = L.railFor(viewAt('sde', 'B2a'));
   assert.equal(r.steps.length, 12);
   const now = r.steps.filter((s) => !s.future);
   const later = r.steps.filter((s) => s.future);
   assert.equal(now.length, 9);
-  assert.ok(now.every((s) => s.status === 'REAL' && s.word === 'In this release'));
+  assert.ok(now.every((s) => s.status === 'REAL' && s.word === 'Works now'));
   assert.deepEqual(later.map((s) => s.id), ['ai-implementation', 'review', 'iteration']);
   for (const s of later) {
-    assert.equal(s.note, 'Not in this release: arrives with AI-assisted changes');
-    assert.equal(s.word, 'Not in this release');
+    assert.equal(s.note, 'Coming later: it arrives with changes made by the AI helper');
+    assert.equal(s.word, 'Coming later');
     assert.equal(s.subPhase, 'B2b');
   }
 });
@@ -65,20 +65,22 @@ test('LR1 QA, DA, DS, ML and DL show their full lifecycles, FUTURE steps marked 
     assert.deepEqual(r.steps.map((s) => [s.id, s.label, s.status, s.subPhase]), spec.lifecycle.map((s) => [s.id, s.label, s.status, s.subPhase]), id);
     for (const s of r.steps.filter((x) => x.future)) {
       assert.equal(s.subPhase, phase, `${id}/${s.id}`);
-      assert.ok(s.note.startsWith('Not in this release: arrives with ') && s.note.includes(`(${phase})`), `${id}/${s.id}: ${s.note}`);
+      assert.ok(s.note.startsWith('Coming later: it arrives with '), `${id}/${s.id}: ${s.note}`);
+      assert.doesNotMatch(s.note, /\bB\d[a-c]?\b/, `${id}/${s.id}: a phase code is never shown (${phase})`);
     }
   }
 });
 
-test('LR1 problem statements are in this release for DA, ML and DL; DS cannot be added to a project until B4 (registry ruling)', () => {
+test('LR1 problem statements work now for DA, ML and DL; DS cannot be added to a project until B4 (registry ruling), and its words say "coming later"', () => {
   for (const [id, step] of [['data', 'business-question'], ['ml', 'problem'], ['dl', 'problem']]) {
     const s = rail(id).steps.find((x) => x.id === step);
-    assert.deepEqual([s.status, s.future, s.word], ['REAL', false, 'In this release'], id);
-    assert.ok(s.note && /You write it in Nexus/.test(s.note), `${id}: the honest scope note`);
+    assert.deepEqual([s.status, s.future, s.word], ['REAL', false, 'Works now'], id);
+    assert.ok(s.note && /You write it in Nexus/.test(s.note) && /coming later/.test(s.note), `${id}: the honest scope note`);
+    assert.doesNotMatch(s.note, /\bB\d\b/, `${id}: no phase code`);
     assert.equal(rail(id).availability, null);
   }
   const ds = rail('data-scientist');
-  assert.equal(ds.availability, 'Available from B4; it cannot be added to a project yet');
+  assert.equal(ds.availability, 'Coming later: a project cannot take part in it yet');
   const bp = ds.steps.find((x) => x.id === 'business-problem');
   assert.deepEqual([bp.status, bp.future, bp.subPhase], ['FUTURE', true, 'B4']);
   assert.ok(ds.steps.every((s) => s.future), 'none of its steps runs');
@@ -87,22 +89,22 @@ test('LR1 problem statements are in this release for DA, ML and DL; DS cannot be
   assert.ok(L.railFor(view('data-scientist'), { versions: [], liveActions: [], participation: true, deploymentHealthy: false }).steps.every((s) => s.state === null));
 });
 
-test('LR1 registry-only domains say "Not yet a supported workflow"', () => {
+test('LR1 registry-only domains say "Not available yet"', () => {
   for (const id of ['research', 'uiux', 'devops']) {
     const r = rail(id);
-    assert.deepEqual([r.supported, r.availability, r.steps.length, r.modules.length], [false, 'Not yet a supported workflow', 0, 0], id);
+    assert.deepEqual([r.supported, r.availability, r.steps.length, r.modules.length], [false, 'Not available yet', 0, 0], id);
   }
 });
 
-test('LR1 modules in the domain\'s words: delivered now, or the sub-phase they arrive in', () => {
+test('LR1 modules in the domain\'s words: delivered now, or "coming later" (never a phase code)', () => {
   const da = rail('data');
   assert.deepEqual(da.modules.find((m) => m.id === 'questions'), { id: 'questions', label: 'Questions', delivered: true, note: null });
-  assert.equal(da.modules.find((m) => m.id === 'queries').note, 'arrives in B3');
+  assert.equal(da.modules.find((m) => m.id === 'queries').note, 'coming later');
   // Wave-1 review, finding 1 (restored by B2b Task 16): the SDE Changes module is delivered now that the flow is proven; read at
-  // B2a it still arrives in B2b. A QA module still names the sub-phase it arrives in.
-  assert.deepEqual(rail('sde').modules.find((m) => m.id === 'changes'), { id: 'changes', label: 'Changes', delivered: true, note: null });
-  assert.deepEqual(L.railFor(viewAt('sde', 'B2a')).modules.find((m) => m.id === 'changes'), { id: 'changes', label: 'Changes', delivered: false, note: 'arrives in B2b' });
-  assert.equal(rail('qa').modules.find((m) => m.id === 'defects').note, 'arrives in B2c');
+  // B2a it still comes later. A QA module says the same.
+  assert.deepEqual(rail('sde').modules.find((m) => m.id === 'changes'), { id: 'changes', label: 'Suggested changes', delivered: true, note: null });
+  assert.deepEqual(L.railFor(viewAt('sde', 'B2a')).modules.find((m) => m.id === 'changes'), { id: 'changes', label: 'Suggested changes', delivered: false, note: 'coming later' });
+  assert.equal(rail('qa').modules.find((m) => m.id === 'defects').note, 'coming later');
 });
 
 // ---------- LR2 ----------
@@ -152,14 +154,14 @@ test('LR2 the compact summary counts only the rail\'s own steps', () => {
   const r = L.railFor(view('sde'), rec({ versions: [{ kind: 'test_suite', status: 'candidate', validators: PASSED }] }));
   // Wave-1 review, finding 1 (restored by B2b Task 16): as delivered (B2b) all twelve SDE steps are in this release; read at B2a
   // (what B2a delivered) nine were and three were not.
-  assert.equal(L.railSummary(r), '2 of 12 steps in this release done');
-  assert.equal(L.railSummary(L.railFor(viewAt('sde', 'B2a'), rec({ versions: [{ kind: 'test_suite', status: 'candidate', validators: PASSED }] }))), '2 of 9 steps in this release done; 3 not in this release');
-  assert.match(L.railSummary(rail('qa', rec())), /not in this release$/, 'a domain with FUTURE steps still says so');
-  assert.equal(L.railSummary(rail('data-scientist')), 'Available from B4; it cannot be added to a project yet');
+  assert.equal(L.railSummary(r), '2 of 12 steps done');
+  assert.equal(L.railSummary(L.railFor(viewAt('sde', 'B2a'), rec({ versions: [{ kind: 'test_suite', status: 'candidate', validators: PASSED }] }))), '2 of 9 steps done; 3 coming later');
+  assert.match(L.railSummary(rail('qa', rec())), /coming later$/, 'a domain with FUTURE steps still says so');
+  assert.equal(L.railSummary(rail('data-scientist')), 'Coming later: a project cannot take part in it yet');
   // Steps that need attention or are moving are counted too (fix round 1).
   const busy = L.railFor(view('sde'), rec({ versions: [{ kind: 'test_suite', status: 'candidate', validators: { 'suite.discovered': 'passed', 'sde.tests_pass': 'failed' } },
     { kind: 'repository', status: 'active', validators: { 'git.head_resolves': 'passed' } }], liveActions: ['sde.build.run'] }));
-  assert.equal(L.railSummary(busy), '2 of 12 steps in this release done; 1 needs attention; 1 in progress');
+  assert.equal(L.railSummary(busy), '2 of 12 steps done; 1 needs attention; 1 in progress');
   assert.deepEqual(rail('sde').steps.map((s) => s.n), Array.from({ length: 12 }, (_, i) => i + 1));
   assert.deepEqual(L.liveActionsOf([{ state: 'running', actionId: 'a' }, { state: 'completed', actionId: 'b' }, { state: 'queued', actionId: null }]), ['a']);
 });
@@ -214,7 +216,7 @@ test('C6b (final review) a version past the Spine read cap claims no state, neve
   const r = rail('sde', records);
   const tests = r.steps.find((s) => s.id === 'tests');
   assert.equal(tests.state, null, 'no state is claimed for the unread step');
-  assert.equal(tests.word, 'In this release');
+  assert.equal(tests.word, 'Works now');
   assert.equal(r.steps.find((s) => s.id === 'requirement').state, 'done', 'read steps keep their state');
   // The same draft once read with no result yet is a draft being checked: in progress.
   const read = S.railRecordsFor({ workspaceId: 'sde', artifacts, checks: new Map([...checks, ['v99', {}]]), liveActions: [], deploymentHealthy: false, participating: true });
@@ -223,7 +225,7 @@ test('C6b (final review) a version past the Spine read cap claims no state, neve
   const plain = S.railRecordsFor({ workspaceId: 'sde', artifacts: [art(7, 'git_commit', 'candidate')], checks: new Map(), liveActions: [], deploymentHealthy: false, participating: true });
   assert.equal(plain.versions[0].unread, undefined);
   // The summary counts only steps with a state (requirement, and project from the participation record).
-  assert.match(L.railSummary(r), /^2 of 12 steps in this release done/, 'requirement and project; the unread step is not counted as moving');
+  assert.match(L.railSummary(r), /^2 of 12 steps done/, 'requirement and project; the unread step is not counted as moving');
   assert.doesNotMatch(L.railSummary(r), /in progress/);
 });
 
@@ -278,10 +280,10 @@ test('S7 Tests: discovery alone never marks the step done; a candidate suite nee
   assert.deepEqual(['repository', 'code', 'tests', 'build'].map((id) => st(all, id)), ['done', 'ready', 'done', 'done']);
 });
 
-test('S4 Data Scientist: #/w/data-scientist opens its domain page (never a workspace), every step "Available from B4", no action', () => {
+test('S4 Data Scientist: #/w/data-scientist opens its domain page (never a workspace), every step "Coming later", no action', () => {
   const RT = loadTs('src/renderer/src/nexus/router/routes.ts');
   assert.deepEqual(RT.parseHash('#/w/data-scientist'), { name: 'workspace', id: 'data-scientist' });
-  assert.equal(RT.routeTitle({ name: 'workspace', id: 'data-scientist' }), 'Data Scientist');
+  assert.equal(RT.routeTitle({ name: 'workspace', id: 'data-scientist' }), 'Data science');
   assert.equal(RT.parseHash('#/w/robotics').name, 'not-found', 'only registry domains');
   assert.equal(RT.formatRoute({ name: 'workspace', id: 'data-scientist' }), '#/w/data-scientist');
   assert.deepEqual(L.domainOnlyIds(), ['data-scientist']);
@@ -296,10 +298,10 @@ test('S4 Data Scientist: #/w/data-scientist opens its domain page (never a works
   assert.deepEqual(ds.actions, []);
   const r = rail('data-scientist');
   assert.equal(r.steps.length, 12);
-  assert.ok(r.steps.every((s) => s.when === 'Available from B4' && s.word === 'Not in this release' && s.state === null));
-  assert.ok(rail('sde').steps.every((s) => s.when === null), 'a domain a project can take part in carries no "Available from"');
+  assert.ok(r.steps.every((s) => s.when === 'Coming later' && s.word === 'Coming later' && s.state === null));
+  assert.ok(rail('sde').steps.every((s) => s.when === null), 'a domain a project can take part in carries no "Coming later"');
   assert.equal(L.domainOnlyLead(view('data-scientist')),
-    'Available from B4: a project cannot take part in it yet. None of its steps runs in this release, and it offers no actions.');
+    'Coming later: a project cannot take part in it yet. None of its steps works yet, and it has no actions.');
   // The page: the rail, a way back, and nothing else (no action bar, no New project, no write).
   const page = src('pages/DomainPage.tsx');
   assert.match(page, /<LifecycleRail rail=\{railFor\(view\)\} \/>/);
@@ -309,12 +311,12 @@ test('S4 Data Scientist: #/w/data-scientist opens its domain page (never a works
   // The entry point where domains are listed, worded so it cannot read as available.
   const list = src('pages/WorkspacesPage.tsx');
   assert.match(list, /const later = useDomains\(\)\.list\.filter\(\(d\) => isDomainOnly\(d\.id\)\);/);
-  assert.match(list, />Not available yet<\/h2>/);
-  assert.match(list, /Its planned lifecycle only; nothing runs\./);
+  assert.match(list, />Coming later<\/h2>/);
+  assert.match(list, /You can read what it will do, but nothing works yet\./);
   assert.match(src('workspaces/LifecycleRail.tsx'), /\{s\.when && <b className="nx-lrail__when">\{s\.when\}\. <\/b>\}/);
 });
 
-test('S8b the Application step: draft, not checked ("Ready to check — start a preview"), checking, healthy, failed, from records only', () => {
+test('S8b the Application step: draft, not checked ("Ready to check: start a test run of your app"), checking, healthy, failed, from records only', () => {
   const { stepStateFrom } = loadTs('src/shared/nexus/stepState.ts');
   const step = DOMAINS.find((d) => d.id === 'sde').lifecycle.find((s) => s.id === 'application');
   const app = (status, validators) => ({ kind: 'application', status, validators });
@@ -322,12 +324,12 @@ test('S8b the Application step: draft, not checked ("Ready to check — start a 
   const MANIFEST = { 'app.manifest_schema': 'passed' };
   // Not checked: the manifest passed, app.preview_health runs only on a dev deployment, none is live and no job runs.
   const waiting = appStep([app('draft', MANIFEST)], { liveDeployments: 0 });
-  assert.deepEqual([waiting.state, waiting.word], ['awaiting_check', 'Ready to check — start a preview']);
+  assert.deepEqual([waiting.state, waiting.word], ['awaiting_check', 'Ready to check: start a test run of your app']);
   assert.equal(stepStateFrom(step, { versions: [{ status: 'draft', validators: MANIFEST }], liveJobs: 0, inputsAvailable: true, liveDeployments: 0 }), 'awaiting_check');
   // Checking: a dev deployment is live, or the job starting one is (it belongs to the dev deployment step's actions).
   assert.equal(appStep([app('draft', MANIFEST)], { liveDeployments: 1 }).state, 'checking');
   const starting = appStep([app('draft', MANIFEST)], { liveDeployments: 0, liveActions: ['sde.preview.start'] });
-  assert.deepEqual([starting.state, starting.word], ['checking', 'Checking — the preview is starting']);
+  assert.deepEqual([starting.state, starting.word], ['checking', 'Checking — the test run of your app is starting']);
   assert.equal(appStep([app('draft', MANIFEST)], { liveDeployments: 0, liveActions: ['sde.app.assemble'] }).state, 'in_progress', 'its own job is live');
   // Draft whose manifest has no result yet: being validated by main (not waiting on the user).
   assert.equal(appStep([app('draft', {})], { liveDeployments: 0 }).state, 'in_progress');
@@ -351,7 +353,7 @@ test('S8b the Application step: draft, not checked ("Ready to check — start a 
   assert.match(bench, /m\.set\(g\.workspaceId, railFor\(view, records \? \{ \.\.\.records, liveDeployments, liveDeploymentStatuses, draftPreviews \} : null\)\);/);
 });
 
-test('S14 while a preview starts or is probed the rail reads "Checking — <reason>" (as the Spine and Folio do) and the summary counts it as checking', () => {
+test('S14 while a test run of your app starts or is probed the rail reads "Checking — <reason>" (as the Spine and Folio do) and the summary counts it as checking', () => {
   const { stepStateFrom } = loadTs('src/shared/nexus/stepState.ts');
   const sde = DOMAINS.find((d) => d.id === 'sde');
   const appS = sde.lifecycle.find((s) => s.id === 'application');
@@ -371,14 +373,14 @@ test('S14 while a preview starts or is probed the rail reads "Checking — <reas
     liveActions: ['sde.preview.start'], liveDeployments: statuses.length, liveDeploymentStatuses: statuses });
   const r = L.railFor(view('sde'), recs(['starting']));
   const word = (id) => r.steps.find((s) => s.id === id).word;
-  assert.equal(word('application'), 'Checking — the preview is starting');
-  assert.equal(word('dev-deployment'), 'Checking — the preview is starting');
+  assert.equal(word('application'), 'Checking — the test run of your app is starting');
+  assert.equal(word('dev-deployment'), 'Checking — the test run of your app is starting');
   assert.match(L.railSummary(r), /; 2 checking/);
   assert.doesNotMatch(L.railSummary(r), /in progress/);
   // Up but not recorded as answering yet.
   const up = L.railFor(view('sde'), recs(['unhealthy']));
-  assert.equal(up.steps.find((s) => s.id === 'application').word, 'Checking — waiting for the preview to answer');
-  assert.equal(L.checkingReason({ liveDeploymentStatuses: [] }), 'the preview is starting', 'a job starting one, before its row exists');
+  assert.equal(up.steps.find((s) => s.id === 'application').word, 'Checking — waiting for your app to answer');
+  assert.equal(L.checkingReason({ liveDeploymentStatuses: [] }), 'the test run of your app is starting', 'a job starting one, before its row exists');
   // The bench passes the statuses it read; the rail styles a checking step like a moving one, always with its word.
   assert.match(src('project/ProjectBench.tsx'), /railFor\(view, records \? \{ \.\.\.records, liveDeployments, liveDeploymentStatuses, draftPreviews \} : null\)/);
   const css = src('styles/execution.css');
@@ -399,24 +401,24 @@ test('S16 per version: with two application versions and a live preview of only 
   const base = { versions: [{ kind: 'build', status: 'candidate', validators: {} }, { kind: 'application', status: 'draft', validators: MANIFEST }],
     liveActions: ['sde.preview.start'], participation: true, deploymentHealthy: false, liveDeployments: 1, liveDeploymentStatuses: ['healthy'] };
   const r = L.railFor(view('sde'), { ...base, draftPreviews });
-  assert.deepEqual([r.steps.find((s) => s.id === 'application').state, r.steps.find((s) => s.id === 'application').word], ['awaiting_check', 'Ready to check — start a preview']);
+  assert.deepEqual([r.steps.find((s) => s.id === 'application').state, r.steps.find((s) => s.id === 'application').word], ['awaiting_check', 'Ready to check: start a test run of your app']);
   assert.equal(r.steps.find((s) => s.id === 'dev-deployment').state, 'checking', 'the project has a live preview (V1)');
   // The same draft once ITS preview is starting (a job of build B2 not leased yet): Checking, with its own reason.
   const own = R.livePreviewsOf({ versionId: 'V2', buildVersionId: 'B2' }, deployments,
     [...jobs, { id: 'J2', state: 'queued', actionId: 'sde.preview.start', inputs: [{ versionId: 'B2', slot: 'build', contentHash: 'h' }], createdAt: 2 }]).map((p) => p.status);
   assert.deepEqual(own, ['starting']);
   const r2 = L.railFor(view('sde'), { ...base, draftPreviews: own });
-  assert.equal(r2.steps.find((s) => s.id === 'application').word, 'Checking — the preview is starting');
+  assert.equal(r2.steps.find((s) => s.id === 'application').word, 'Checking — the test run of your app is starting');
   // The Spine node: V2's word ignores V1's live deployment.
   const SM2 = loadTs('src/renderer/src/nexus/project/spineModel.ts');
   const app = (id, status) => ({ artifact: { id, kind: 'application', status: 'active', ownerWorkspaceId: 'sde', ownerParticipationId: 'pp', name: id, createdAt: 1 },
     versionCount: 1, current: null, latest: { id, versionNo: 1, status } });
   const words = SM2.withApplicationWords(new Map([['artifact:V2', 'Checking…']]), [app('V2', 'draft')], new Map([['V2', MANIFEST]]), deployments,
     { jobs, builds: new Map([['V2', 'B2']]) });
-  assert.equal(words.get('artifact:V2'), 'Ready to check — start a preview');
+  assert.equal(words.get('artifact:V2'), 'Ready to check: start a test run of your app');
   const words2 = SM2.withApplicationWords(new Map(), [app('V2', 'draft')], new Map([['V2', MANIFEST]]), deployments,
     { jobs: [...jobs, { id: 'J2', state: 'queued', actionId: 'sde.preview.start', inputs: [{ versionId: 'B2', slot: 'build', contentHash: 'h' }], createdAt: 2 }], builds: new Map([['V2', 'B2']]) });
-  assert.equal(words2.get('artifact:V2'), 'Checking: the dev deployment is starting');
+  assert.equal(words2.get('artifact:V2'), 'Checking: the test run of your app is starting');
   // The Folio reads deployments of its own version only (and the not-yet-leased preview of its own build).
   assert.equal(EV.applicationPreview({ status: 'draft', validators: MANIFEST, deployments: [] }).state, 'not_checked');
   const passport = src('project/ArtifactPassport.tsx');
@@ -470,7 +472,9 @@ test('LR3 the Review step is Done exactly when a change set was reviewed AND acc
     if (a && b) assert.equal(a.state, b.state, id);
   }
   // The Review step still names its actions and keeps the registry's scope note.
-  assert.match(done.note, /Accepting merges the change into a Nexus ref, never into your branch or files/);
+  assert.match(done.note, /Keeping suggested changes saves them in Nexus's copy, never in your files/);
+  assert.match(done.note, /new and off by default/, 'the AI helper is still said to be new and only tried with a script');
+  assert.doesNotMatch(done.note, /ref|branch|fast-forward|worktree/i, 'no git word');
 });
 
 // ---------- B2b final review C2: Iteration needs a revision ----------

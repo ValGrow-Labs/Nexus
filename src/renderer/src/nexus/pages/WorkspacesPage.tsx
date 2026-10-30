@@ -10,13 +10,14 @@ import { PlatformNotice } from '../components/PlatformNotice';
 import type { WorkspaceId } from '../workspaces/types';
 import { useDomains } from '../data/useExecution';
 import { isDomainOnly, railFor } from '../workspaces/lifecycleModel';
+import { plainView } from '../workspaces/plainDomainCopy';
 
 const plural = (n: number, one: string) => `${n} ${one}${n === 1 ? '' : 's'}`;
 
-/** What the count means: primaries follow the detected domain; attached projects are counted too. */
-function projectsTitle(r: { ws: { domainIds: string[] }; hasDomain: boolean; attached: number }): string | undefined {
-  const attached = r.attached > 0 ? `${plural(r.attached, 'attached project')} included` : '';
-  if (r.hasDomain) return `Primary by detected domain: ${r.ws.domainIds.join(', ')}${attached ? `; ${attached}` : ''}`;
+/** What the count means: a project joins the workspace that fits what Nexus finds in it; projects added by hand are counted too. */
+function projectsTitle(r: { hasDomain: boolean; attached: number }): string | undefined {
+  const attached = r.attached > 0 ? `${plural(r.attached, 'project')} added by hand` : '';
+  if (r.hasDomain) return `Projects join this workspace by what Nexus finds in them${attached ? `; ${attached} included` : ''}`;
   return attached ? `${attached[0].toUpperCase()}${attached.slice(1)}` : undefined;
 }
 
@@ -27,7 +28,7 @@ export function WorkspacesPage() {
   const setLast = useNexusUi((s) => s.setLastWorkspace);
   const actions = useShellActions();
   const idx = buildWorkspaceIndex(projects, useParticipationIndex());
-  // Registry domains with no workspace yet (Data Scientist until B4): listed apart, worded so they never read as available.
+  // Workspaces that do not exist yet (data science): listed apart, worded so they never read as available.
   const later = useDomains().list.filter((d) => isDomainOnly(d.id));
 
   const open = (id: WorkspaceId) => {
@@ -68,12 +69,12 @@ export function WorkspacesPage() {
                 ) : (
                   <>
                     <b className="is-empty">No projects yet</b>
-                    <small>{r.hasDomain ? 'New projects of this kind land here' : 'No detected domain maps here yet'}</small>
+                    <small>{r.hasDomain ? 'New projects of this kind land here' : 'Nothing joins this workspace by itself yet'}</small>
                   </>
                 )}
               </span>
               <span className="nx-wsx__planned">
-                {r.ws.plannedModules.length > 0 && <><small>Planned</small>{r.ws.plannedModules.join(' · ')}</>}
+                {r.ws.plannedModules.length > 0 && <><small>Coming later</small>{r.ws.plannedModules.join(' · ')}</>}
               </span>
               <span className="nx-wsx__chev" aria-hidden="true">→</span>
             </button>
@@ -84,15 +85,18 @@ export function WorkspacesPage() {
       </ul>
       {later.length > 0 && (
         <section className="nx-wsx__later" aria-labelledby="nx-wsx-later">
-          <h2 id="nx-wsx-later" className="nx-wsx__later-title">Not available yet</h2>
+          <h2 id="nx-wsx-later" className="nx-wsx__later-title">Coming later</h2>
           <ul className="nx-wsx__later-list">
-            {later.map((d) => (
-              <li key={d.id}>
-                <button type="button" className="nx-wsx__link" onClick={() => navigate({ name: 'workspace', id: d.id })}
-                  aria-label={`${d.label}: ${railFor(d).availability ?? 'not available yet'}. See its planned lifecycle`}>{d.label}</button>
-                {' '}<span className="nx-muted">{railFor(d).availability ?? 'Not available yet'}. Its planned lifecycle only; nothing runs.</span>
-              </li>
-            ))}
+            {later.map((raw) => {
+              const d = plainView(raw);
+              return (
+                <li key={d.id}>
+                  <button type="button" className="nx-wsx__link" onClick={() => navigate({ name: 'workspace', id: d.id })}
+                    aria-label={`${d.label}: ${railFor(d).availability ?? 'not available yet'}. See what it will do`}>{d.label}</button>
+                  {' '}<span className="nx-muted">{railFor(d).availability ?? 'Not available yet'}. You can read what it will do, but nothing works yet.</span>
+                </li>
+              );
+            })}
           </ul>
         </section>
       )}

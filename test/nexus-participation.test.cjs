@@ -82,7 +82,7 @@ test('R4 an unknown workspace id keeps its id as its label, has no hue, and is n
   assert.equal(M.primaryOf(idx, 'a'), null, 'no registry config for an unknown id');
   assert.deepEqual(M.primaryViewOf(idx, 'a'), { id: 'archive-lab', label: 'archive-lab', hueSlot: null, config: null });
   assert.deepEqual(M.viewOf('archive-lab'), { id: 'archive-lab', label: 'archive-lab', hueSlot: null, config: null });
-  assert.equal(M.viewOf('ml').label, 'ML');
+  assert.equal(M.viewOf('ml').label, 'Machine learning');
   assert.equal(M.viewOf('ml').hueSlot, 1);
   const [only] = M.activeWorkspacesOf(idx, 'a');
   assert.equal(only.ws, null);
@@ -132,7 +132,7 @@ test('R7 pathSegments for a project that is only attached shows the Unassigned s
   const s = pathSegments({ name: 'project', id: 'a', tool: 'bench' }, projects, idx);
   assert.deepEqual(s, [{ kind: 'workspace', id: 'unassigned', label: 'Unassigned', hueSlot: null }, { kind: 'project', id: 'a', label: 'Alpha', hueSlot: null }]);
   const primary = pathSegments({ name: 'project', id: 'a', tool: 'bench' }, projects, M.fromRows([row('1', 'a', 'dl', true)]));
-  assert.deepEqual(primary[0], { kind: 'workspace', id: 'dl', label: 'DL', hueSlot: 2 });
+  assert.deepEqual(primary[0], { kind: 'workspace', id: 'dl', label: 'Deep learning', hueSlot: 2 });
 });
 
 test('legacyIndex: mapped domains become one active primary each; unmapped ones get no row', () => {
@@ -187,17 +187,17 @@ test('the store delegates every transition to the pure platformState module', ()
   assert.doesNotMatch(src('data/platformState.ts'), /from 'zustand'|from 'react'/);
 });
 
-test('the Workspaces count tooltip says primaries follow the domain and attached projects are included', () => {
+test('the Workspaces count tooltip says projects join by what Nexus finds in them and added projects are included', () => {
   const page = src('pages/WorkspacesPage.tsx');
   assert.match(page, /title=\{projectsTitle\(r\)\}/);
-  assert.match(page, /Primary by detected domain: /);
-  assert.match(page, /attached project'\)\} included/);
-  assert.doesNotMatch(page, /Projects detected as:/);
+  assert.match(page, /Projects join this workspace by what Nexus finds in them/);
+  assert.match(page, /plural\(r\.attached, 'project'\)\} added by hand/);
+  assert.doesNotMatch(page, /Projects detected as:|Primary by detected domain|domainIds\.join/, 'no raw domain id is printed');
 });
 
 test('the workspace page lists attached projects with a tag; its empty state no longer promises handoffs later', () => {
   const page = src('pages/WorkspacePage.tsx');
   assert.match(page, /role=\{roleOf\.get\(p\.id\)\}/);
   assert.doesNotMatch(page, /arrive through handoffs in a later phase/);
-  assert.match(src('components/ProjectRow.tsx'), /role === 'attached' && <span className="nx-attached-tag"><Badge>Attached<\/Badge><\/span>/);
+  assert.match(src('components/ProjectRow.tsx'), /role === 'attached' && <span className="nx-attached-tag"><Badge>Added<\/Badge><\/span>/);
 });

@@ -1,5 +1,5 @@
 // Pure: the project's recent activity (nexus:activity:byProject) as plain
-// sentences. Each row becomes who acted ("You", "Nexus", "Nexus, for you"),
+// sentences. Each row becomes who acted ("You", "Nexus", "Nexus, for you", "The AI helper"),
 // what happened in words, and when. No principal id, no raw details: a sentence
 // reads only the allow-listed detail keys below, and only values of the
 // expected shape. No React, so tests load it directly.
@@ -50,7 +50,7 @@ export const ACTIVITY_ACTIONS: readonly string[] = Object.freeze([
   // B2b Task 7: a job's git worktree was prepared (never the worktree's own path, which is never in details).
   'repo.worktree',
   // B2b Task 9: a user's review decision, an accepted change set (or an accept that was rolled back), the undo of an
-  // accept that did not finish, and "Merge accepted work" (never a path, a sha or a comment: only the decision word).
+  // accept that did not finish, and "Add to my project" (the merge) (never a path, a sha or a comment: only the decision word).
   'review.decide', 'changeset.accept', 'changeset.rollback', 'repo.merge',
   // B2b Task 5 (sentences added in Task 9's fix round): an agent tool call, and context left out of a turn for looking like a secret.
   'mcp.call', 'context_redacted',
@@ -65,83 +65,83 @@ const ACTION_WORDS: Record<string, string> = {
   'project.read': 'read the project',
   'workspace.read': 'read a workspace',
   'participation.attach': 'add the project to a workspace',
-  'participation.withdraw': 'withdraw the project from a workspace',
-  'artifact.read': 'read an artifact',
-  'artifact.create': 'create an artifact',
-  'artifact.archive': 'archive an artifact',
+  'participation.withdraw': 'remove the project from a workspace',
+  'artifact.read': 'read a saved item',
+  'artifact.create': 'create a saved item',
+  'artifact.archive': 'archive a saved item',
   'version.register': 'save a version',
   'version.update_draft': 'change a draft',
   'version.discard': 'discard a version',
-  'version.promote': 'make a version current',
-  'version.finalize': 'mark a version ready',
-  'lineage.read': 'read links between versions',
+  'version.promote': 'put a version in use',
+  'version.finalize': 'mark a version as ready',
+  'lineage.read': 'read what versions were made from',
   'lineage.write': 'link versions',
-  'job.read': 'read a job',
-  'job.create': 'start a job',
-  'job.cancel': 'stop a job',
-  'job.transition': 'move a job on',
-  'job.recover': 'recover a job',
-  'session.read': 'read an agent session',
-  'session.open': 'open an agent session',
-  'session.cancel': 'stop an agent session',
-  'session.transition': 'move an agent session on',
-  'session.recover': 'recover an agent session',
+  'job.read': 'read a task',
+  'job.create': 'start a task',
+  'job.cancel': 'stop a task',
+  'job.transition': 'move a task on',
+  'job.recover': 'pick a task up again',
+  'session.read': 'read an AI helper conversation',
+  'session.open': 'start an AI helper conversation',
+  'session.cancel': 'stop an AI helper conversation',
+  'session.transition': 'move an AI helper conversation on',
+  'session.recover': 'pick an AI helper conversation up again',
   'activity.read': 'read the activity',
-  'system.reconcile': 'reconcile the records',
+  'system.reconcile': 'check the records',
   'handoff.read': 'read a handoff',
   'handoff.send': 'send a handoff',
   'handoff.respond': 'answer a handoff',
-  'handoff.withdraw': 'withdraw a handoff',
+  'handoff.withdraw': 'take back a handoff',
   'handoff.accept': 'accept a handoff',
   'handoff.decline': 'decline a handoff',
-  'db.migrated': 'upgrade the database',
+  'db.migrated': "update Nexus's saved information",
   'workspace.catalog_ensured': 'update the workspace list',
   'project_workspace.primary_synced': 'set the main workspace',
-  'blob.gc': 'clean up unused stored files',
-  'approval.read': 'read approvals',
-  'approval.respond': 'answer an approval',
-  'approval.withdraw': 'withdraw an approval',
-  'approval.request': 'ask for an approval',
-  'approval.expire': 'let an approval request expire',
-  'image_build.start': 'start preparing a sandbox image',
-  'image_build.finish': 'prepare a sandbox image',
-  'deployment.start': 'start a dev deployment',
-  'deployment.transition': 'update a dev deployment',
-  'deployment.stop': 'stop a dev deployment',
-  'exec.recover': 'recover work after a restart',
-  'exec.orphan_removed': 'remove leftover sandbox resources',
+  'blob.gc': 'clean up unused saved files',
+  'approval.read': 'read the requests for your OK',
+  'approval.respond': 'answer a request for your OK',
+  'approval.withdraw': 'take back a request for your OK',
+  'approval.request': 'ask for your OK',
+  'approval.expire': 'let a request for your OK run out',
+  'image_build.start': 'start preparing a safe-space kit',
+  'image_build.finish': 'prepare a safe-space kit',
+  'deployment.start': 'start a test run of your app',
+  'deployment.transition': 'update a test run of your app',
+  'deployment.stop': 'stop a test run of your app',
+  'exec.recover': 'pick work up again after a restart',
+  'exec.orphan_removed': 'remove leftover safe-space items',
   'version.revalidate': 'run the checks again',
-  'platform.health': 'read the platform health',
+  'platform.health': 'check how Nexus is doing',
   // B2b Task 4.
-  'agent.start': 'start an agent turn',
-  'review.decide': 'decide a review',
-  'changeset.accept': 'accept a change set',
-  'repo.merge': 'merge accepted work',
-  'repo.worktree': "prepare the agent's working copy",
-  'changeset.rollback': 'undo an accept that did not finish',
+  'agent.start': 'start a request to the AI helper',
+  'review.decide': 'decide on suggested changes',
+  'changeset.accept': 'keep suggested changes',
+  'repo.merge': 'add kept changes to your project',
+  'repo.worktree': "prepare the AI helper's safe copy of your project",
+  'changeset.rollback': 'undo a keep step that was cut off',
   'mcp.call': 'use a tool',
-  'repo.integration_resync': 'bring the accepted branch up to your latest commits',
-  'context_redacted': "leave part of the agent's context out",
-  'agent.consent': "change the agent's network permission",
-  'hosted.key': 'change an AI provider key',
-  'token.mint': "issue the agent's turn permission",
-  'token.revoke': "end the agent's turn permission",
-  'auth.denied': 'act with its turn permission'
+  'repo.integration_resync': "bring Nexus's saved copy up to your latest saved versions",
+  'context_redacted': "leave part of what the AI helper is shown out",
+  'agent.consent': "change the AI helper's internet permission",
+  'hosted.key': 'change an access key',
+  'token.mint': "give the AI helper permission for a request",
+  'token.revoke': "end the AI helper's permission for a request",
+  'auth.denied': 'act with its permission for a request'
 };
 
-const ACTION_SHAPE = /^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)*$/;
 const WORKSPACE_SHAPE = /^[a-z][a-z0-9-]{1,31}$/;
 const KIND_SHAPE = /^[a-z][a-z0-9_]{0,63}$/;
 
-/** An action as it may appear on screen: its own dotted name only, never other text. */
-function safeAction(action: unknown): string {
-  return typeof action === 'string' && action.length <= 64 && ACTION_SHAPE.test(action) ? action : 'an action';
+/** What a refusal says about an action this build has no words for: never its internal name. */
+export const UNKNOWN_ACTION_WORDS = 'an action this version of Nexus does not know';
+
+/** Plain words for an action; an unknown one never shows its internal name. */
+export function actionWords(action: string): string {
+  return Object.prototype.hasOwnProperty.call(ACTION_WORDS, action) ? ACTION_WORDS[action] : UNKNOWN_ACTION_WORDS;
 }
 
-/** Plain words for an action; an unknown one reads as its own dotted name. */
-export function actionWords(action: string): string {
-  return Object.prototype.hasOwnProperty.call(ACTION_WORDS, action) ? ACTION_WORDS[action] : safeAction(action);
-}
+/** The sentence for a row whose action this build has no words for: it claims nothing about what happened. */
+export const UNKNOWN_ACTION_SENTENCE = 'Something was recorded that this version of Nexus has no words for';
 
 /** One allow-listed detail value. A key outside the allow-list is never read. */
 function detail(row: ActivityView, key: string): unknown {
@@ -165,7 +165,7 @@ export interface ActivityContext {
 
 export interface ActivityLine {
   key: string;
-  /** "You", "Nexus", "Nexus, for you", "An agent". */
+  /** "You", "Nexus", "Nexus, for you", "The AI helper". */
   actor: string;
   /** What happened, as a sentence. */
   text: string;
@@ -179,7 +179,7 @@ export interface ActivityLine {
 export function actorText(row: Pick<ActivityView, 'actorKind' | 'onBehalfOfUser'>): string {
   if (row.actorKind === 'user') return 'You';
   if (row.actorKind === 'system') return row.onBehalfOfUser ? 'Nexus, for you' : 'Nexus';
-  if (row.actorKind === 'agent') return 'An agent';
+  if (row.actorKind === 'agent') return 'The AI helper';
   return 'Someone';
 }
 
@@ -199,67 +199,67 @@ function workspacePhrase(id: unknown, ctx: ActivityContext): string | null {
   return typeof id === 'string' && WORKSPACE_SHAPE.test(id) ? ctx.workspaceLabel(id) : null;
 }
 
-/** Job states and agent session statuses, in words. */
+/** Task states and AI helper conversation statuses, in words. */
 const JOB_STATE_WORDS: Record<string, string> = {
-  queued: 'queued', leased: 'picked up', running: 'started running', awaiting_approval: 'is waiting for approval',
-  // B2a final review: a job's state "completed" means it ran and its outputs were collected; whether its checks
-  // passed is a separate fact (a run whose tests failed is still a completed job), so the sentence never says more.
+  queued: 'queued', leased: 'picked up', running: 'started running', awaiting_approval: 'is waiting for your OK',
+  // B2a final review: a task's state "completed" means it ran and its results were collected; whether its checks
+  // passed is a separate fact (a run whose tests failed is still a completed task), so the sentence never says more.
   retry_scheduled: 'will be tried again', completed: 'ran; its checks give the result', partial: 'ran in part', failed: 'failed',
-  cancelled: 'was stopped', timed_out: 'timed out', interrupted: 'was interrupted', open: 'opened'
+  cancelled: 'was stopped', timed_out: 'took too long and was stopped', interrupted: 'was interrupted', open: 'started'
 };
 
 function stateMove(subject: string, to: unknown): string {
   const words = typeof to === 'string' && Object.prototype.hasOwnProperty.call(JOB_STATE_WORDS, to) ? JOB_STATE_WORDS[to] : null;
-  return words ? `${subject} ${words}` : `${subject} changed status`;
+  return words ? `${subject} ${words}` : `${subject} changed`;
 }
 
-/** Why a dev deployment ended, in words (the `reason` of a `deployment.transition` row). */
+/** Why a test run of your app ended, in words (the `reason` of a `deployment.transition` row). */
 const DEPLOYMENT_FAILED_WORDS: Record<string, string> = {
-  probe_failed: 'Dev deployment failed: it did not answer its health check within 60 seconds',
-  exited: 'Dev deployment failed: the app stopped running',
-  start_timeout: 'Dev deployment failed: it did not start in time',
-  refused: 'Dev deployment failed: it could not be started on this computer',
-  preflight_failed: 'Dev deployment failed: its sandbox did not pass the safety checks',
-  runner_lost: 'Dev deployment failed: the process that ran it stopped',
-  exit_not_reported: 'Dev deployment failed: its exit was never reported'
+  probe_failed: 'Test run of your app failed: it did not answer the app check within 60 seconds',
+  exited: 'Test run of your app failed: the app stopped running',
+  start_timeout: 'Test run of your app failed: it did not start in time',
+  refused: 'Test run of your app failed: it could not be started on this computer',
+  preflight_failed: 'Test run of your app failed: its safe space did not pass the safety checks',
+  runner_lost: 'Test run of your app failed: the program that ran it stopped',
+  exit_not_reported: 'Test run of your app failed: Nexus never heard that it had stopped'
 };
 const DEPLOYMENT_STOPPED_WORDS: Record<string, string> = {
-  idle: 'Dev deployment stopped at the end of its 2-hour lifetime',
-  app_quit: 'Dev deployment stopped when the app quit',
-  recovery: 'Dev deployment stopped after a restart',
-  cancel: 'Dev deployment stopped with its job',
-  user: 'Dev deployment stopped'
+  idle: 'Test run of your app stopped after its 2 hours were up',
+  app_quit: 'Test run of your app stopped when Nexus was closed',
+  recovery: 'Test run of your app stopped after a restart',
+  cancel: 'Test run of your app stopped with its task',
+  user: 'Test run of your app stopped'
 };
 const IMAGE_BUILD_WORDS: Record<string, string> = {
-  succeeded: 'Sandbox image prepared',
-  interrupted: 'Sandbox image preparation was interrupted',
-  failed: 'Sandbox image preparation failed',
-  cancelled: 'Sandbox image preparation stopped'
+  succeeded: 'Safe-space kit prepared',
+  interrupted: 'Preparing the safe-space kit was interrupted',
+  failed: 'Preparing the safe-space kit failed',
+  cancelled: 'Preparing the safe-space kit was stopped'
 };
 /** What restart recovery decided (the `decision` of an `exec.recover` row). Never a completion: recovery completes nothing. */
 const RECOVER_WORDS: Record<string, string> = {
-  requeue: 'Job queued again after a restart: it had not started yet',
-  retry: 'Job will be tried again: it was cut off by a restart',
-  interrupt: 'Job interrupted by a restart',
-  reown: 'Job still waits for approval after a restart',
-  expire: 'Approval ran out while the app was closed; the job did not run',
-  adopt: 'Running job picked up again after a restart',
-  finalize: 'Job stopped while the app was closed; its result is being checked',
-  exit_lost: 'Dev deployment\'s job failed after a restart: its exit was never reported',
-  unreconciled: 'Job failed: the sandbox runner did not pick it up again within 10 minutes of a restart',
-  unknown_resources: 'Sandbox resources naming a job this app does not know were found after a restart and left in place',
-  image_interrupted: 'Sandbox image preparation was interrupted by a restart',
-  orphans: 'Leftover sandbox resources from before a restart were found and set for removal',
-  accept_rollback: 'An accept that had not finished when the app stopped is being undone; it is never retried'
+  requeue: 'Task queued again after a restart: it had not started yet',
+  retry: 'Task will be tried again: a restart cut it off',
+  interrupt: 'Task interrupted by a restart',
+  reown: 'Task still waits for your OK after a restart',
+  expire: 'The request for your OK ran out while the app was closed; the task did not run',
+  adopt: 'Running task picked up again after a restart',
+  finalize: 'Task stopped while the app was closed; its result is being checked',
+  exit_lost: 'Test run of your app failed after a restart: Nexus never heard that it had stopped',
+  unreconciled: 'Task failed: Nexus did not pick it up again within 10 minutes of a restart',
+  unknown_resources: 'Safe-space items from a task Nexus does not know were found after a restart and left alone',
+  image_interrupted: 'Preparing a safe-space kit was interrupted by a restart',
+  orphans: 'Leftover safe-space items from before a restart were found and set to be removed',
+  accept_rollback: 'A "Keep these changes" step that was cut off when the app stopped is being undone; it is never tried again'
 };
-/** A job restart recovery failed from what its stopped container showed (the `status` of a `fail` decision). */
+/** A task restart recovery failed from what its stopped safe space showed (the `status` of a `fail` decision). */
 const RECOVER_FAIL_WORDS: Record<string, string> = {
-  oom: 'Job failed: it ran out of memory while the app was closed',
-  nonzero_exit: 'Job failed: it exited with an error while the app was closed',
-  invalid_output: 'Job failed: it stopped while the app was closed without the outputs it needs'
+  oom: 'Task failed: it ran out of memory while the app was closed',
+  nonzero_exit: 'Task failed: it stopped with an error while the app was closed',
+  invalid_output: 'Task failed: it stopped while the app was closed without the results it needs'
 };
 /** An `exec.recover` row whose decision this build does not know: neutral, never "recovered". */
-export const RECOVER_NEUTRAL = 'Restart recovery recorded a decision';
+export const RECOVER_NEUTRAL = 'After a restart, Nexus recorded what to do with a task';
 const pick = (table: Record<string, string>, key: unknown): string | null =>
   typeof key === 'string' && Object.prototype.hasOwnProperty.call(table, key) ? table[key] : null;
 
@@ -269,26 +269,26 @@ function sentence(row: ActivityView, ctx: ActivityContext): string | null {
   switch (row.action) {
     case 'artifact.create': {
       const kind = detail(row, 'kind');
-      const label = typeof kind === 'string' && KIND_SHAPE.test(kind) ? kindLabel(kind) : 'Artifact';
+      const label = typeof kind === 'string' && KIND_SHAPE.test(kind) ? kindLabel(kind) : 'Saved item';
       return name ? `${label} ${name} created` : `${label} created`;
     }
-    case 'artifact.archive': return name ? `${name} archived` : 'An artifact archived';
+    case 'artifact.archive': return name ? `${name} archived` : 'A saved item archived';
     case 'version.register': return `${versionPhrase(row, ctx)} saved`;
     case 'version.update_draft': return `${versionPhrase(row, ctx)} updated as a draft`;
     case 'version.finalize': {
       const to = detail(row, 'to');
-      if (to === 'candidate') return `${versionPhrase(row, ctx)} marked ready`;
+      if (to === 'candidate') return `${versionPhrase(row, ctx)} marked as ready`;
       if (to === 'failed') return `${versionPhrase(row, ctx)} did not pass its checks`;
-      return `${versionPhrase(row, ctx)} finished`;
+      return `${versionPhrase(row, ctx)} updated`;
     }
     case 'version.promote':
-      return detail(row, 'rollback') === true ? `${versionPhrase(row, ctx)} made current again (roll back)` : `${versionPhrase(row, ctx)} made current`;
+      return detail(row, 'rollback') === true ? `${versionPhrase(row, ctx)} is in use again (went back)` : `${versionPhrase(row, ctx)} is now in use`;
     case 'version.discard': return `${versionPhrase(row, ctx)} discarded`;
     case 'version.revalidate': return `Checks run again on ${versionPhrase(row, ctx).replace(/^[VA]/, (c) => c.toLowerCase())}`;
     case 'lineage.write':
       return detail(row, 'source') === 'handoff_convert'
-        ? `${versionPhrase(row, ctx)} linked to a version it received`
-        : `Source linked to ${versionPhrase(row, ctx).replace(/^[VA]/, (c) => c.toLowerCase())}`;
+        ? `${versionPhrase(row, ctx)} linked to the version it was made from`
+        : `Added what ${versionPhrase(row, ctx).replace(/^[VA]/, (c) => c.toLowerCase())} was made from`;
     case 'participation.attach': {
       const ws = workspacePhrase(row.workspaceId, ctx);
       const again = detail(row, 'reactivated') === true ? ' again' : '';
@@ -296,7 +296,7 @@ function sentence(row: ActivityView, ctx: ActivityContext): string | null {
     }
     case 'participation.withdraw': {
       const ws = workspacePhrase(row.workspaceId, ctx);
-      return ws ? `Project withdrawn from ${ws}` : 'Project withdrawn from a workspace';
+      return ws ? `Project removed from ${ws}` : 'Project removed from a workspace';
     }
     case 'handoff.send': {
       const ws = workspacePhrase(detail(row, 'toWorkspaceId'), ctx);
@@ -309,108 +309,108 @@ function sentence(row: ActivityView, ctx: ActivityContext): string | null {
       return ws ? `Handoff accepted in ${ws}` : 'Handoff accepted';
     }
     case 'handoff.decline': return detail(row, 'withNote') === true ? 'Handoff declined, with a note' : 'Handoff declined';
-    case 'handoff.withdraw': return 'Handoff withdrawn';
-    case 'job.create': return 'Job created';
-    case 'job.cancel': return 'Job stopped';
-    case 'job.recover': return 'Job recovered after a restart';
-    case 'job.transition': return stateMove('Job', detail(row, 'to'));
-    case 'session.open': return 'Agent session opened';
-    case 'session.cancel': return 'Agent session stopped';
-    case 'session.recover': return 'Agent session recovered after a restart';
-    case 'session.transition': return stateMove('Agent session', detail(row, 'to'));
-    case 'db.migrated': return 'Database upgraded';
+    case 'handoff.withdraw': return 'Handoff taken back';
+    case 'job.create': return 'Task created';
+    case 'job.cancel': return 'Task stopped';
+    case 'job.recover': return 'Task picked up again after a restart';
+    case 'job.transition': return stateMove('Task', detail(row, 'to'));
+    case 'session.open': return 'AI helper conversation started';
+    case 'session.cancel': return 'AI helper conversation stopped';
+    case 'session.recover': return 'AI helper conversation picked up again after a restart';
+    case 'session.transition': return stateMove('AI helper conversation', detail(row, 'to'));
+    case 'db.migrated': return "Nexus updated its saved information";
     case 'workspace.catalog_ensured': return 'Workspace list updated';
-    case 'blob.gc': return row.status === 'started' ? 'Clean-up of unused stored files started' : 'Unused stored files cleaned up';
-    case 'approval.withdraw': return 'Approval request withdrawn: the job was stopped';
+    case 'blob.gc': return row.status === 'started' ? 'Cleaning up unused saved files started' : 'Unused saved files cleaned up';
+    case 'approval.withdraw': return 'Request for your OK taken back: the task was stopped';
     case 'approval.request': {
       const reason = detail(row, 'reason');
-      if (reason === 'egress.deps') return 'Approval asked: network access for one dependency install';
-      if (reason === 'image.prepare') return 'Approval asked: prepare a sandbox image';
-      if (reason === 'repo.write_refs') return 'Approval asked: let Nexus write hidden refs in this repository';
-      return 'Approval asked';
+      if (reason === 'egress.deps') return 'Asked for your OK: download the add-ons your project needs';
+      if (reason === 'image.prepare') return 'Asked for your OK: prepare a safe-space kit';
+      if (reason === 'repo.write_refs') return 'Asked for your OK: keep hidden Nexus notes in your project';
+      return 'Asked for your OK';
     }
     case 'approval.respond': {
       const decision = detail(row, 'decision');
       const reason = detail(row, 'reason');
-      if (decision === 'deny') return 'Approval denied';
+      if (decision === 'deny') return 'The request for your OK was turned down';
       if (decision === 'once') {
-        if (reason === 'egress.deps') return 'Network access approved once, for one dependency install';
-        if (reason === 'image.prepare') return 'Sandbox image preparation approved once';
-        if (reason === 'repo.write_refs') return 'Nexus was allowed to write hidden refs in this repository';
-        return 'Approved once';
+        if (reason === 'egress.deps') return 'Allowed once: download the add-ons your project needs';
+        if (reason === 'image.prepare') return 'Allowed once: prepare a safe-space kit';
+        if (reason === 'repo.write_refs') return 'Allowed once: Nexus may keep hidden Nexus notes in your project';
+        return 'Allowed once';
       }
-      return 'Approval answered';
+      return 'The request for your OK was answered';
     }
-    case 'approval.expire': return 'Approval request expired: it was not answered within 15 minutes';
-    case 'image_build.start': return 'Sandbox image preparation started';
-    case 'image_build.finish': return pick(IMAGE_BUILD_WORDS, detail(row, 'status')) ?? 'Sandbox image preparation ended';
-    case 'deployment.start': return 'Dev deployment started, reachable from this computer only';
+    case 'approval.expire': return 'The request for your OK ran out: it was not answered within 15 minutes';
+    case 'image_build.start': return 'Preparing a safe-space kit started';
+    case 'image_build.finish': return pick(IMAGE_BUILD_WORDS, detail(row, 'status')) ?? 'Preparing a safe-space kit ended';
+    case 'deployment.start': return 'Test run of your app started. Only this computer can reach it';
     case 'deployment.transition': {
       const to = detail(row, 'to');
       const reason = detail(row, 'reason');
-      if (to === 'healthy') return 'Dev deployment answered its health check';
-      if (to === 'unhealthy') return 'Dev deployment stopped answering its health check';
-      if (to === 'stopped') return pick(DEPLOYMENT_STOPPED_WORDS, reason) ?? 'Dev deployment stopped';
-      if (to === 'failed') return pick(DEPLOYMENT_FAILED_WORDS, reason) ?? 'Dev deployment failed';
-      return 'Dev deployment changed status';
+      if (to === 'healthy') return 'Your app answered the app check';
+      if (to === 'unhealthy') return 'Your app stopped answering the app check';
+      if (to === 'stopped') return pick(DEPLOYMENT_STOPPED_WORDS, reason) ?? 'Test run of your app stopped';
+      if (to === 'failed') return pick(DEPLOYMENT_FAILED_WORDS, reason) ?? 'Test run of your app failed';
+      return 'Test run of your app changed';
     }
     case 'deployment.stop':
-      return detail(row, 'job') === 'completes_on_exit' ? 'Dev deployment stopped; its job finishes when the app has exited' : 'Dev deployment stopped';
+      return detail(row, 'job') === 'completes_on_exit' ? 'Test run of your app stopped; its task ends once the app has stopped' : 'Test run of your app stopped';
     case 'exec.orphan_removed': {
       // Main hands the list to the runner; the row records the request, never a confirmed removal.
       const n = detail(row, 'requested');
       return typeof n === 'number' && Number.isSafeInteger(n) && n > 0
-        ? `Asked the sandbox runner to remove ${n} leftover sandbox resource${n === 1 ? '' : 's'} of ended runs`
-        : 'Asked the sandbox runner to remove leftover sandbox resources of ended runs';
+        ? `Asked Nexus to clean up ${n} leftover safe-space item${n === 1 ? '' : 's'} from tasks that ended`
+        : 'Asked Nexus to clean up leftover safe-space items from tasks that ended';
     }
     case 'exec.recover': {
       // Each decision in its own words: a failure reads as a failure, an interruption as interrupted. Without a
       // decision this build knows, the sentence claims nothing about the outcome.
       const decision = detail(row, 'decision');
-      if (decision === 'fail') return pick(RECOVER_FAIL_WORDS, detail(row, 'status')) ?? 'Job failed: it stopped while the app was closed';
+      if (decision === 'fail') return pick(RECOVER_FAIL_WORDS, detail(row, 'status')) ?? 'Task failed: it stopped while the app was closed';
       return pick(RECOVER_WORDS, decision) ?? RECOVER_NEUTRAL;
     }
     case 'agent.consent': {
       const op = detail(row, 'op');
-      if (op === 'revoke') return "The agent's network permission was revoked";
-      if (op === 'grant') return 'The agent was given network permission, with spend limits';
-      return "The agent's network permission was changed";
+      if (op === 'revoke') return "The AI helper's internet permission was taken back";
+      if (op === 'grant') return 'The AI helper was given internet permission, with spending limits';
+      return "The AI helper's internet permission was changed";
     }
-    case 'hosted.key': return detail(row, 'op') === 'delete' ? 'An AI provider key was deleted' : 'An AI provider key was saved';
-    case 'auth.denied': return 'The agent asked for something its permission does not cover, so it was refused';
-    case 'token.mint': return 'The agent was given a permission for one turn';
-    case 'token.revoke': return "The agent's turn permission ended";
+    case 'hosted.key': return detail(row, 'op') === 'delete' ? 'An access key for an AI service was deleted' : 'An access key for an AI service was saved';
+    case 'auth.denied': return 'The AI helper asked for something its permission does not cover, so it was refused';
+    case 'token.mint': return 'The AI helper was given permission for one request';
+    case 'token.revoke': return "The AI helper's permission for that request ended";
     case 'repo.worktree':
-      return detail(row, 'reused') === true ? "The agent's job reused its working copy of the repository"
-        : "A working copy of the repository was prepared for the agent's job";
+      return detail(row, 'reused') === true ? "The AI helper's task reused its safe copy of your project"
+        : "A safe copy of your project was prepared for the AI helper's task";
     case 'review.decide': {
       const d = detail(row, 'decision');
-      if (d === 'approve') return 'The change was approved';
-      if (d === 'request_changes') return 'Changes were requested on the change';
-      if (d === 'reject') return 'The change was rejected';
-      return 'A review was recorded';
+      if (d === 'approve') return 'The suggested changes were marked "Looks good"';
+      if (d === 'request_changes') return 'Different changes were asked for';
+      if (d === 'reject') return 'The suggested changes were turned down';
+      return 'A decision was recorded';
     }
-    case 'mcp.call': return 'The agent used a tool';
-    case 'repo.integration_resync': return 'The accepted branch was brought up to your latest commits, so new work starts from your latest code';
-    case 'context_redacted': return "Part of the agent's context was left out because it looked like a secret";
-    case 'changeset.accept': return 'The change was accepted; it waits on the Nexus branch until you merge it';
-    case 'changeset.rollback': return 'An accept that did not finish was undone; the Nexus branch is back as it was';
-    case 'repo.merge': return 'The accepted work was merged into your branch';
+    case 'mcp.call': return "The AI helper used one of Nexus's tools";
+    case 'repo.integration_resync': return "Nexus's saved copy was brought up to your latest saved versions, so new work starts from them";
+    case 'context_redacted': return 'Part of what the AI helper was shown was left out because it looked like a secret';
+    case 'changeset.accept': return "The suggested changes were kept. They wait in Nexus's saved copy until you add them to your project";
+    case 'changeset.rollback': return "A \"Keep these changes\" step was cut off and has been undone; Nexus's saved copy is back as it was";
+    case 'repo.merge': return 'The kept changes were added to your project';
     case 'project_workspace.primary_synced': {
       const ws = workspacePhrase(detail(row, 'workspaceId'), ctx);
-      return ws ? `Main workspace set to ${ws}, from the project's domain` : "Main workspace set from the project's domain";
+      return ws ? `Main workspace set to ${ws}, from what Nexus found in the project` : 'Main workspace set from what Nexus found in the project';
     }
     default: return null;
   }
 }
 
-/** What a row says happened. A refusal or failure names the action in words; an unknown action says only its name. */
+/** What a row says happened. A refusal or failure names the action in words; an unknown action says it has no words for it. */
 export function activityText(row: ActivityView, ctx: ActivityContext): string {
   if (row.action === 'auth.denied') return sentence(row, ctx) ?? 'A request was refused';
   if (row.status === 'denied') return `Refused: ${actionWords(row.action)}`;
   if (row.status === 'failed') return `Failed: ${actionWords(row.action)}`;
   if (row.status === 'cancelled') return `Cancelled: ${actionWords(row.action)}`;
-  return sentence(row, ctx) ?? `Recorded ${safeAction(row.action)}`;
+  return sentence(row, ctx) ?? UNKNOWN_ACTION_SENTENCE;
 }
 
 export function activityLine(row: ActivityView, ctx: ActivityContext): ActivityLine {
@@ -482,7 +482,7 @@ export function olderPageCursor(s: ActivityState): number | null {
 /** The one line the section shows instead of rows; null when rows are shown. */
 export function activityNotice(s: ActivityState): { kind: 'loading' | 'empty' | 'error'; text: string; retry: boolean } | null {
   if (s.error && s.rows.length === 0) return { kind: 'error', text: s.error, retry: s.retry };
-  if (!s.loaded) return { kind: 'loading', text: 'Reading activity…', retry: false };
-  if (s.rows.length === 0 && !s.error) return { kind: 'empty', text: 'Nothing has been recorded for this project yet.', retry: false };
+  if (!s.loaded) return { kind: 'loading', text: 'Reading what happened…', retry: false };
+  if (s.rows.length === 0 && !s.error) return { kind: 'empty', text: 'Nothing has happened in this project yet. What you and Nexus do will be listed here.', retry: false };
   return null;
 }

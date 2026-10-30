@@ -47,45 +47,72 @@ test('AC1: every action the services write maps to a sentence (never the "Record
   for (const a of written) assert.ok(M.ACTIVITY_ACTIONS.includes(a), `${a} is listed`);
   for (const a of M.ACTIVITY_ACTIONS) {
     const t = M.activityText(row({ action: a }), ctx());
-    assert.ok(t.length > 0 && !t.startsWith('Recorded'), `${a} → ${t}`);
+    assert.ok(t.length > 0 && t !== M.UNKNOWN_ACTION_SENTENCE, `${a} → ${t}`);
   }
   // The sentences the Passport shows for the B1 flows.
-  assert.equal(M.activityText(row({ action: 'version.finalize', actorKind: 'system', onBehalfOfUser: true, versionId: 'V2', details: { from: 'draft', to: 'candidate' } }), ctx()), 'Version 2 of API notes marked ready');
+  assert.equal(M.activityText(row({ action: 'version.finalize', actorKind: 'system', onBehalfOfUser: true, versionId: 'V2', details: { from: 'draft', to: 'candidate' } }), ctx()), 'Version 2 of API notes marked as ready');
   assert.equal(M.activityText(row({ action: 'version.register', details: { versionNo: 3 } }), ctx()), 'Version 3 of API notes saved');
-  assert.equal(M.activityText(row({ action: 'version.promote', versionId: 'V2', details: { rollback: false } }), ctx()), 'Version 2 of API notes made current');
-  assert.equal(M.activityText(row({ action: 'version.promote', versionId: 'V2', details: { rollback: true } }), ctx()), 'Version 2 of API notes made current again (roll back)');
+  assert.equal(M.activityText(row({ action: 'version.promote', versionId: 'V2', details: { rollback: false } }), ctx()), 'Version 2 of API notes is now in use');
+  assert.equal(M.activityText(row({ action: 'version.promote', versionId: 'V2', details: { rollback: true } }), ctx()), 'Version 2 of API notes is in use again (went back)');
   assert.equal(M.activityText(row({ action: 'version.discard', versionId: 'V2' }), ctx()), 'Version 2 of API notes discarded');
   assert.equal(M.activityText(row({ action: 'version.discard', versionId: 'V9' }), ctx()), 'A version of API notes discarded');
-  assert.equal(M.activityText(row({ action: 'lineage.write', versionId: 'V2', details: { source: 'user_action' } }), ctx()), 'Source linked to version 2 of API notes');
-  assert.equal(M.activityText(row({ action: 'artifact.create', details: { kind: 'text_file' } }), ctx()), 'Text file API notes created');
+  assert.equal(M.activityText(row({ action: 'lineage.write', versionId: 'V2', details: { source: 'user_action' } }), ctx()), 'Added what version 2 of API notes was made from');
+  assert.equal(M.activityText(row({ action: 'artifact.create', details: { kind: 'text_file' } }), ctx()), 'File API notes created');
   assert.equal(M.activityText(row({ action: 'participation.attach', workspaceId: 'qa', details: { reactivated: true } }), ctx()), 'Project added to Quality again');
-  assert.equal(M.activityText(row({ action: 'participation.withdraw', workspaceId: 'qa' }), ctx()), 'Project withdrawn from Quality');
+  assert.equal(M.activityText(row({ action: 'participation.withdraw', workspaceId: 'qa' }), ctx()), 'Project removed from Quality');
   assert.equal(M.activityText(row({ action: 'handoff.send', details: { subjects: 2, toWorkspaceId: 'qa' } }), ctx()), 'Handoff of 2 versions sent to Quality');
   assert.equal(M.activityText(row({ action: 'handoff.decline', details: { withNote: true } }), ctx()), 'Handoff declined, with a note');
-  assert.equal(M.activityText(row({ action: 'job.transition', details: { to: 'timed_out' } }), ctx()), 'Job timed out');
+  assert.equal(M.activityText(row({ action: 'job.transition', details: { to: 'timed_out' } }), ctx()), 'Task took too long and was stopped');
 });
 
-test('AC2: an unknown action reads "Recorded <action>", with no details', () => {
+test('AC2: an unknown action says Nexus has no words for it, never its name, and shows no details', () => {
   const t = M.activityText(row({ action: 'future.thing', details: { versionNo: 4, secret: 'sk-live-123', note: 'hello' } }), ctx());
-  assert.equal(t, 'Recorded future.thing');
-  // An action that is not a plain dotted name never reaches the screen as written.
-  assert.equal(M.activityText(row({ action: 'x <script>' }), ctx()), 'Recorded an action');
-  assert.equal(M.activityText(row({ action: 'a'.repeat(80) }), ctx()), 'Recorded an action');
+  assert.equal(t, M.UNKNOWN_ACTION_SENTENCE);
+  assert.doesNotMatch(t, /future\.thing|sk-live|hello/);
+  // An action name never reaches the screen, whatever its shape.
+  assert.equal(M.activityText(row({ action: 'x <script>' }), ctx()), M.UNKNOWN_ACTION_SENTENCE);
+  assert.equal(M.activityText(row({ action: 'a'.repeat(80) }), ctx()), M.UNKNOWN_ACTION_SENTENCE);
+});
+
+// The words the plain-words glossary retired never reach an activity sentence, whatever the action, status or detail.
+test('AC-P: no activity sentence uses an internal word (job, session, sandbox, dev deployment, health check, refs, worktree, branch, commit, artifact...)', () => {
+  const BANNED = /\b(jobs?|sessions?|sandbox|dev deployment|health check|probe|hidden refs?|worktree|working copy|change sets?|branch|commits?|artifacts?|fast-forward|merged?|repository|revalidate|egress|dependenc(y|ies)|manifest|runtime|agent|engine|database|registry|domain|consent|turn)\b/i;
+  const details = [{}, { to: 'candidate' }, { to: 'failed' }, { to: 'healthy' }, { to: 'unhealthy' }, { to: 'stopped' }, { rollback: true }, { source: 'handoff_convert' },
+    { reason: 'egress.deps', decision: 'once' }, { reason: 'image.prepare', decision: 'once' }, { reason: 'repo.write_refs', decision: 'once' }, { decision: 'deny' },
+    { decision: 'approve' }, { decision: 'request_changes' }, { decision: 'reject' }, { op: 'grant' }, { op: 'revoke' }, { op: 'delete' }, { reused: true },
+    { status: 'succeeded' }, { status: 'failed' }, { status: 'interrupted' }, { status: 'cancelled' }, { job: 'completes_on_exit' }, { requested: 3 }, { reactivated: true }];
+  const variants = [];
+  for (const a of M.ACTIVITY_ACTIONS) for (const d of details) {
+    variants.push(row({ action: a, details: d }));
+    for (const reason of ['probe_failed', 'exited', 'start_timeout', 'refused', 'preflight_failed', 'runner_lost', 'exit_not_reported', 'idle', 'app_quit', 'recovery', 'cancel', 'user']) variants.push(row({ action: a, details: { ...d, reason } }));
+  }
+  for (const decision of ['requeue', 'retry', 'interrupt', 'reown', 'expire', 'adopt', 'finalize', 'exit_lost', 'unreconciled', 'unknown_resources', 'image_interrupted', 'orphans', 'accept_rollback', 'fail', 'zzz']) {
+    variants.push(row({ action: 'exec.recover', details: { decision } }));
+    for (const status of ['oom', 'nonzero_exit', 'invalid_output']) variants.push(row({ action: 'exec.recover', details: { decision, status } }));
+  }
+  for (const status of ['denied', 'failed', 'cancelled']) for (const a of [...M.ACTIVITY_ACTIONS, 'project.read', 'workspace.read', 'artifact.read', 'lineage.read', 'job.read', 'session.read', 'activity.read', 'system.reconcile',
+    'handoff.read', 'handoff.respond', 'approval.read', 'platform.health', 'agent.start']) variants.push(row({ action: a, status }));
+  assert.ok(variants.length > 500, `the scan covers many rows (${variants.length})`);
+  for (const r of variants) {
+    const t = M.activityText(r, ctx());
+    assert.doesNotMatch(t, BANNED, `${r.action} ${r.status} ${JSON.stringify(r.details)} -> ${t}`);
+  }
+  assert.doesNotMatch(M.actorText({ actorKind: 'agent' }), BANNED);
 });
 
 test('AC3: a denied row reads "Refused: <action>"', () => {
-  assert.equal(M.activityText(row({ status: 'denied', action: 'version.promote' }), ctx()), 'Refused: make a version current');
+  assert.equal(M.activityText(row({ status: 'denied', action: 'version.promote' }), ctx()), 'Refused: put a version in use');
   assert.equal(M.activityText(row({ status: 'denied', action: 'project.read' }), ctx()), 'Refused: read the project');
-  assert.equal(M.activityText(row({ status: 'denied', action: 'future.thing', details: { reason: 'no_membership' } }), ctx()), 'Refused: future.thing');
-  assert.equal(M.activityText(row({ status: 'failed', action: 'job.create' }), ctx()), 'Failed: start a job');
-  assert.equal(M.activityText(row({ status: 'cancelled', action: 'job.create' }), ctx()), 'Cancelled: start a job');
+  assert.equal(M.activityText(row({ status: 'denied', action: 'future.thing', details: { reason: 'no_membership' } }), ctx()), 'Refused: an action this version of Nexus does not know');
+  assert.equal(M.activityText(row({ status: 'failed', action: 'job.create' }), ctx()), 'Failed: start a task');
+  assert.equal(M.activityText(row({ status: 'cancelled', action: 'job.create' }), ctx()), 'Cancelled: start a task');
 });
 
 test('AC4: a system-on-behalf row reads "Nexus, for you"; the principal id is never shown', () => {
   assert.equal(M.actorText({ actorKind: 'system', onBehalfOfUser: true }), 'Nexus, for you');
   assert.equal(M.actorText({ actorKind: 'system', onBehalfOfUser: false }), 'Nexus');
   assert.equal(M.actorText({ actorKind: 'user', onBehalfOfUser: false }), 'You');
-  assert.equal(M.actorText({ actorKind: 'agent', onBehalfOfUser: false }), 'An agent');
+  assert.equal(M.actorText({ actorKind: 'agent', onBehalfOfUser: false }), 'The AI helper');
   const line = M.activityLine(row({ actorKind: 'system', onBehalfOfUser: true, actorId: 'user:local', action: 'version.finalize', details: { to: 'candidate' } }), ctx());
   assert.equal(line.actor, 'Nexus, for you');
   assert.doesNotMatch(JSON.stringify(line), /user:local|system:/);
@@ -112,7 +139,7 @@ test('AC5: no detail key outside the allow-list is ever read or rendered', () =>
   assert.doesNotMatch(all, /SECRET|\.env|C:\/|derived_from|\{|\}/);
   // An allow-listed key with an unexpected value shape is not echoed either.
   const odd = M.activityText(row({ action: 'artifact.create', details: { kind: 'Bad Kind <b>' } }), ctx({ names: new Map() }));
-  assert.equal(odd, 'Artifact created');
+  assert.equal(odd, 'Saved item created');
   const odd2 = M.activityText(row({ action: 'handoff.send', details: { toWorkspaceId: '../../etc', subjects: '7 secrets' } }), ctx());
   assert.equal(odd2, 'Handoff sent');
   const odd3 = M.activityText(row({ action: 'version.register', versionId: 'V9', details: { versionNo: 'nine' } }), ctx());
@@ -145,7 +172,7 @@ test('nextActivity: first page replaces, older pages append, truncated is kept, 
   assert.equal(M.olderPageCursor(s2), null);
   // Empty.
   const e = M.nextActivity(M.NO_ACTIVITY, { ok: true, data: [] }, 'first');
-  assert.deepEqual(M.activityNotice(e), { kind: 'empty', text: 'Nothing has been recorded for this project yet.', retry: false });
+  assert.deepEqual(M.activityNotice(e), { kind: 'empty', text: 'Nothing has happened in this project yet. What you and Nexus do will be listed here.', retry: false });
   assert.equal(M.activityNotice(M.NO_ACTIVITY).kind, 'loading');
   // Busy keeps what was read and offers a retry.
   const b = M.nextActivity(s1, { ok: false, code: 'platform_unavailable', reason: 'busy', message: 'm' }, 'first');
@@ -212,10 +239,10 @@ test('every written action (including the legacy primary sync) reads as a plain 
   assert.ok(written.has('project_workspace.primary_synced'), 'the scan sees the constant-named action');
   for (const a of written) {
     const t = M.activityText(row({ action: a, workspaceId: null, details: {} }), ctx());
-    assert.ok(!t.startsWith('Recorded') && !t.includes(a), `${a} → ${t}`);
+    assert.ok(t !== M.UNKNOWN_ACTION_SENTENCE && !t.includes(a), `${a} → ${t}`);
   }
-  assert.equal(M.activityText(row({ action: 'project_workspace.primary_synced', details: { workspaceId: 'qa', result: 'x' } }), ctx()), "Main workspace set to Quality, from the project's domain");
-  assert.equal(M.activityText(row({ action: 'project_workspace.primary_synced', details: { workspaceId: null } }), ctx()), "Main workspace set from the project's domain");
+  assert.equal(M.activityText(row({ action: 'project_workspace.primary_synced', details: { workspaceId: 'qa', result: 'x' } }), ctx()), 'Main workspace set to Quality, from what Nexus found in the project');
+  assert.equal(M.activityText(row({ action: 'project_workspace.primary_synced', details: { workspaceId: null } }), ctx()), 'Main workspace set from what Nexus found in the project');
 });
 
 test('source pins: the Details sheet focuses its heading; the handoff title is selected on first focus', () => {

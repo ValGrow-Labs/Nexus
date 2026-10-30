@@ -6,6 +6,9 @@ import { provenanceStyle } from '../ui/ProvenanceMark';
 import { LifecycleRail } from '../workspaces/LifecycleRail';
 import type { RailView } from '../workspaces/lifecycleModel';
 
+/** A group that is no longer active says so in words: its project was removed from that workspace, or closed it. */
+const MUTED_WORD: Record<NonNullable<SpineGroup['muted']>, string> = { withdrawn: 'removed', complete: 'closed' };
+
 export function Spine({ groups, selectedId, onSelect, line, onRetryLine, truncated = false, focusRequest, onFocused, checks, rails }: {
   groups: SpineGroup[]; selectedId: string; onSelect: (id: string, el?: HTMLElement) => void;
   /** What the line under the nodes says about artifacts (see spineLine). */
@@ -39,10 +42,10 @@ export function Spine({ groups, selectedId, onSelect, line, onRetryLine, truncat
   };
   let i = -1;
   return (
-    <nav className="nx-spine" aria-label="Project spine">
+    <nav className="nx-spine" aria-label="Project timeline">
       {groups.map((g) => (
         <div key={g.workspaceId} className={`${g.hueSlot === null ? 'nx-spine__group nx-prov nx-prov--none' : 'nx-spine__group nx-prov'}${g.muted ? ' nx-spx-muted' : ''}`} style={provenanceStyle(g.hueSlot)}>
-          <p className="nx-spine__label">{g.label}{g.muted && <span className="nx-spx-state">{g.muted}</span>}</p>
+          <p className="nx-spine__label">{g.label}{g.muted && <span className="nx-spx-state">{MUTED_WORD[g.muted]}</span>}</p>
           {!g.muted && rails?.get(g.workspaceId) && <LifecycleRail rail={rails.get(g.workspaceId)!} compact />}
           <ol className="nx-spine__nodes">
             {g.nodes.map((n) => {
@@ -69,7 +72,7 @@ export function Spine({ groups, selectedId, onSelect, line, onRetryLine, truncat
                   <button type="button" ref={(el) => { if (el) refs.current.set(n.id, el); }}
                     className={`nx-node${n.kind === 'changes' ? ' nx-node--draft' : ''}`} aria-current={sel ? 'true' : undefined}
                     aria-label={nodeLabel(n)} tabIndex={n.id === active ? 0 : -1} onClick={(e) => onSelect(n.id, e.currentTarget)} onKeyDown={(e) => onKey(e, idx)}>
-                    <span className="nx-node__k">{n.kind === 'changes' ? 'changes' : n.vcs === 'git' ? 'repository' : 'folder'}</span>
+                    <span className="nx-node__k">{n.kind === 'changes' ? 'not saved yet' : n.vcs === 'git' ? 'your project' : 'folder'}</span>
                     <span className="nx-node__n" title={nodeName}>{nodeName}</span>
                     {n.kind === 'source' && n.head && <span className="nx-node__v nx-id">{n.head.shortSha}</span>}
                   </button>
@@ -80,8 +83,8 @@ export function Spine({ groups, selectedId, onSelect, line, onRetryLine, truncat
         </div>
       ))}
       {truncated && <p className="nx-spine__future" role="status">{SPINE_TRUNCATED_TEXT}</p>}
-      {line?.kind === 'empty' && <p className="nx-spine__future">Artifacts this project produces will appear on this line.</p>}
-      {line?.kind === 'loading' && <p className="nx-spine__future" role="status">Reading artifacts…</p>}
+      {line?.kind === 'empty' && <p className="nx-spine__future">Nothing has been saved yet. Items your project makes will show up here, in order.</p>}
+      {line?.kind === 'loading' && <p className="nx-spine__future" role="status">Reading your saved items…</p>}
       {line?.kind === 'error' && (
         <p className="nx-spine__future nx-spx-line" role="status">
           <span>{line.text}</span>

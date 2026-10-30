@@ -17,7 +17,7 @@ import type { NexusIconName } from '../icons';
 
 type Commit = { sha: string; shortSha: string; subject: string; time: number };
 
-const ACTION_LABEL: Record<PassportAction, string> = { ask: 'Ask an agent', files: 'Open files', terminal: 'Open terminal', refresh: 'Refresh analysis' };
+const ACTION_LABEL: Record<PassportAction, string> = { ask: 'Ask the AI helper', files: 'Open files', terminal: 'Open terminal', refresh: 'Look at the project again' };
 const ACTION_ICON: Record<PassportAction, NexusIconName> = { ask: 'assistant', files: 'files', terminal: 'terminal', refresh: 'refresh' };
 
 /** Recent commits for a git source node; empty for anything else. */
@@ -113,7 +113,7 @@ function SourcePassport({ project, node, headSha, onRefreshProject, onOpenTermin
       {node.kind === 'source' && <ProjectActions projectId={project.id} />}
       {p.versions.length > 0 && (
         <section>
-          <h2>Versions</h2>
+          <h2>Saved versions</h2>
           <ol className="nx-versions">
             {p.versions.map((v, i) => {
               const c = commits[i];
@@ -121,7 +121,7 @@ function SourcePassport({ project, node, headSha, onRefreshProject, onOpenTermin
                 <li key={v.id} aria-current={v.current ? 'true' : undefined} className={onSave && c ? 'nx-svx-commit' : undefined}>
                   <span className="nx-id">{v.id}</span><span>{v.label}</span>
                   {onSave && c && (
-                    <Button variant="quiet" ariaLabel={`Save commit ${c.shortSha} as an artifact`} onClick={() => save({ kind: 'commit', sha: c.sha, subject: c.subject })}>Save as artifact</Button>
+                    <Button variant="quiet" ariaLabel={`Add saved version ${c.shortSha} to your saved items`} onClick={() => save({ kind: 'commit', sha: c.sha, subject: c.subject })}>Add to saved items</Button>
                   )}
                 </li>
               );
@@ -134,10 +134,10 @@ function SourcePassport({ project, node, headSha, onRefreshProject, onOpenTermin
       <div className="nx-passport__actions">
         {p.actions.map((a) => (
           <Button key={a} variant={a === 'ask' ? 'primary' : 'secondary'} icon={ACTION_ICON[a]} disabled={a === 'refresh' && busy} onClick={() => run(a)}>
-            {a === 'refresh' && busy ? 'Refreshing…' : ACTION_LABEL[a]}
+            {a === 'refresh' && busy ? 'Looking again…' : ACTION_LABEL[a]}
           </Button>
         ))}
-        {onSave && node.kind === 'source' && <Button icon="files" onClick={() => save({ kind: 'file', relPath: null })}>Save a file…</Button>}
+        {onSave && node.kind === 'source' && <Button icon="files" onClick={() => save({ kind: 'file', relPath: null })}>Add a file to saved items…</Button>}
       </div>
       {(note ?? notice) && <p className="nx-passport__note" role="alert">{note ?? notice}</p>}
     </aside>

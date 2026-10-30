@@ -23,7 +23,7 @@ const DB = M.fromRows([row('p1', 'a', 'sde', true), row('p2', 'a', 'qa', false),
 test('rows: active participations, primary first; Withdraw is never offered on the primary', () => {
   const rows = S.sectionRows(DB, 'a', true);
   assert.deepEqual(rows.map((r) => [r.workspaceId, r.isPrimary, r.canWithdraw]), [['sde', true, false], ['qa', false, true]]);
-  assert.equal(rows[1].label, 'QA');
+  assert.equal(rows[1].label, 'Testing');
   assert.equal(rows[1].participationId, 'p2');
 });
 
@@ -69,12 +69,12 @@ test('withdraw: confirm first, then pending keeps the confirmation open; failure
 
 test('copy: the brief\'s exact sentences', () => {
   assert.equal(S.addedMessage('QA'), 'Added to QA');
-  assert.equal(S.withdrawnMessage('QA'), 'Withdrawn from QA');
-  assert.equal(S.confirmQuestion('QA'), 'Withdraw from QA? Its artifacts stay readable and stop taking new versions.');
+  assert.equal(S.withdrawnMessage('QA'), 'Removed from QA');
+  assert.equal(S.confirmQuestion('QA'), 'Remove this project from QA? Its saved items stay readable, but they will not get new versions.');
 });
 
 test('withdraw failures say plainly what blocks it', () => {
-  assert.equal(S.withdrawFailureText(fail('conflict', { detail: { participationId: 'p2', openHandoffs: 2 } })), 'Answer or withdraw its open handoffs first.');
+  assert.equal(S.withdrawFailureText(fail('conflict', { detail: { participationId: 'p2', openHandoffs: 2 } })), 'Answer or take back its open handoffs first.');
   assert.equal(S.withdrawFailureText(fail('conflict', { detail: { liveJobs: 1, liveSessions: 0 } })), S.LIVE_WORK_TEXT);
   assert.equal(S.withdrawFailureText(fail('conflict', { detail: { liveJobs: 0, liveSessions: 3 } })), S.LIVE_WORK_TEXT);
   assert.equal(S.withdrawFailureText(fail('invalid')), S.PRIMARY_TEXT);
@@ -107,12 +107,12 @@ test('reload after a failure only when the shown participations may be stale', (
 const section = src('project/WorkspacesSection.tsx');
 
 test('pin: Withdraw is rendered only behind canWithdraw, which is false on the primary row', () => {
-  const withdrawButtons = section.match(/>Withdraw</g) || [];
+  const withdrawButtons = section.match(/>Remove</g) || [];
   assert.ok(withdrawButtons.length >= 1);
   // Every Withdraw control sits inside an `r.canWithdraw &&` branch.
   const blocks = section.split(/\{r\.canWithdraw && /).slice(1).join('');
-  assert.equal((blocks.match(/>Withdraw</g) || []).length, withdrawButtons.length);
-  assert.doesNotMatch(section, /isPrimary\s*\?[^:]*Withdraw/);
+  assert.equal((blocks.match(/>Remove</g) || []).length, withdrawButtons.length);
+  assert.doesNotMatch(section, /isPrimary\s*\?[^:]*Remove/);
   assert.match(src('project/workspacesSectionModel.ts'), /canWithdraw: writable && !row\.isPrimary/);
 });
 
@@ -142,7 +142,7 @@ test('pin: writes render only with selectCanWrite; a double submit is blocked; l
   assert.match(section, /<Popover kind="listbox"/);
   assert.match(section, /<PlatformNotice \/>/);
   assert.match(section, /'Adding…'|>Adding…</);
-  assert.match(section, /'Withdrawing…'/);
+  assert.match(section, /'Removing…'/);
 });
 
 test('pin: opening the withdraw confirmation focuses Cancel, not the destructive button', () => {
@@ -217,11 +217,11 @@ test('pin: focus rests on the status line while an action runs and when it ends;
   assert.match(section, /onClick=\{\(\) => cancelWithdraw\(r\.participationId\)\}><span>Cancel<\/span><\/button>/);
   const M = loadTs('src/renderer/src/nexus/project/workspacesSectionModel.ts');
   assert.equal(M.addingMessage('Quality'), 'Adding to Quality…');
-  assert.equal(M.withdrawingMessage('Quality'), 'Withdrawing from Quality…');
+  assert.equal(M.withdrawingMessage('Quality'), 'Removing from Quality…');
 });
 
 test('pin: Escape closes the withdraw confirmation while nothing is pending', () => {
-  assert.match(section, /role="group" aria-label=\{`Withdraw from \$\{r\.label\}`\} onKeyDown=\{onConfirmKey\(r\.participationId\)\}/);
+  assert.match(section, /role="group" aria-label=\{`Remove from \$\{r\.label\}`\} onKeyDown=\{onConfirmKey\(r\.participationId\)\}/);
   assert.match(section, /if \(e\.key !== 'Escape' \|\| state\.pending\) return;\s*e\.preventDefault\(\);\s*e\.stopPropagation\(\);\s*cancelWithdraw\(participationId\);/);
   assert.match(section, /const cancelWithdraw = \(participationId: string\) => \{\s*if \(state\.pending\) return;/);
 });

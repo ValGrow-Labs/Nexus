@@ -82,20 +82,20 @@ test('sort: recently changed first (id breaks ties), or by name', () => {
 
 test('rows: kind, workspace and version in words; a project missing from the list shows "Removed project"', () => {
   const r = M.artifactRow(summary(A1, { current: { id: V1, versionNo: 3 }, latest: { id: V1, versionNo: 3, status: 'active' } }), NAMES);
-  assert.equal(r.kind, 'Commit');
+  assert.equal(r.kind, 'Saved version');
   assert.equal(r.project, 'Invoice OCR');
   assert.equal(r.projectKnown, true);
-  assert.equal(r.workspace, 'SDE');
+  assert.equal(r.workspace, 'Software');
   assert.equal(typeof r.hueSlot, 'number');
-  assert.equal(r.version, 'v3, current');
+  assert.equal(r.version, 'Version 3, in use');
   assert.equal(r.archived, false);
 
   const gone = M.artifactRow(summary(A2, { projectId: 'gone', kind: 'text_file', latest: { id: V2, versionNo: 2, status: 'candidate' } }), NAMES);
   assert.equal(gone.project, 'Removed project');
   assert.equal(gone.project, M.REMOVED_PROJECT);
   assert.equal(gone.projectKnown, false);
-  assert.equal(gone.kind, 'Text file');
-  assert.equal(gone.version, 'v2 ready');
+  assert.equal(gone.kind, 'File');
+  assert.equal(gone.version, 'Version 2, ready');
   // Before the project list is read, nothing is called removed.
   assert.equal(M.artifactRow(summary(A2, { projectId: 'gone' }), NAMES, false).project, '');
   assert.equal(M.sortedRows([summary(A2, { projectId: 'gone' })], NAMES, 'recent', false)[0].project, '');
@@ -105,7 +105,7 @@ test('rows: kind, workspace and version in words; a project missing from the lis
   assert.equal(none.archived, true);
   assert.equal(none.workspace, 'Whole project');
   assert.equal(none.hueSlot, null);
-  assert.equal(none.kind, 'Received');
+  assert.equal(none.kind, 'Received item');
   // An unknown workspace id reads as its id, without a hue.
   assert.equal(M.artifactRow(summary(A1, { ownerWorkspaceId: 'robotics' }), NAMES).workspace, 'robotics');
 });
@@ -176,7 +176,7 @@ test('paging: show more until the channel maximum, then say the list is capped',
   assert.equal(M.pagingOf({ loaded: true, truncated: true }, 100), 'more');
   assert.equal(M.pagingOf({ loaded: true, truncated: true }, 400), 'more');
   assert.equal(M.pagingOf({ loaded: true, truncated: true }, 500), 'capped');
-  assert.match(M.CAPPED_TEXT, /500 most recently changed/);
+  assert.match(M.CAPPED_TEXT, /500 saved items changed most recently/);
 });
 
 // ---------- the empty-state choice ----------
@@ -205,7 +205,8 @@ test('the empty-state choice: loading, unavailable, error, empty, no match, rows
   const staleBusy = M.nextArtifactList(M.startListRead(rows, K), K, fail('internal'));
   assert.equal(M.listNotice(staleBusy, F), null);
   assert.deepEqual(M.staleError(staleBusy), { text: errorCopy('internal').text, retry: true });
-  assert.equal(`${M.EMPTY_TITLE}. ${M.EMPTY_BODY}`, "No artifacts yet. Save a commit or a file from a project's passport.");
+  assert.equal(`${M.EMPTY_TITLE}. ${M.EMPTY_BODY}`, 'No saved items yet. Saved items are the things your projects make or keep: notes, builds, suggested changes. Open a project and press "Add a file to saved items" in its details to keep your first one.');
+  assert.doesNotMatch(`${M.EMPTY_TITLE} ${M.EMPTY_BODY} ${M.NO_MATCH_TEXT} ${M.MISSING_TITLE} ${M.MISSING_BODY} ${M.CAPPED_TEXT}`, /artifact|passport|commit/i, 'the page says saved items, never artifact, passport or commit');
 });
 
 // ---------- the detail read ----------
@@ -238,7 +239,7 @@ test('detail read: ready, not found, unavailable, refusals, passing failures, st
   // Another id's answer changes nothing; a malformed answer is an internal failure.
   assert.equal(M.nextDetail(L, A2, ok(detail())), L);
   assert.equal(M.nextDetail(M.detailLoading(A2), A2, ok(detail())).status, 'error');
-  assert.equal(M.MISSING_TITLE, 'Artifact not found');
+  assert.equal(M.MISSING_TITLE, 'Saved item not found');
 });
 
 test('detailNode: the current version, else the newest, else version 0', () => {
@@ -269,7 +270,7 @@ test('pin: the page reads through its hooks only and reuses the artifact Passpor
 });
 
 test('pin: empty, unavailable, error and not-found states', () => {
-  assert.match(page, /<EmptyState level=\{2\} icon="artifacts" title=\{EMPTY_TITLE\} body=\{EMPTY_BODY\}\s*actions=\{<Button variant="primary" icon="projects" onClick=\{\(\) => navigate\(\{ name: 'projects' \}\)\}>Open Projects<\/Button>\} \/>/);
+  assert.match(page, /<EmptyState level=\{2\} icon="artifacts" title=\{EMPTY_TITLE\} body=\{EMPTY_BODY\}\s*actions=\{<Button variant="primary" icon="projects" onClick=\{\(\) => navigate\(\{ name: 'projects' \}\)\}>Open your projects<\/Button>\} \/>/);
   assert.match(page, /<PlatformNotice \/>/);
   // The PlatformNotice alone explains an unavailable platform: no second sentence under it.
   assert.doesNotMatch(page, /UNAVAILABLE_LIST_TEXT|notice\?\.kind === 'unavailable' &&/);
@@ -283,7 +284,7 @@ test('pin: empty, unavailable, error and not-found states', () => {
 });
 
 test('pin: filters for project, workspace, kind and status, plus sort; paging keeps focus', () => {
-  for (const label of ['Project', 'Workspace', 'Kind', 'Status', 'Sort']) assert.match(page, new RegExp(`aria-label="${label}"`), label);
+  for (const label of ['Project', 'Workspace', 'Type', 'Archived or not', 'Sort']) assert.match(page, new RegExp(`aria-label="${label}"`), label);
   assert.match(page, /const list = useArtifactList\(filters\);/);
   assert.match(page, /\{paging === 'more' && <Button onClick=\{showMore\}>/);
   assert.match(page, /if \(paging !== 'more'\) countRef\.current\?\.focus\(\);/);
@@ -312,7 +313,7 @@ test('pin: routing, the Passport outside the Spine, and the styles', () => {
   const planned = loadTs('src/renderer/src/nexus/pages/plannedContent.ts').PLANNED;
   assert.deepEqual(Object.keys(planned), ['deployments']);
   const passport = src('project/ArtifactPassport.tsx');
-  assert.match(passport, /\{row\.shown && !row\.current \? \(onSpine \? ', shown on the spine' : ', shown here'\) : ''\}/);
+  assert.match(passport, /\{row\.shown && !row\.current \? \(onSpine \? ', shown on the timeline' : ', shown here'\) : ''\}/);
   assert.match(passport, /if \(rootPath && \[\.\.\.contents\.values\(\)\]\.some\(\(c\) => c\.type === 'git'\)\)/, 'no git read without a project folder');
   const css = src('styles/platform.css');
   for (const cls of ['nx-afx', 'nx-afx__list', 'nx-afx__rows', 'nx-afx__row', 'nx-afx__detail', 'nx-afx__pane', 'nx-afx__bar', 'nx-afx__line', 'nx-afx__count']) {

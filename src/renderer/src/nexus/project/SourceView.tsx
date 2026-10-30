@@ -16,16 +16,16 @@ function useNow(ms = 60_000): number {
 function Provenance({ node, git, onRetry }: { node: SpineNode; git: GitState; onRetry: () => void }) {
   const now = useNow();
   if (node.kind !== 'source') return null;
-  if (node.vcs === 'none') return <p className="nx-surface__prov">This folder is not a git repository. Change review needs git.</p>;
+  if (node.vcs === 'none') return <p className="nx-surface__prov">This folder is not set up with Git, the program that keeps track of changes. Looking at changes needs it.</p>;
   if (node.vcs === 'error') {
     return (
       <div className="nx-surface__prov" role="status">
-        <span>Git status is unavailable for this folder.</span>
+        <span>Nexus could not read this folder's changes.</span>
         <Button variant="quiet" icon="refresh" onClick={onRetry}>Retry</Button>
       </div>
     );
   }
-  if (node.vcs === 'unknown') return <p className="nx-surface__prov nx-muted" role="status">Reading git status…</p>;
+  if (node.vcs === 'unknown') return <p className="nx-surface__prov nx-muted" role="status">Looking at this folder's changes…</p>;
   const line = provenanceLine(node, git, now);
   return line ? <p className="nx-surface__prov">{line}</p> : null;
 }
@@ -34,7 +34,7 @@ function Fact({ title, children }: { title: string; children: ReactNode }) {
   return <section className="nx-fact"><h2 className="nx-fact__title">{title}</h2>{children}</section>;
 }
 
-/** The bench: what the analyzer and git actually know about the project. */
+/** The work area: what Nexus actually knows about the project. */
 export function SourceView({ project, node, git, onRetry }: { project: Project; node: SpineNode; git: GitState; onRetry: () => void }) {
   const ws = primaryViewOf(useParticipationIndex(), project.id);
   const langs = project.detectedLanguages.filter((l) => l.language);
@@ -54,7 +54,7 @@ export function SourceView({ project, node, git, onRetry }: { project: Project; 
         <ProvenanceMark slot={ws ? ws.hueSlot : null} />
         <Provenance node={node} git={git} onRetry={onRetry} />
       </div>
-      {empty && <p className="nx-muted">The analyzer found no languages, frameworks, entry points, tests or documentation in this folder.</p>}
+      {empty && <p className="nx-muted">Nexus did not find any programming languages, frameworks, main files, tests or notes in this folder yet.</p>}
       {langs.length > 0 && (
         <Fact title="Languages">
           <ul className="nx-fact__list">{langs.map((l) => <li key={l.language}>{l.language}{l.fileCount > 0 ? <span className="nx-muted"> {l.fileCount} {l.fileCount === 1 ? 'file' : 'files'}</span> : null}</li>)}</ul>
@@ -64,7 +64,7 @@ export function SourceView({ project, node, git, onRetry }: { project: Project; 
         <Fact title="Frameworks"><ul className="nx-fact__list">{project.frameworks.map((f) => <li key={f}>{f}</li>)}</ul></Fact>
       )}
       {entries.length > 0 && (
-        <Fact title="Entry points"><ul className="nx-fact__list">{entries.map((e) => <li key={e} className="nx-id">{e}</li>)}</ul></Fact>
+        <Fact title="Main files"><ul className="nx-fact__list">{entries.map((e) => <li key={e} className="nx-id">{e}</li>)}</ul></Fact>
       )}
       {suites.length > 0 && (
         <Fact title="Tests">
@@ -76,7 +76,7 @@ export function SourceView({ project, node, git, onRetry }: { project: Project; 
         </Fact>
       )}
       {docs.length > 0 && (
-        <Fact title="Documentation"><ul className="nx-fact__list">{docs.map((d) => <li key={d} className="nx-id">{d}</li>)}</ul></Fact>
+        <Fact title="Notes and guides"><ul className="nx-fact__list">{docs.map((d) => <li key={d} className="nx-id">{d}</li>)}</ul></Fact>
       )}
     </section>
   );

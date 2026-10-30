@@ -1,8 +1,8 @@
 import type { RailView } from './lifecycleModel';
 import { railSummary } from './lifecycleModel';
 
-/** A domain's lifecycle in its own words: each step with its word (never colour alone); steps that are not in this
- *  release are hatched and say when they arrive. Nothing here is a control. `compact` draws the Spine's one-line form:
+/** A workspace's steps in its own words: each step with its word (never colour alone); steps that come later
+ *  are hatched and say when they arrive. Nothing here is a control. `compact` draws the Spine's one-line form:
  *  a segment per step (its words for screen readers) and the counts of the rail's own steps. */
 export function LifecycleRail({ rail, compact = false }: { rail: RailView; compact?: boolean }) {
   if (!rail.supported || rail.steps.length === 0) {
@@ -11,7 +11,7 @@ export function LifecycleRail({ rail, compact = false }: { rail: RailView; compa
   if (compact) {
     return (
       <div className="nx-lrail nx-lrail--compact">
-        <ol className="nx-lrail__bar" aria-label={`${rail.label} lifecycle`}>
+        <ol className="nx-lrail__bar" aria-label={`${rail.label} steps`}>
           {rail.steps.map((s) => (
             <li key={s.id} data-future={s.future ? 'true' : undefined} data-state={s.state ?? undefined} title={`${s.label}: ${s.word}`}>
               <span className="nx-visually-hidden">{s.label}: {s.word}</span>
@@ -23,7 +23,7 @@ export function LifecycleRail({ rail, compact = false }: { rail: RailView; compa
     );
   }
   return (
-    <section className="nx-lrail" aria-label={`${rail.label} lifecycle`}>
+    <section className="nx-lrail" aria-label={`${rail.label} steps`}>
       <p className="nx-lrail__note">{rail.statusNote}</p>
       {rail.availability && <p className="nx-lrail__note"><b>{rail.availability}.</b></p>}
       <ol className="nx-lrail__steps">
@@ -38,7 +38,7 @@ export function LifecycleRail({ rail, compact = false }: { rail: RailView; compa
       </ol>
       {rail.modules.length > 0 && (
         <p className="nx-lrail__modules">
-          <span className="nx-lrail__sub">Modules</span>{' '}
+          <span className="nx-lrail__sub">Parts</span>{' '}
           {rail.modules.map((m, i) => (
             <span key={m.id}>{i > 0 ? ' · ' : ''}{m.label}{m.note ? <span className="nx-muted"> ({m.note})</span> : null}</span>
           ))}

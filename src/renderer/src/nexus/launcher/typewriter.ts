@@ -1,7 +1,7 @@
 /** Examples the search line "types" while it is empty and idle, so it reads
  *  as alive and shows what can be searched for. Each word is a real term the
  *  index matches (see indexModel). */
-export const TYPE_EXAMPLES = ['a model', 'a dashboard', 'an api', 'test plans', 'a prototype', 'pipelines'];
+export const TYPE_EXAMPLES = ['a model', 'a dashboard', 'a service', 'test plans', 'a prototype', 'publishing'];
 
 const HOLD = 14;  // ticks a finished example stays on screen
 const GAP = 3;    // ticks of empty line between examples

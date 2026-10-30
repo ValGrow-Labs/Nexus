@@ -8,8 +8,8 @@ import { kindLabelIn } from './artifactModel';
 import { derivedName, nextCriterionId, problemContent, requirementContent, type ProblemDraft, type RequirementDraft } from './actionModel';
 
 /** Write a requirement (title, body, acceptance criteria with stable ids) or a problem statement (question, context,
- *  audience, success criteria, constraints). Saving makes a draft; main checks it, and Mark ready in the Passport
- *  finishes it. */
+ *  audience, success criteria, constraints). Saving makes a draft; main checks it, and Mark as ready in the item's
+ *  details finishes it. */
 export function RequirementSheet({ projectId, workspaceId, kind, onClose, onSaved }: {
   projectId: string; workspaceId: string; kind: 'requirement' | 'problem_statement';
   onClose: () => void; onSaved: (artifactId: string) => void;
@@ -54,31 +54,31 @@ export function RequirementSheet({ projectId, workspaceId, kind, onClose, onSave
               <input className="nx-input nx-svx__control" value={req.title} maxLength={200} onChange={(e) => setReq({ ...req, title: e.target.value })} /></label>
             <label className="nx-svx__field"><span className="nx-svx__label">Description</span>
               <textarea className="nx-input nx-svx__control" rows={4} value={req.body} onChange={(e) => setReq({ ...req, body: e.target.value })} /></label>
-            <fieldset className="nx-svx__field"><legend className="nx-svx__label">Acceptance criteria</legend>
+            <fieldset className="nx-svx__field"><legend className="nx-svx__label">How you will know it works</legend>
               {req.criteria.map((c, i) => (
                 <label key={c.id} className="nx-xw__crit"><span className="nx-id">{c.id}</span>
-                  <input className="nx-input nx-svx__control" value={c.text} maxLength={2000} aria-label={`Criterion ${c.id}`}
+                  <input className="nx-input nx-svx__control" value={c.text} maxLength={2000} aria-label={`Point ${c.id}`}
                     onChange={(e) => setReq({ ...req, criteria: req.criteria.map((x, k) => (k === i ? { ...x, text: e.target.value } : x)) })} />
                 </label>
               ))}
-              {req.criteria.length < 100 && <Button variant="quiet" onClick={() => setReq({ ...req, criteria: [...req.criteria, { id: nextCriterionId(req.criteria), text: '' }] })}>Add a criterion</Button>}
+              {req.criteria.length < 100 && <Button variant="quiet" onClick={() => setReq({ ...req, criteria: [...req.criteria, { id: nextCriterionId(req.criteria), text: '' }] })}>Add another point</Button>}
             </fieldset>
           </>
         ) : (
           <>
             <label className="nx-svx__field"><span className="nx-svx__label">Question</span>
               <textarea className="nx-input nx-svx__control" rows={3} maxLength={2000} value={prob.question} onChange={(e) => setProb({ ...prob, question: e.target.value })} /></label>
-            <label className="nx-svx__field"><span className="nx-svx__label">Context</span>
+            <label className="nx-svx__field"><span className="nx-svx__label">Background</span>
               <textarea className="nx-input nx-svx__control" rows={3} value={prob.context} onChange={(e) => setProb({ ...prob, context: e.target.value })} /></label>
-            <label className="nx-svx__field"><span className="nx-svx__label">Audience</span>
+            <label className="nx-svx__field"><span className="nx-svx__label">Who it is for</span>
               <input className="nx-input nx-svx__control" maxLength={200} value={prob.audience} onChange={(e) => setProb({ ...prob, audience: e.target.value })} /></label>
-            <label className="nx-svx__field"><span className="nx-svx__label">Success criteria, one per line</span>
+            <label className="nx-svx__field"><span className="nx-svx__label">What a good answer looks like, one per line</span>
               <textarea className="nx-input nx-svx__control" rows={3} value={prob.successCriteria.join('\n')} onChange={(e) => setProb({ ...prob, successCriteria: lines(e.target.value) })} /></label>
-            <label className="nx-svx__field"><span className="nx-svx__label">Constraints, one per line</span>
+            <label className="nx-svx__field"><span className="nx-svx__label">Limits to keep in mind, one per line</span>
               <textarea className="nx-input nx-svx__control" rows={3} value={prob.constraints.join('\n')} onChange={(e) => setProb({ ...prob, constraints: lines(e.target.value) })} /></label>
           </>
         )}
-        <p className="nx-muted">Saved as a draft. Nexus checks it; then Mark ready finishes it.</p>
+        <p className="nx-muted">It is saved as a draft first. Nexus checks it, and then you can press "Mark as ready".</p>
         {error && <p className="nx-passport__note" role="alert">{error}</p>}
         <div className="nx-svx__actions">
           <Button type="submit" variant="primary" disabled={pending}>{pending ? 'Saving…' : 'Save draft'}</Button>

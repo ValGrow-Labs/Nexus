@@ -51,7 +51,7 @@ function WorkspaceView({ id }: { id: WorkspaceId }) {
   const unmappable = ws.domainIds.length === 0;
   const tabs = workspaceTabs(ws);
   const planned = tabs.filter((t) => !t.available);
-  // The domain's lifecycle and modules in its own words (the registry); the old planned list only without one.
+  // The workspace's steps and parts in its own words (the registry); the old coming-later list only without one.
   const domain = useDomains().list.find((d) => d.id === id) ?? null;
   const rail = domain ? railFor(domain) : null;
   return (
@@ -62,7 +62,7 @@ function WorkspaceView({ id }: { id: WorkspaceId }) {
           <p className="nx-lead">{ws.description}</p>
         </div>
         <div className="nx-pagehead__actions">
-          <Button icon="import" onClick={actions.openImport}>Import</Button>
+          <Button icon="import" onClick={actions.openImport}>Import a folder</Button>
           <Button variant="primary" icon="plus" onClick={() => actions.openNewProject(ws.defaultDomainId)}>New project</Button>
         </div>
       </header>
@@ -73,11 +73,11 @@ function WorkspaceView({ id }: { id: WorkspaceId }) {
         </div>
         {!rail && planned.length > 0 && (
           <>
-            <p id="ws-planned-note" className="nx-visually-hidden">These open once this workspace has artifacts.</p>
+            <p id="ws-planned-note" className="nx-visually-hidden">These open once this workspace has saved items.</p>
             <div className="nx-wstabs__planned">
               {planned.map((t) => (
                 <span key={t.id} className="nx-wstab nx-wstab--planned" aria-describedby="ws-planned-note">
-                  {t.label} <span className="nx-wstab__note">Planned</span>
+                  {t.label} <span className="nx-wstab__note">Coming later</span>
                 </span>
               ))}
             </div>
@@ -90,12 +90,12 @@ function WorkspaceView({ id }: { id: WorkspaceId }) {
           : status === 'loading' && projects.length === 0 ? <RowsSkeleton count={3} />
           : mine.length > 0 ? <div className="nx-rows">{mine.map((p) => <ProjectRow key={p.id} project={p} idx={idx} role={roleOf.get(p.id)} onOpen={() => navigate({ name: 'project', id: p.id, tool: 'bench' })} />)}</div>
           : unmappable ? (
-            <EmptyState level={2} icon={ws.icon} title={`No ${ws.label} projects yet`}
-              body={<>No project takes part in {ws.label} yet. New projects join a workspace through the domain the analyzer detects, and none map to {ws.label} today.{addHint}</>}
+            <EmptyState level={2} icon={ws.icon} title={`No projects in ${ws.label} yet`}
+              body={<>Nexus puts a new project in a workspace by what it finds in the project, and nothing lands in {ws.label} by itself yet.{addHint}</>}
               actions={<Button onClick={() => navigate({ name: 'projects' })}>See all projects</Button>} />
           ) : (
-            <EmptyState level={2} icon={ws.icon} title={`No ${ws.label} projects yet`} body={`Create one here, or import a folder; it joins this workspace when its domain matches.${addHint}`}
-              actions={<><Button variant="primary" icon="plus" onClick={() => actions.openNewProject(ws.defaultDomainId)}>New project</Button><Button icon="import" onClick={actions.openImport}>Import</Button></>} />
+            <EmptyState level={2} icon={ws.icon} title={`No projects in ${ws.label} yet`} body={`Press New project to start one here, or import a folder you already have. It joins this workspace when it fits.${addHint}`}
+              actions={<><Button variant="primary" icon="plus" onClick={() => actions.openNewProject(ws.defaultDomainId)}>New project</Button><Button icon="import" onClick={actions.openImport}>Import a folder</Button></>} />
           )}
       </section>
     </div>

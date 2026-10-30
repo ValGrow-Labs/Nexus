@@ -31,7 +31,7 @@ function useSubjectDetails(ids: string[]): Subjects {
         const reads = await Promise.all(key ? key.split(',').map((id) => nexusClient.artifactGet(id)) : []);
         if (!alive) return;
         setState({ details: reads.flatMap((r) => (r.ok ? [r.data] : [])), loaded: true,
-          error: reads.some((r) => !r.ok) ? 'Some versions could not be read, so they are not offered.' : null });
+          error: reads.some((r) => !r.ok) ? 'Nexus could not read some versions, so they are not offered.' : null });
       } catch {
         if (alive) setState((s) => ({ details: s.details, loaded: true, error: errorCopy('internal').text }));
       }
@@ -142,13 +142,13 @@ export function SendHandoffSheet({ start, artifacts, onClose }: {
       <form className="nx-shx" onSubmit={(e) => { e.preventDefault(); void submit(); }}>
         <header className="nx-shx__head">
           <p className="nx-shx__kind">Handoff</p>
-          <h2 id="nx-shx-title" className="nx-shx__title">Hand off versions</h2>
-          <p className="nx-shx__lead">The receiving workspace gets references to these versions, not copies.</p>
+          <h2 id="nx-shx-title" className="nx-shx__title">Send to another workspace</h2>
+          <p className="nx-shx__lead">The other workspace gets a pointer to these versions. Nothing is copied.</p>
         </header>
 
         <div className="nx-shx__field">
           <span className="nx-shx__label">From</span>
-          <p className="nx-shx__value">{from ? from.label : 'The workspace that owns this artifact no longer takes part in the project, so it cannot hand off.'}</p>
+          <p className="nx-shx__value">{from ? from.label : 'The workspace that owns this saved item is no longer part of the project, so it cannot send anything.'}</p>
         </div>
 
         {from && (
@@ -158,7 +158,7 @@ export function SendHandoffSheet({ start, artifacts, onClose }: {
               onChange={(e) => { const v = e.target.value; setState((s) => (s.pending || s.sent ? s : { ...s, toParticipationId: v, error: null })); }}>
               {to.map((c) => <option key={c.participationId} value={c.participationId}>{c.label}</option>)}
             </select>
-            {to.length === 0 && <span className="nx-muted">This project takes part in no other active workspace. Add it to one from the project page first.</span>}
+            {to.length === 0 && <span className="nx-muted">This project is not in any other workspace. Add it to one from the project page first.</span>}
           </label>
         )}
 
@@ -166,11 +166,11 @@ export function SendHandoffSheet({ start, artifacts, onClose }: {
           <fieldset className="nx-shx__field" disabled={pending || done}>
             <legend className="nx-shx__label">Versions ({chosenCount} of at most {SEND_MAX_SUBJECTS})</legend>
             {!subjects.loaded ? (
-              <p className="nx-muted" role="status">Reading versions…</p>
+              <p className="nx-muted" role="status">Reading the versions…</p>
             ) : choices.length === 0 ? (
-              <p className="nx-muted">No ready or active version of this workspace's artifacts can be handed off.</p>
+              <p className="nx-muted">None of this workspace's saved items has a version that is ready or in use, so there is nothing to send yet.</p>
             ) : (
-              <ul className="nx-shx__list" aria-label="Versions to hand off">
+              <ul className="nx-shx__list" aria-label="Versions to send">
                 {choices.map((c) => (
                   <li key={c.versionId}>
                     <label className="nx-shx__choice">
@@ -178,7 +178,7 @@ export function SendHandoffSheet({ start, artifacts, onClose }: {
                         onChange={() => setState((s) => toggleSubject(s, c.versionId))} />
                       <span className="nx-shx__subject">
                         <span>{c.label}</span>
-                        <span className="nx-muted">{c.status} · <span className="nx-id">{c.hash}</span></span>
+                        <span className="nx-muted" title={`Reference ${c.hash}`}>{c.status}</span>
                       </span>
                     </label>
                   </li>
@@ -186,7 +186,7 @@ export function SendHandoffSheet({ start, artifacts, onClose }: {
               </ul>
             )}
             {subjects.error && <p className="nx-muted">{subjects.error}</p>}
-            {capped && <p className="nx-muted">Only the {SUBJECT_CANDIDATE_ARTIFACTS} most recently changed artifacts of this workspace are offered.</p>}
+            {capped && <p className="nx-muted">Only the {SUBJECT_CANDIDATE_ARTIFACTS} saved items changed most recently in this workspace are offered.</p>}
           </fieldset>
         )}
 
@@ -207,7 +207,7 @@ export function SendHandoffSheet({ start, artifacts, onClose }: {
         )}
 
         {from && !pending && !done && blocker && subjects.loaded && <p className="nx-muted nx-shx__why">{blocker}</p>}
-        {pending && <p ref={resultRef} tabIndex={-1} className="nx-shx__status" role="status">Sending the handoff…</p>}
+        {pending && <p ref={resultRef} tabIndex={-1} className="nx-shx__status" role="status">Sending…</p>}
         {!pending && state.sent && <p ref={resultRef} tabIndex={-1} className="nx-shx__status" role="status">{sentText(state.sent.toLabel, state.sent.created)}</p>}
         {!pending && state.error && <p ref={resultRef} tabIndex={-1} className="nx-passport__note" role="alert">{state.error}</p>}
 

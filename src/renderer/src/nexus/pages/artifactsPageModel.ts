@@ -1,4 +1,4 @@
-// Pure: the Artifacts page (pages/ArtifactsPage.tsx). The filters and the
+// Pure: the Saved items page (pages/ArtifactsPage.tsx; route name: artifacts). The filters and the
 // nexus:artifacts:list request they make, the list read state with paging,
 // the rows as people read them, the one line or empty state to show, and the
 // detail read (nexus:artifact:get) with the node the artifact Passport shows.
@@ -72,7 +72,7 @@ export function pagingOf(s: Pick<ArtifactListState, 'truncated' | 'loaded'>, lim
   return clampLimit(limit) < ARTIFACT_LIST_MAX ? 'more' : 'capped';
 }
 
-export const CAPPED_TEXT = `Only the ${ARTIFACT_LIST_MAX} most recently changed artifacts are listed. Narrow the filters to find others.`;
+export const CAPPED_TEXT = `Only the ${ARTIFACT_LIST_MAX} saved items changed most recently are listed. Narrow the filters to find others.`;
 
 // ---------- the list read ----------
 
@@ -137,10 +137,10 @@ export function staleError(s: ArtifactListState): { text: string; retry: boolean
   return s.error !== null && s.rows.length > 0 ? { text: s.error, retry: s.retry } : null;
 }
 
-/** The empty state reads "No artifacts yet. Save a commit or a file from a project's passport." */
-export const EMPTY_TITLE = 'No artifacts yet';
-export const EMPTY_BODY = "Save a commit or a file from a project's passport.";
-export const NO_MATCH_TEXT = 'No artifacts match these filters.';
+/** The empty state says what a saved item is and what to do next. */
+export const EMPTY_TITLE = 'No saved items yet';
+export const EMPTY_BODY = 'Saved items are the things your projects make or keep: notes, builds, suggested changes. Open a project and press "Add a file to saved items" in its details to keep your first one.';
+export const NO_MATCH_TEXT = 'No saved items match these filters.';
 
 // ---------- rows ----------
 
@@ -156,7 +156,7 @@ export interface ArtifactRowView {
   /** The owner workspace's label; "Whole project" for a project-owned artifact. */
   workspace: string;
   hueSlot: number | null;
-  /** "v3, current", "v2 draft", "No versions". */
+  /** "Version 3, in use", "Version 2, draft", "No versions". */
   version: string;
   archived: boolean;
   updatedAt: number;
@@ -169,8 +169,8 @@ export function artifactRow(s: ArtifactSummaryView, projectNames: ReadonlyMap<st
   const name = projectNames.get(a.projectId);
   const ws = a.ownerWorkspaceId ? viewOf(a.ownerWorkspaceId) : null;
   const version = s.current
-    ? `v${s.current.versionNo}, current`
-    : s.latest ? `v${s.latest.versionNo} ${statusLabel(s.latest.status)}` : 'No versions';
+    ? `Version ${s.current.versionNo}, in use`
+    : s.latest ? `Version ${s.latest.versionNo}, ${statusLabel(s.latest.status)}` : 'No versions';
   return {
     id: a.id, name: a.name, kind: kindLabel(a.kind),
     project: name ?? (projectsRead ? REMOVED_PROJECT : ''), projectKnown: name !== undefined,
@@ -207,8 +207,8 @@ export function detailLoading(id: string): ArtifactDetailState {
   return { id, status: 'loading', detail: null, error: null, retry: false };
 }
 
-export const MISSING_TITLE = 'Artifact not found';
-export const MISSING_BODY = 'No artifact with this address exists. It may have been removed, or the link is wrong.';
+export const MISSING_TITLE = 'Saved item not found';
+export const MISSING_BODY = 'We cannot find this saved item. It may have been removed, or the link may be wrong.';
 
 /** The next detail state after a nexus:artifact:get answer for `id`. An answer for another id changes nothing. */
 export function nextDetail(prev: ArtifactDetailState, id: string, r: NexusResult<ArtifactDetail>): ArtifactDetailState {

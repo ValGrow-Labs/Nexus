@@ -98,16 +98,16 @@ test('HM1 inbox and sent are partitioned per workspace', () => {
 test('HM1 groups: the inbox by receiving workspace, sent by sending workspace, registry order; a chosen workspace keeps its own', () => {
   const rows = [handoff(H1, 'sde', 'qa'), handoff(H2, 'qa', 'ml'), handoff(H3, 'sde', 'ml')];
   const inbox = M.handoffGroups(rows, { box: 'inbox', workspaceId: '' });
-  assert.deepEqual(inbox.map((g) => [g.workspaceId, g.title, g.rows.map((h) => h.id)]), [['ml', 'To ML', [H2, H3]], ['qa', 'To QA', [H1]]]);
+  assert.deepEqual(inbox.map((g) => [g.workspaceId, g.title, g.rows.map((h) => h.id)]), [['ml', 'To Machine learning', [H2, H3]], ['qa', 'To Testing', [H1]]]);
   const sent = M.handoffGroups(rows, { box: 'sent', workspaceId: '' });
-  assert.deepEqual(sent.map((g) => [g.title, g.rows.map((h) => h.id)]), [['From SDE', [H1, H3]], ['From QA', [H2]]]);
-  assert.deepEqual(M.handoffGroups(rows, { box: 'inbox', workspaceId: 'qa' }).map((g) => g.title), ['To QA']);
+  assert.deepEqual(sent.map((g) => [g.title, g.rows.map((h) => h.id)]), [['From Software', [H1, H3]], ['From Testing', [H2]]]);
+  assert.deepEqual(M.handoffGroups(rows, { box: 'inbox', workspaceId: 'qa' }).map((g) => g.title), ['To Testing']);
   assert.deepEqual(M.handoffGroups(rows, { box: 'sent', workspaceId: 'ml' }), []);
   const all = M.handoffGroups(rows, { box: 'all', workspaceId: 'qa' });
   assert.deepEqual(all.map((g) => [g.workspaceId, g.rows.map((h) => h.id)]), [[null, [H1, H2]]]);
   // An unknown workspace id shows its id, with no hue, after the registry's.
   const odd = M.handoffGroups([handoff(H1, 'zz-lab', 'qa'), handoff(H2, 'sde', 'zz-lab')], { box: 'inbox', workspaceId: '' });
-  assert.deepEqual(odd.map((g) => [g.title, g.hueSlot]), [['To QA', odd[0].hueSlot], ['To zz-lab', null]]);
+  assert.deepEqual(odd.map((g) => [g.title, g.hueSlot]), [['To Testing', odd[0].hueSlot], ['To zz-lab', null]]);
 });
 
 test('the list request sends only valid keys; the limit is clamped', () => {
@@ -122,7 +122,7 @@ test('the list request sends only valid keys; the limit is clamped', () => {
 test('rows carry labels and words only, never participation or principal ids', () => {
   const r = M.handoffRow(handoff(H1, 'sde', 'qa', { subjectCount: 3 }), new Map([['p1', 'Invoice OCR']]));
   assert.deepEqual(Object.keys(r).sort(), ['changedAt', 'fromHue', 'fromLabel', 'id', 'open', 'project', 'status', 'subjects', 'title', 'toHue', 'toLabel']);
-  assert.equal(r.fromLabel, 'SDE'); assert.equal(r.toLabel, 'QA'); assert.equal(r.subjects, '3 versions'); assert.equal(r.project, 'Invoice OCR');
+  assert.equal(r.fromLabel, 'Software'); assert.equal(r.toLabel, 'Testing'); assert.equal(r.subjects, '3 versions'); assert.equal(r.project, 'Invoice OCR');
   assert.equal(r.status, 'Sent, waiting for an answer'); assert.equal(r.open, true);
   assert.ok(!JSON.stringify(r).includes('PART-'));
   assert.equal(M.handoffRow(handoff(H1, 'sde', 'qa', { subjectCount: 1 }), new Map()).subjects, '1 version');
@@ -199,10 +199,10 @@ test('HM3 "a newer version exists" appears only when newerVersionNo > versionNo'
   assert.equal(M.newerVersionText({ versionNo: 2, newerVersionNo: null }), null);
   assert.equal(M.newerVersionText({ versionNo: 2, newerVersionNo: 2 }), null);
   assert.equal(M.newerVersionText({ versionNo: 2, newerVersionNo: 1 }), null);
-  assert.equal(M.newerVersionText({ versionNo: 2, newerVersionNo: 3 }), 'A newer version exists (version 3).');
+  assert.equal(M.newerVersionText({ versionNo: 2, newerVersionNo: 3 }), 'There is a newer version (version 3).');
   const rows = M.subjectRows([subject(V2, { position: 1, versionNo: 1, newerVersionNo: 4, kind: 'text_file', artifactName: 'Spec', contentHash: 'f'.repeat(64), status: 'deprecated' }), subject(V1, { position: 0 })]);
   assert.deepEqual(rows.map((r) => r.versionId), [V1, V2], 'in position order');
-  assert.deepEqual(rows[1], { versionId: V2, artifactId: A1, label: 'Text file Spec', version: 'Version 1', hash: 'ffffffffffff', status: 'deprecated', newer: 'A newer version exists (version 4).' });
+  assert.deepEqual(rows[1], { versionId: V2, artifactId: A1, label: 'File Spec', version: 'Version 1', hash: 'ffffffffffff', status: 'replaced', newer: 'There is a newer version (version 4).' });
   assert.equal(rows[0].hash, 'git:0123456789ab');
   assert.equal(rows[0].newer, null);
 });
@@ -210,9 +210,9 @@ test('HM3 "a newer version exists" appears only when newerVersionNo > versionNo'
 test('the detail rows: registry labels, words for status, notes, no ids beyond versions and artifacts', () => {
   const h = detail(handoff(H1, 'sde', 'qa', { status: 'declined', note: 'Please check', responseNote: 'Not now', respondedAt: 30 }), [subject(V1)]);
   const r = M.handoffDetailRows(h);
-  assert.deepEqual([r.fromLabel, r.toLabel, r.status, r.note, r.responseNote, r.open], ['SDE', 'QA', 'Declined', 'Please check', 'Not now', false]);
+  assert.deepEqual([r.fromLabel, r.toLabel, r.status, r.note, r.responseNote, r.open], ['Software', 'Testing', 'Declined', 'Please check', 'Not now', false]);
   assert.ok(!JSON.stringify(r).includes('PART-'));
-  assert.equal(M.receiptText('QA'), 'Accepting added a Received item to QA. It holds references to these versions, not copies.');
+  assert.equal(M.receiptText('QA'), 'Accepting added a received item to QA. It points to these versions and does not copy them.');
   assert.equal(M.receiptArtifactId(V5, { ok: true, data: { id: V5, artifactId: A3 } }), A3);
   assert.equal(M.receiptArtifactId(V5, { ok: true, data: { id: V4, artifactId: A3 } }), null);
   assert.equal(M.receiptArtifactId(V5, { ok: true, data: { id: V5, artifactId: '../x' } }), null);
@@ -265,8 +265,8 @@ test('the viewed side: inbox receives, sent sends, a chosen workspace decides, A
   assert.deepEqual(M.detailActions(h, { box: 'all', workspaceId: '' }, true), ['accept', 'decline', 'withdraw']);
   assert.deepEqual(M.detailActions(h, { box: 'inbox', workspaceId: '' }, false), []);
   assert.deepEqual(M.detailActions({ ...h, status: 'accepted' }, { box: 'all', workspaceId: '' }, true), []);
-  assert.equal(M.sideText(['receiving'], 'SDE', 'QA'), 'Answering for QA, the receiving workspace.');
-  assert.equal(M.sideText(['sending'], 'SDE', 'QA'), 'Acting for SDE, the sending workspace.');
+  assert.equal(M.sideText(['receiving'], 'SDE', 'QA'), 'Answering for QA, the workspace that gets it.');
+  assert.equal(M.sideText(['sending'], 'SDE', 'QA'), 'Acting for SDE, the workspace that sent it.');
   assert.equal(M.sideText([], 'SDE', 'QA'), null);
 });
 
@@ -295,11 +295,11 @@ test('answers: decline and withdraw confirm first, one at a time, the note is ch
 
 test('answer copy: labels, pending lines, confirmations, results, failures and reloads', () => {
   assert.deepEqual(['accept', 'decline', 'withdraw'].map((k) => [M.handoffActionLabel(k, false), M.handoffActionLabel(k, true)]),
-    [['Accept', 'Accepting…'], ['Decline', 'Declining…'], ['Withdraw', 'Withdrawing…']]);
+    [['Accept', 'Accepting…'], ['Decline', 'Declining…'], ['Take back', 'Taking back…']]);
   assert.equal(M.handoffPendingText('accept'), 'Accepting the handoff…');
   assert.match(M.handoffConfirmText('decline', 'SDE', 'QA'), /^Decline this handoff from SDE\?/);
-  assert.match(M.handoffConfirmText('withdraw', 'SDE', 'QA'), /^Withdraw this handoff to QA\?/);
-  assert.equal(M.handoffDoneText('accept', 'QA'), 'Accepted. A Received item was added to QA.');
+  assert.match(M.handoffConfirmText('withdraw', 'SDE', 'QA'), /^Take this handoff back from QA\?/);
+  assert.equal(M.handoffDoneText('accept', 'QA'), 'Accepted. A received item was added to QA.');
   assert.equal(M.handoffFailureText(fail('illegal_transition')), M.ALREADY_ANSWERED_TEXT);
   for (const code of ['denied', 'participation_inactive', 'conflict', 'not_found', 'internal']) assert.equal(M.handoffFailureText(fail(code)), errorCopy(code).text, code);
   assert.equal(M.handoffFailureText(fail('platform_unavailable', { reason: 'handoffs_unavailable', subReason: 'failed' })), handoffsNotice('failed'));
@@ -313,13 +313,13 @@ test('answer copy: labels, pending lines, confirmations, results, failures and r
 
 test('HM5 send-sheet choices: to = the other active participations; subjects = the sender\'s candidate and active versions', () => {
   const from = M.fromChoice(IDX, 'p1', P_SDE);
-  assert.deepEqual(from, { participationId: P_SDE, workspaceId: 'sde', label: 'SDE', hueSlot: from.hueSlot });
+  assert.deepEqual(from, { participationId: P_SDE, workspaceId: 'sde', label: 'Software', hueSlot: from.hueSlot });
   assert.equal(M.fromChoice(IDX, 'p1', P_OLD), null, 'a withdrawn owner cannot send');
   assert.equal(M.fromChoice(IDX, 'p1', P_OTHER), null, 'another project\'s participation is not the owner here');
   assert.equal(M.fromChoice(IDX, 'p1', null), null);
   assert.equal(M.fromChoice({ ...IDX, mode: 'legacy' }, 'p1', P_SDE), null);
   const to = M.toChoices(IDX, 'p1', P_SDE);
-  assert.deepEqual(to.map((c) => [c.participationId, c.label]), [[P_ML, 'ML'], [P_QA, 'QA']]);
+  assert.deepEqual(to.map((c) => [c.participationId, c.label]), [[P_ML, 'Machine learning'], [P_QA, 'Testing']]);
   assert.ok(!to.some((c) => c.participationId === P_SDE || c.participationId === P_OLD || c.participationId === P_OTHER));
   assert.deepEqual(M.toChoices({ ...IDX, mode: 'legacy' }, 'p1', P_SDE), []);
 
@@ -329,7 +329,7 @@ test('HM5 send-sheet choices: to = the other active participations; subjects = t
     art(A3, P_SDE, [['01J9ZQ3V4K5M6N7P8Q9R0STVV6', 1, 'active']], { name: 'Archived', status: 'archived' })
   ];
   const subjects = M.subjectChoices(details, 'p1', P_SDE);
-  assert.deepEqual(subjects.map((c) => [c.versionId, c.label, c.status]), [[V3, 'Commit API notes, version 3', 'ready'], [V2, 'Commit API notes, version 2', 'active']]);
+  assert.deepEqual(subjects.map((c) => [c.versionId, c.label, c.status]), [[V3, 'Saved version API notes, version 3', 'ready'], [V2, 'Saved version API notes, version 2', 'in use']]);
   assert.equal(subjects[0].hash, 'git:abababababab');
   assert.deepEqual(M.subjectChoices(details, 'p2', P_SDE), []);
 });
@@ -362,7 +362,7 @@ test('send-sheet validation: a target, 1 to 20 offered versions, a title, an opt
   assert.match(M.sendBlocker({ ...s, title: 'x'.repeat(201) }, subjects, to), /title/);
   assert.match(M.sendBlocker({ ...s, note: 'x'.repeat(2001) }, subjects, to), /note/);
   assert.match(M.sendBlocker({ ...s, toParticipationId: P_SDE }, subjects, to), /Choose the workspace/);
-  assert.match(M.sendBlocker(s, subjects, []), /no other active workspace/);
+  assert.match(M.sendBlocker(s, subjects, []), /not in any other workspace/);
   assert.equal(M.buildSendRequest('p1', P_SDE, { ...s, title: '' }, subjects, to), null);
   // Never more than the service's maximum.
   let full = { ...s, versionIds: Array.from({ length: 20 }, (_, i) => `V${i}`) };
@@ -420,16 +420,16 @@ test('the Passport lists only handoffs that carry a version of this artifact', (
     detail(handoff(H3, 'qa', 'sde', { status: 'accepted' }), [subject(V5, { versionNo: 2 })])
   ], A1);
   assert.deepEqual(rows, [
-    { id: H1, title: 'For review', route: 'SDE to QA', status: 'Sent, waiting for an answer', versions: 'versions 1 and 3' },
-    { id: H3, title: 'Handoff 3', route: 'QA to SDE', status: 'Accepted', versions: 'version 2' }
+    { id: H1, title: 'For review', route: 'Software to Testing', status: 'Sent, waiting for an answer', versions: 'versions 1 and 3' },
+    { id: H3, title: 'Handoff 3', route: 'Testing to Software', status: 'Accepted', versions: 'version 2' }
   ]);
 });
 
 test('the lead says it once', () => {
-  assert.equal(M.HANDOFFS_LEAD, 'Handoffs move work between workspaces of the same project.');
+  assert.equal(M.HANDOFFS_LEAD, 'A handoff passes a saved item to another workspace in the same project.');
   const page = src('pages/HandoffsPage.tsx');
   assert.equal((page.match(/HANDOFFS_LEAD/g) || []).length, 2, 'imported once, rendered once');
-  assert.doesNotMatch(page, /Handoffs move work between/);
+  assert.doesNotMatch(page, /A handoff passes a saved item to another/);
 });
 
 // ---------- source pins (no jsdom) ----------
@@ -455,11 +455,12 @@ test('pin: the page lists through its hook, shows handoffs-off, unavailable, err
 
 test('pin: the detail shows subjects by reference, the answer note, and the receipt link once accepted', () => {
   assert.match(page, /\{rows\.subjects\.map\(\(s\) => \(/);
-  assert.match(page, /\{s\.version\}, \{s\.status\} · <span className="nx-id">\{s\.hash\}<\/span>/);
+  assert.match(page, /<span title=\{`Reference \$\{s\.hash\}`\}>\{s\.version\}, \{s\.status\}<\/span>/);
+  assert.doesNotMatch(page, /<span className="nx-id">\{s\.hash\}/, 'the raw reference is not shown as text');
   assert.match(page, /\{s\.newer && <span className="nx-muted">\{s\.newer\}<\/span>\}/);
   assert.match(page, /<dt>Answer note<\/dt>/);
   assert.match(page, /const receiptId = useReceiptArtifact\(h\.status === 'accepted' \? h\.receiptVersionId : null\);/);
-  assert.match(page, /\{receiptId && <Button icon="artifacts" onClick=\{\(\) => navigate\(\{ name: 'artifacts', id: receiptId \}\)\}>Open the Received item<\/Button>\}/);
+  assert.match(page, /\{receiptId && <Button icon="artifacts" onClick=\{\(\) => navigate\(\{ name: 'artifacts', id: receiptId \}\)\}>Open the received item<\/Button>\}/);
   assert.doesNotMatch(page, /ParticipationId|createdBy|respondedBy|principal|actorId|JSON\.stringify/);
 });
 
@@ -522,8 +523,8 @@ test('pin: the Passport renders Hand off only through canHandOff and onHandOff, 
   assert.match(passport, /const handOff = v !== null && onHandOff !== undefined && ownerRow !== null && canHandOff\(actionsFor\(v, artifact, ownerActive\), canWrite, handoffsAvailable, receiver\);/);
   assert.match(passport, /const receiver = ownerRow !== null && hasReceiver\(idx, project\.id, ownerRow\.id\);/);
   assert.match(passport, /\{handOff && ownerRow && \(/);
-  assert.match(passport, /ariaLabel=\{`Hand off version \$\{v\.versionNo\}`\}/);
-  assert.match(passport, />\s*Hand off…\s*<\/Button>/);
+  assert.match(passport, /ariaLabel=\{`Send version \$\{v\.versionNo\} to another workspace`\}/);
+  assert.match(passport, />\s*Send to another workspace…\s*<\/Button>/);
   assert.match(passport, /const carrying = useArtifactHandoffs\(canWrite, project\.id, node\.artifactId\);/);
   assert.match(passport, /navigate\(\{ name: 'handoffs', id: c\.id \}\)/);
   assert.doesNotMatch(passport, /handoffSend/);
@@ -559,7 +560,7 @@ test('fix 1: every failed Passport handoffs read gives a sentence; "no handoff c
   assert.equal(M.carryingFailureText(fail('platform_unavailable', { reason: 'busy' })), errorCopy('platform_unavailable', 'busy').text);
   assert.match(hooks, /setState\(\{ rows: \[\], loaded: true, ok: false, error: carryingFailureText\(list\), capped: false \}\);/);
   assert.match(hooks, /loaded: true, ok: true, capped: list\.truncated === true,/);
-  assert.match(passport, /carrying\.rows\.length === 0 \? \(carrying\.ok && !carrying\.error && <p className="nx-muted">No handoff carries a version of this artifact\.<\/p>\)/);
+  assert.match(passport, /carrying\.rows\.length === 0 \? \(carrying\.ok && !carrying\.error && <p className="nx-muted">This saved item has not been sent to another workspace\.<\/p>\)/);
 });
 
 test('fix 2: the send sheet checks availability at open only, so a handoffs_unavailable refusal stays on screen', () => {

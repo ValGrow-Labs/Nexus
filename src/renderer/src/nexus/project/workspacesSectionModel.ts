@@ -1,5 +1,5 @@
 // Pure: what the project page's Workspaces section shows and how its two write
-// actions (attach to a workspace, withdraw from one) move through pending,
+// actions (add to a workspace, remove from one) move through pending,
 // success and failure. No React, so tests load it directly.
 import type { NexusFail } from '@shared/nexus/ipc';
 import { activeWorkspacesOf, attachChoices, viewOf, type ParticipationIndex } from '../workspaces/participation';
@@ -70,15 +70,15 @@ export function failed(_s: SectionState, error: string): SectionState {
 }
 
 export const addedMessage = (label: string): string => `Added to ${label}`;
-export const withdrawnMessage = (label: string): string => `Withdrawn from ${label}`;
+export const withdrawnMessage = (label: string): string => `Removed from ${label}`;
 /** The status line while an action runs; focus rests on it so it never falls to the page. */
 export const addingMessage = (label: string): string => `Adding to ${label}…`;
-export const withdrawingMessage = (label: string): string => `Withdrawing from ${label}…`;
-export const confirmQuestion = (label: string): string => `Withdraw from ${label}? Its artifacts stay readable and stop taking new versions.`;
+export const withdrawingMessage = (label: string): string => `Removing from ${label}…`;
+export const confirmQuestion = (label: string): string => `Remove this project from ${label}? Its saved items stay readable, but they will not get new versions.`;
 
-export const OPEN_HANDOFFS_TEXT = 'Answer or withdraw its open handoffs first.';
-export const LIVE_WORK_TEXT = 'Finish or stop its running jobs and agent sessions first.';
-export const PRIMARY_TEXT = 'The primary workspace follows the detected domain, so it cannot be withdrawn.';
+export const OPEN_HANDOFFS_TEXT = 'Answer or take back its open handoffs first.';
+export const LIVE_WORK_TEXT = 'Finish or stop its running tasks and AI helper conversations first.';
+export const PRIMARY_TEXT = 'The main workspace is chosen from what Nexus finds in the project, so it cannot be removed.';
 
 const positive = (v: unknown): boolean => typeof v === 'number' && v > 0;
 

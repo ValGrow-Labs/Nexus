@@ -61,8 +61,8 @@ export function HandoffsPage({ id }: { id: string | null }) {
       </header>
       <p className="nx-hfx__lead">{HANDOFFS_LEAD}</p>
       <PlatformNotice />
-      <div className="nx-toolbar" role="group" aria-label="Choose handoffs">
-        <div className="nx-hfx__boxes" role="group" aria-label="Box">
+      <div className="nx-toolbar" role="group" aria-label="Choose which handoffs to see">
+        <div className="nx-hfx__boxes" role="group" aria-label="Received or sent">
           {HANDOFF_BOXES.map((b: HandoffBox) => (
             <button key={b} type="button" className="nx-btn nx-hfx__box" aria-pressed={view.box === b} onClick={() => set('box', b)}><span>{BOX_LABEL[b]}</span></button>
           ))}
@@ -71,14 +71,14 @@ export function HandoffsPage({ id }: { id: string | null }) {
           <option value="">All workspaces</option>
           {WORKSPACES.map((w) => <option key={w.id} value={w.id}>{w.label}</option>)}
         </select>
-        <select className="nx-input nx-focusable" value={view.status} onChange={(e) => set('status', e.target.value as HandoffView['status'])} aria-label="Status">
-          <option value="">Every status</option>
+        <select className="nx-input nx-focusable" value={view.status} onChange={(e) => set('status', e.target.value as HandoffView['status'])} aria-label="Answer">
+          <option value="">Any answer</option>
           {HANDOFF_STATUSES.map((s) => <option key={s} value={s}>{handoffStatusOption(s)}</option>)}
         </select>
       </div>
       <div className="nx-hfx" data-detail={id ? 'open' : undefined}>
         <section className="nx-hfx__list" aria-label="Handoff list">
-          {notice?.kind === 'loading' && <p className="nx-muted" role="status">Reading handoffs…</p>}
+          {notice?.kind === 'loading' && <p className="nx-muted" role="status">Reading the handoffs…</p>}
           {notice?.kind === 'handoffs-off' && <p className="nx-hfx__off" role="status">{notice.text}</p>}
           {notice?.kind === 'unavailable' && <p className="nx-muted" role="status">{UNAVAILABLE_LIST_TEXT}</p>}
           {notice?.kind === 'error' && (
@@ -89,12 +89,12 @@ export function HandoffsPage({ id }: { id: string | null }) {
           )}
           {notice?.kind === 'empty' && (
             <EmptyState level={2} icon="handoffs" title={EMPTY_TITLE} body={EMPTY_BODY[view.box]}
-              actions={<Button variant="primary" icon="artifacts" onClick={() => navigate({ name: 'artifacts' })}>Open Artifacts</Button>} />
+              actions={<Button variant="primary" icon="artifacts" onClick={() => navigate({ name: 'artifacts' })}>Open saved items</Button>} />
           )}
           {notice?.kind === 'no-match' && (
             <div className="nx-hfx__line" role="status">
               <span>{NO_MATCH_TEXT}</span>
-              <Button variant="quiet" onClick={() => setView({ box: view.box, workspaceId: '', status: '' })}>Show every workspace and status</Button>
+              <Button variant="quiet" onClick={() => setView({ box: view.box, workspaceId: '', status: '' })}>Show every workspace and answer</Button>
             </div>
           )}
           {stale && (
@@ -292,12 +292,12 @@ function HandoffDetailBody({ h, view, projects, projectsRead, back, apply, stale
           {rows.responseNote && <><dt>Answer note</dt><dd className="nx-hfx__text">{rows.responseNote}</dd></>}
         </dl>
         <section>
-          <h3 className="nx-hfx__sub">Versions handed off</h3>
+          <h3 className="nx-hfx__sub">Versions in this handoff</h3>
           <ol className="nx-hfx__subjects">
             {rows.subjects.map((s) => (
               <li key={s.versionId}>
                 <span className="nx-hfx__name">{s.label}</span>
-                <span>{s.version}, {s.status} · <span className="nx-id">{s.hash}</span></span>
+                <span title={`Reference ${s.hash}`}>{s.version}, {s.status}</span>
                 {s.newer && <span className="nx-muted">{s.newer}</span>}
               </li>
             ))}
@@ -305,11 +305,11 @@ function HandoffDetailBody({ h, view, projects, projectsRead, back, apply, stale
         </section>
         {h.status === 'accepted' && (
           <section className="nx-hfx__receipt">
-            <h3 className="nx-hfx__sub">Received</h3>
+            <h3 className="nx-hfx__sub">What was received</h3>
             <p>{receiptText(rows.toLabel)}</p>
             <div className="nx-hfx__bar">
-              {receiptId && <Button icon="artifacts" onClick={() => navigate({ name: 'artifacts', id: receiptId })}>Open the Received item</Button>}
-              {project && <Button icon="projects" onClick={() => navigate({ name: 'project', id: project.id, tool: 'bench' })}>See it on the project spine</Button>}
+              {receiptId && <Button icon="artifacts" onClick={() => navigate({ name: 'artifacts', id: receiptId })}>Open the received item</Button>}
+              {project && <Button icon="projects" onClick={() => navigate({ name: 'project', id: project.id, tool: 'bench' })}>See it on the project timeline</Button>}
             </div>
           </section>
         )}

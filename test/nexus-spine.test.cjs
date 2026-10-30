@@ -44,7 +44,7 @@ test('the source group follows the database primary, not the domain', () => {
   const row = (workspaceId, isPrimary, status = 'active') => ({ id: workspaceId, projectId: 'p', workspaceId, status, isPrimary, source: 'user' });
   const g = buildSpine({ idx: fromRows([row('qa', false), row('dl', true)]), projectId: 'p', git: ready({}), artifacts: [] });
   // The attached qa participation is real, so it has its own (empty) group after the primary (SP3).
-  assert.deepEqual([g.length, g[0].workspaceId, g[0].label, g[0].hueSlot], [2, 'dl', 'DL', 2]);
+  assert.deepEqual([g.length, g[0].workspaceId, g[0].label, g[0].hueSlot], [2, 'dl', 'Deep learning', 2]);
   assert.deepEqual(g[0].nodes.map((n) => n.kind), ['source']);
   const none = buildSpine({ idx: fromRows([row('qa', false)]), projectId: 'p', git: ready({}), artifacts: [] });
   assert.deepEqual(none[0].nodes.map((n) => n.kind), ['source']);
@@ -53,11 +53,11 @@ test('the source group follows the database primary, not the domain', () => {
 
 test('labels describe real state only', () => {
   const [src] = nodes(spine({ domainId: 'ai-ml', git: ready({}) }));
-  assert.equal(nodeLabel(src), 'Repository, branch main, last commit abc1234 Fix totals parser');
+  assert.equal(nodeLabel(src), 'Your project, line of work main, last saved version abc1234 Fix totals parser');
   const [folder] = nodes(spine({ domainId: 'ai-ml', git: { status: 'ready', isRepo: false, branch: null, head: null, changed: [] } }));
-  assert.equal(nodeLabel(folder), 'Project folder, not a git repository');
+  assert.equal(nodeLabel(folder), 'Project folder, not set up with Git');
   const g = spine({ domainId: 'ai-ml', git: ready({ changed: [{ path: 'a', kind: 'modified' }] }) });
-  assert.equal(nodeLabel(nodes(g)[1]), 'Uncommitted changes, 1 file');
+  assert.equal(nodeLabel(nodes(g)[1]), 'Changes not saved yet, 1 file');
 });
 
 const { tabStopId, kindOf } = loadTs('src/renderer/src/nexus/project/spineModel.ts');
@@ -71,9 +71,9 @@ test('tabStopId: selected present, missing, empty', () => {
 test('error state: distinguishable and honest label', () => {
   const [n] = nodes(spine({ domainId: 'ai-ml', git: { status: 'error', message: 'boom' } }));
   assert.equal(n.vcs, 'error');
-  assert.equal(nodeLabel(n), 'Project folder, git status unavailable');
+  assert.equal(nodeLabel(n), 'Project folder, its changes cannot be read');
   const [l] = nodes(spine({ domainId: 'ai-ml', git: { status: 'loading' } }));
-  assert.equal(nodeLabel(l), 'Project folder, reading git status');
+  assert.equal(nodeLabel(l), 'Project folder, reading its changes');
 });
 
 test('kindOf maps porcelain columns', () => {
@@ -102,7 +102,7 @@ const DBX = fromRows([prow('P-SDE', 'sde', true), prow('P-QA', 'qa', false), pro
 test('SP1: no artifacts and no attachments gives exactly the previous output', () => {
   const git = ready({ changed: [{ path: 'a.py', kind: 'modified' }] });
   const g = buildSpine({ idx: legacyIndex([{ id: 'p', domainId: 'ai-ml' }]), projectId: 'p', git, artifacts: [] });
-  assert.deepEqual(g, [{ workspaceId: 'ml', label: 'ML', hueSlot: 1, nodes: [
+  assert.deepEqual(g, [{ workspaceId: 'ml', label: 'Machine learning', hueSlot: 1, nodes: [
     { kind: 'source', id: 'source', vcs: 'git', branch: 'main', head: { shortSha: 'abc1234', subject: 'Fix totals parser' } },
     { kind: 'changes', id: 'changes', fileCount: 1 }
   ] }]);
@@ -126,7 +126,7 @@ test('SP2: artifacts group by owner workspace, primary first; source and changes
 
 test('SP3: an attached participation with no artifacts still shows its label, with no nodes', () => {
   const g = buildSpine({ idx: DBX, projectId: 'p', git: ready({}), artifacts: [] });
-  assert.deepEqual(g.map((x) => [x.workspaceId, x.label, x.nodes.length]), [['sde', 'SDE', 1], ['qa', 'QA', 0]]);
+  assert.deepEqual(g.map((x) => [x.workspaceId, x.label, x.nodes.length]), [['sde', 'Software', 1], ['qa', 'Testing', 0]]);
   assert.ok(g.every((x) => !('muted' in x)), 'active groups are not muted');
 });
 
@@ -134,7 +134,7 @@ test('SP4: a withdrawn participation that owns artifacts gives a muted group lab
   const g = buildSpine({ idx: DBX, projectId: 'p', git: ready({}), artifacts: [summary({ id: 'D1', name: 'Model card', kind: 'text_file', part: 'P-DL', ws: 'dl' })] });
   assert.deepEqual(g.map((x) => [x.workspaceId, x.muted ?? null]), [['sde', null], ['qa', null], ['dl', 'withdrawn']]);
   assert.deepEqual(g[2].nodes.map((n) => n.id), ['artifact:D1']);
-  assert.equal(g[2].label, 'DL');
+  assert.equal(g[2].label, 'Deep learning');
 });
 
 test('SP5: a node shows the current version when there is one, else the latest; archived or versionless artifacts are not shown', () => {
@@ -148,16 +148,16 @@ test('SP5: a node shows the current version when there is one, else the latest; 
   assert.deepEqual(arts.map((n) => [n.artifactId, n.versionNo, n.status, n.isCurrent]), [['C1', 2, 'active', true], ['C2', 4, 'candidate', false]]);
 });
 
-test('SP6: a receipt node has the kind label "Received"', () => {
+test('SP6: a receipt node has the kind label "Received item"', () => {
   const g = buildSpine({ idx: DBX, projectId: 'p', git: ready({}), artifacts: [summary({ id: 'R1', name: 'From SDE', kind: 'handoff_receipt', part: 'P-QA', ws: 'qa', current: { id: 'R1-v1', versionNo: 1 } })] });
   const r = g[1].nodes[0];
-  assert.equal(kindLabel(r.artifactKind), 'Received');
-  assert.equal(nodeLabel(r), 'Received From SDE, version 1, active');
+  assert.equal(kindLabel(r.artifactKind), 'Received item');
+  assert.equal(nodeLabel(r), 'Received item From SDE, version 1, in use');
 });
 
-test('SP7: nodeLabel for an artifact reads "Commit Release, version 2, active"', () => {
+test('SP7: nodeLabel for an artifact reads "Saved version Release, version 2, in use"', () => {
   const g = buildSpine({ idx: DBX, projectId: 'p', git: ready({}), artifacts: [summary({ id: 'X', name: 'Release', current: { id: 'X-v2', versionNo: 2 } })] });
-  assert.equal(nodeLabel(g[0].nodes[1]), 'Commit Release, version 2, active');
+  assert.equal(nodeLabel(g[0].nodes[1]), 'Saved version Release, version 2, in use');
 });
 
 test('artifacts with no owner participation go to the lead group; legacy mode keeps one group', () => {
@@ -177,14 +177,16 @@ const read = (p) => fs.readFileSync(path.join(NEXUS, p), 'utf8');
 
 test('pin: the Spine renders artifact nodes from the model, drafts dashed, status in words, the placeholder only while empty', () => {
   const s = read('project/Spine.tsx');
-  assert.match(s, /\{line\?\.kind === 'empty' && <p className="nx-spine__future">Artifacts this project produces will appear on this line\.<\/p>\}/);
-  assert.equal((s.match(/will appear on this line/g) || []).length, 1, 'the placeholder renders in one branch only');
+  assert.match(s, /\{line\?\.kind === 'empty' && <p className="nx-spine__future">Nothing has been saved yet\. Items your project makes will show up here, in order\.<\/p>\}/);
+  assert.equal((s.match(/will show up here, in order/g) || []).length, 1, 'the placeholder renders in one branch only');
   assert.match(s, /n\.status === 'draft' \? ' nx-node--draft' : ''/);
   assert.match(s, /\{kindLabel\(n\.artifactKind\)\} · \{statusLabel\(n\.status\)\}/);
   assert.match(s, /v\{n\.versionNo\}/);
-  assert.match(s, /g\.muted && <span className="nx-spx-state">\{g\.muted\}<\/span>/);
+  assert.match(s, /g\.muted && <span className="nx-spx-state">\{MUTED_WORD\[g\.muted\]\}<\/span>/);
+  assert.match(s, /\{ withdrawn: 'removed', complete: 'closed' \}/, 'a muted group says removed or closed, never the raw state word');
   // The source and changes nodes render as before.
-  assert.match(s, /\{n\.kind === 'changes' \? 'changes' : n\.vcs === 'git' \? 'repository' : 'folder'\}/);
+  assert.match(s, /\{n\.kind === 'changes' \? 'not saved yet' : n\.vcs === 'git' \? 'your project' : 'folder'\}/);
+  assert.match(s, /aria-label="Project timeline"/, 'the spine is called the timeline for people');
   assert.match(s, /\{n\.kind === 'source' && n\.head && <span className="nx-node__v nx-id">\{n\.head\.shortSha\}<\/span>\}/);
   assert.match(s, /className=\{`nx-node\$\{n\.kind === 'changes' \? ' nx-node--draft' : ''\}`\}/);
 });
@@ -244,7 +246,7 @@ test('spineLine end to end with nextArtifacts: initial, busy, internal, not_foun
 
 test('pin: the Spine draws the loading and error lines, Try again re-runs the read, and a saved node gets focus', () => {
   const s = read('project/Spine.tsx');
-  assert.match(s, /\{line\?\.kind === 'loading' && <p className="nx-spine__future" role="status">Reading artifacts…<\/p>\}/);
+  assert.match(s, /\{line\?\.kind === 'loading' && <p className="nx-spine__future" role="status">Reading your saved items…<\/p>\}/);
   assert.match(s, /line\?\.kind === 'error' && \(\s*<p className="nx-spine__future nx-spx-line" role="status">\s*<span>\{line\.text\}<\/span>/);
   assert.match(s, /\{line\.retry && <button type="button" className="nx-btn nx-btn--quiet" onClick=\{onRetryLine\}><span>Try again<\/span><\/button>\}/);
   assert.match(s, /const el = refs\.current\.get\(focusRequest\);\s*if \(el && el\.isConnected\) \{ el\.focus\(\); onFocused\?\.\(\); \}/);

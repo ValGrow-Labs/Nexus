@@ -17,7 +17,7 @@ import { WORKSPACES } from '../workspaces/registry';
 import { activeWorkspacesOf, viewOf, type ParticipationIndex } from '../workspaces/participation';
 
 /** The page lead, said once. */
-export const HANDOFFS_LEAD = 'Handoffs move work between workspaces of the same project.';
+export const HANDOFFS_LEAD = 'A handoff passes a saved item to another workspace in the same project.';
 
 // ---------- status ----------
 
@@ -27,7 +27,7 @@ const STATUS_TEXT: Record<HandoffStatus, string> = {
   sent: 'Sent, waiting for an answer',
   accepted: 'Accepted',
   declined: 'Declined',
-  withdrawn: 'Withdrawn'
+  withdrawn: 'Taken back'
 };
 
 /** Status is always said in words, never by colour alone; an unknown status reads as its words. */
@@ -46,7 +46,7 @@ export function handoffStatusOption(status: HandoffStatus): string {
 
 export type HandoffBox = 'inbox' | 'sent' | 'all';
 export const HANDOFF_BOXES: readonly HandoffBox[] = Object.freeze(['inbox', 'sent', 'all'] as HandoffBox[]);
-export const BOX_LABEL: Record<HandoffBox, string> = { inbox: 'Inbox', sent: 'Sent', all: 'All' };
+export const BOX_LABEL: Record<HandoffBox, string> = { inbox: 'Received', sent: 'Sent', all: 'All' };
 
 export interface HandoffView {
   box: HandoffBox;
@@ -222,12 +222,12 @@ export type HandoffListNotice =
 
 export const EMPTY_TITLE = 'No handoffs yet';
 export const EMPTY_BODY: Record<HandoffBox, string> = {
-  inbox: 'Nothing has been handed to a workspace yet. Hand off a ready or active version from its artifact passport.',
-  sent: 'No workspace has sent anything yet. Hand off a ready or active version from its artifact passport.',
-  all: 'Hand off a ready or active version from its artifact passport.'
+  inbox: 'Nothing has been sent to a workspace yet. Open a saved item, choose a version that is ready or in use, and press "Send to another workspace".',
+  sent: 'No workspace has sent anything yet. Open a saved item, choose a version that is ready or in use, and press "Send to another workspace".',
+  all: 'Nothing has been sent yet. Open a saved item, choose a version that is ready or in use, and press "Send to another workspace".'
 };
 export const NO_MATCH_TEXT = 'No handoffs match this view.';
-export const UNAVAILABLE_LIST_TEXT = 'Handoffs are read from workspace data, so none can be listed right now.';
+export const UNAVAILABLE_LIST_TEXT = 'Nexus cannot read its saved information right now, so handoffs cannot be listed. Restart the app to try again.';
 
 export function handoffListNotice(s: HandoffListState, v: HandoffView): HandoffListNotice {
   if (!s.loaded) return { kind: 'loading' };
@@ -266,8 +266,8 @@ export function handoffDetailLoading(id: string): HandoffDetailState {
 }
 
 export const MISSING_TITLE = 'Handoff not found';
-export const MISSING_BODY = 'No handoff with this address exists, or it cannot be read here.';
-export const UNAVAILABLE_DETAIL_TEXT = 'Handoffs are read from workspace data, so this one cannot be shown right now.';
+export const MISSING_BODY = 'We cannot find this handoff. It may have been removed, or the link may be wrong.';
+export const UNAVAILABLE_DETAIL_TEXT = 'Nexus cannot read its saved information right now, so this handoff cannot be shown. Restart the app to try again.';
 
 function isDetail(d: unknown, id: string): d is HandoffDetailView {
   const x = d as HandoffDetailView | null;
@@ -303,7 +303,7 @@ export function hashPrefix(hash: string): string {
 
 /** "A newer version exists" only when the artifact has a version after the one sent. */
 export function newerVersionText(s: Pick<HandoffSubjectView, 'versionNo' | 'newerVersionNo'>): string | null {
-  return typeof s.newerVersionNo === 'number' && s.newerVersionNo > s.versionNo ? `A newer version exists (version ${s.newerVersionNo}).` : null;
+  return typeof s.newerVersionNo === 'number' && s.newerVersionNo > s.versionNo ? `There is a newer version (version ${s.newerVersionNo}).` : null;
 }
 
 export interface SubjectRowView {
@@ -360,7 +360,7 @@ export function receiptArtifactId(receiptVersionId: string | null, r: NexusResul
 }
 
 export function receiptText(toLabel: string): string {
-  return `Accepting added a Received item to ${toLabel}. It holds references to these versions, not copies.`;
+  return `Accepting added a received item to ${toLabel}. It points to these versions and does not copy them.`;
 }
 
 // ---------- answers: who may give which ----------
@@ -395,9 +395,9 @@ export function detailActions(h: Pick<HandoffSummaryView, 'fromWorkspaceId' | 't
 
 /** Where the answers come from, said once above them. */
 export function sideText(sides: readonly HandoffSide[], fromLabel: string, toLabel: string): string | null {
-  if (sides.length === 2) return `You can answer for ${toLabel} or withdraw for ${fromLabel}.`;
-  if (sides[0] === 'receiving') return `Answering for ${toLabel}, the receiving workspace.`;
-  if (sides[0] === 'sending') return `Acting for ${fromLabel}, the sending workspace.`;
+  if (sides.length === 2) return `You can answer for ${toLabel} or take it back for ${fromLabel}.`;
+  if (sides[0] === 'receiving') return `Answering for ${toLabel}, the workspace that gets it.`;
+  if (sides[0] === 'sending') return `Acting for ${fromLabel}, the workspace that sent it.`;
   return null;
 }
 
@@ -463,7 +463,7 @@ export function declineNoteArg(note: string): string | undefined {
 const ACTION_TEXT: Record<HandoffActionKind, { idle: string; pending: string }> = {
   accept: { idle: 'Accept', pending: 'Accepting…' },
   decline: { idle: 'Decline', pending: 'Declining…' },
-  withdraw: { idle: 'Withdraw', pending: 'Withdrawing…' }
+  withdraw: { idle: 'Take back', pending: 'Taking back…' }
 };
 
 export function handoffActionLabel(kind: HandoffActionKind, pending: boolean): string {
@@ -474,26 +474,26 @@ export function handoffPendingText(kind: HandoffActionKind): string {
   switch (kind) {
     case 'accept': return 'Accepting the handoff…';
     case 'decline': return 'Declining the handoff…';
-    case 'withdraw': return 'Withdrawing the handoff…';
+    case 'withdraw': return 'Taking the handoff back…';
   }
 }
 
 export function handoffConfirmText(kind: 'decline' | 'withdraw', fromLabel: string, toLabel: string): string {
   return kind === 'decline'
     ? `Decline this handoff from ${fromLabel}? Nothing is added to ${toLabel}, and the answer is final.`
-    : `Withdraw this handoff to ${toLabel}? It can no longer be accepted, and this is final.`;
+    : `Take this handoff back from ${toLabel}? It can no longer be accepted, and this is final.`;
 }
 
 export function handoffDoneText(kind: HandoffActionKind, toLabel: string): string {
   switch (kind) {
-    case 'accept': return `Accepted. A Received item was added to ${toLabel}.`;
+    case 'accept': return `Accepted. A received item was added to ${toLabel}.`;
     case 'decline': return 'Declined. The sender sees the answer.';
-    case 'withdraw': return 'Withdrawn. It can no longer be accepted.';
+    case 'withdraw': return 'Taken back. It can no longer be accepted.';
   }
 }
 
 /** The handoff was answered or withdrawn in the meantime. */
-export const ALREADY_ANSWERED_TEXT = 'This handoff was already answered or withdrawn; it is shown as it is now.';
+export const ALREADY_ANSWERED_TEXT = 'This handoff was already answered or taken back. It is shown the way it is now.';
 
 export function handoffFailureText(r: Pick<NexusFail, 'code' | 'reason' | 'subReason'>): string {
   if (r.code === 'illegal_transition') return ALREADY_ANSWERED_TEXT;
@@ -659,11 +659,11 @@ export function validTitle(title: string): boolean {
 
 /** Why Send is not possible yet, in words; null when the request can be sent. */
 export function sendBlocker(s: SendState, subjects: readonly SubjectChoice[], to: readonly ParticipationChoice[]): string | null {
-  if (to.length === 0) return 'This project takes part in no other active workspace, so there is nowhere to hand off to.';
-  if (!s.toParticipationId || !to.some((c) => c.participationId === s.toParticipationId)) return 'Choose the workspace to hand off to.';
+  if (to.length === 0) return 'This project is not in any other workspace, so there is nowhere to send this. Add the project to another workspace first.';
+  if (!s.toParticipationId || !to.some((c) => c.participationId === s.toParticipationId)) return 'Choose the workspace to send this to.';
   const chosen = offeredIds(s.versionIds, subjects);
-  if (chosen.length === 0) return 'Choose at least one version to hand off.';
-  if (chosen.length > SEND_MAX_SUBJECTS) return `A handoff carries at most ${SEND_MAX_SUBJECTS} versions.`;
+  if (chosen.length === 0) return 'Choose at least one version to send.';
+  if (chosen.length > SEND_MAX_SUBJECTS) return `A handoff can hold at most ${SEND_MAX_SUBJECTS} versions.`;
   if (!validTitle(s.title)) return `Give the handoff a title of 1 to ${TITLE_MAX} characters.`;
   if (!validNote(s.note)) return `The note can be at most ${NOTE_MAX} characters.`;
   return null;
@@ -721,7 +721,7 @@ export interface CarryingRow {
 }
 
 /** The Passport's handoffs line after a failed list read: always a sentence, never "no handoffs". */
-export const CARRYING_UNAVAILABLE_TEXT = 'Handoffs are read from workspace data, so they cannot be listed right now.';
+export const CARRYING_UNAVAILABLE_TEXT = 'Nexus cannot read its saved information right now, so handoffs cannot be listed.';
 export function carryingFailureText(r: Pick<NexusFail, 'code' | 'reason' | 'subReason'>): string {
   const copy = errorCopy(r.code, r.reason, r.subReason);
   return copy.kind === 'unavailable' ? CARRYING_UNAVAILABLE_TEXT : copy.text;

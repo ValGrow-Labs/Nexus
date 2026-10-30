@@ -9,6 +9,7 @@ import type { DomainSpec, StepStatus, SubPhase } from '@shared/nexus/domainSpec'
 import { DELIVERED_SUB_PHASE, isAtOrBefore, isExecutableEndToEnd } from '@shared/nexus/domainSpec';
 import { DOMAINS, getDomain } from '@shared/nexus/domains';
 import { getWorkspace } from './registry';
+import { plainView } from './plainDomainCopy';
 import { stepStateFrom, type StepState } from '@shared/nexus/stepState';
 
 /** The same projection main sends over #22 (nexusIpc/dto.ts domainView), for when that channel has not answered. */
@@ -31,20 +32,20 @@ export function domainViewOf(d: DomainSpec): DomainSpecView {
 
 export const bundledDomainViews = (): DomainSpecView[] => DOMAINS.map(domainViewOf);
 
-/** What a later sub-phase brings, in plain words (the FUTURE line: "Not in this release: arrives with ..."). */
+/** What a later sub-phase brings, in plain words (the FUTURE line: "Coming later: it arrives with ..."). A phase code is never shown. */
 export const ARRIVES_WITH: Readonly<Record<SubPhase, string>> = Object.freeze({
-  B1: 'the platform', B2a: 'execution', B2b: 'AI-assisted changes', B2c: 'QA workflows (B2c)', B3: 'Data Analyst workflows (B3)',
-  B4: 'Data Scientist workflows (B4)', B5: 'ML Engineer workflows (B5)', B6: 'DL Engineer workflows (B6)'
+  B1: 'the basics', B2a: 'running tasks on this computer', B2b: 'changes made by the AI helper', B2c: 'testing workflows', B3: 'data analytics workflows',
+  B4: 'data science workflows', B5: 'machine learning workflows', B6: 'deep learning workflows'
 });
-export const futureLine = (sub: SubPhase): string => `Not in this release: arrives with ${ARRIVES_WITH[sub] ?? sub}`;
-export const NOT_SUPPORTED = 'Not yet a supported workflow';
+export const futureLine = (sub: SubPhase): string => `Coming later: it arrives with ${ARRIVES_WITH[sub] ?? 'a later update'}`;
+export const NOT_SUPPORTED = 'Not available yet';
 
 const STATE_WORD: Record<StepState, string> = {
-  unavailable: 'Not in this release', blocked: 'Needs an earlier step', ready: 'Ready to start', in_progress: 'In progress',
-  // Only a check that runs on a dev deployment waits for the user (stepState): its word says which action.
-  awaiting_check: 'Ready to check — start a preview', checking: 'Checking', done: 'Done', failed: 'Needs attention'
+  unavailable: 'Coming later', blocked: 'Needs an earlier step', ready: 'Ready to start', in_progress: 'In progress',
+  // Only a check that runs on a test run of your app waits for the user (stepState): its word says which action.
+  awaiting_check: 'Ready to check: start a test run of your app', checking: 'Checking', done: 'Done', failed: 'Needs attention'
 };
-const STATUS_WORD: Record<StepStatus, string> = { REAL: 'In this release', PARTIAL: 'In this release, with limits', FUTURE: 'Not in this release' };
+const STATUS_WORD: Record<StepStatus, string> = { REAL: 'Works now', PARTIAL: 'Works now, with limits', FUTURE: 'Coming later' };
 
 /** Records of one project in one domain. Versions are the shown versions of the project's artifacts. */
 export interface RailRecords {
@@ -116,11 +117,13 @@ export function reviewRecorded(records: Pick<RailRecords, 'versions'>): boolean 
 }
 
 /** The rail of one domain; `records` only inside a project (null: no state is claimed). */
-export function railFor(view: DomainSpecView, records: RailRecords | null = null): RailView {
+export function railFor(registryView: DomainSpecView, records: RailRecords | null = null): RailView {
+  // The words a person reads (plainDomainCopy); ids, order and status are the registry's own.
+  const view = plainView(registryView);
   const spec = getDomain(view.id);
   const supported = view.tier === 'first-class' && view.lifecycle.length > 0;
   const availability = !supported ? NOT_SUPPORTED
-    : !isAtOrBefore(view.availableFromSubPhase, view.currentSubPhase) ? `Available from ${view.availableFromSubPhase}; it cannot be added to a project yet` : null;
+    : !isAtOrBefore(view.availableFromSubPhase, view.currentSubPhase) ? 'Coming later: a project cannot take part in it yet' : null;
   // The actions that start a dev deployment: the via of the step done by a healthy deployment record.
   const deploymentActions = view.lifecycle.filter((s) => spec?.lifecycle.find((x) => x.id === s.id && 'record' in x.doneWhen && x.doneWhen.record === 'deployment_healthy'))
     .flatMap((s) => s.actions);
@@ -153,12 +156,12 @@ export function railFor(view: DomainSpecView, records: RailRecords | null = null
         ? `Checking — ${checkingReason(full && 'kind' in full.doneWhen && records.draftPreviews !== undefined ? { liveDeploymentStatuses: records.draftPreviews } : records)}`
         : state ? STATE_WORD[state] : STATUS_WORD[s.status],
       note: future ? futureLine(s.subPhase) : s.scopeNote,
-      when: supported && availability !== null ? `Available from ${s.subPhase}` : null
+      when: supported && availability !== null ? 'Coming later' : null
     };
   });
   const modules = view.modules.map((m) => {
     const delivered = isAtOrBefore(m.subPhase, view.currentSubPhase) && availability === null;
-    return { id: m.id, label: m.label, delivered, note: delivered ? null : `arrives in ${m.subPhase}` };
+    return { id: m.id, label: m.label, delivered, note: delivered ? null : 'coming later' };
   });
   return { domainId: view.id, label: view.label, statusNote: view.statusNote, availability, supported, steps, modules };
 }
@@ -176,19 +179,19 @@ export const isDomainOnly = (id: string): boolean => domainOnlyIds().includes(id
 export function domainOnlyLead(view: DomainSpecView): string {
   const runs = view.lifecycle.filter((s) => s.delivered).length;
   const when = isAtOrBefore(view.availableFromSubPhase, view.currentSubPhase)
-    ? 'A project can take part in it.' : `Available from ${view.availableFromSubPhase}: a project cannot take part in it yet.`;
-  return runs === 0 ? `${when} None of its steps runs in this release, and it offers no actions.`
-    : `${when} ${runs} of its ${view.lifecycle.length} steps run in this release.`;
+    ? 'A project can take part in it.' : 'Coming later: a project cannot take part in it yet.';
+  return runs === 0 ? `${when} None of its steps works yet, and it has no actions.`
+    : `${when} ${runs} of its ${view.lifecycle.length} steps work now.`;
 }
 
 /**
- * Why a "Checking" step is checking, from the live dev deployments: one starting (or a job starting one, before its
- * row exists) reads "the preview is starting"; one that is up and not recorded as answering yet reads "waiting for
- * the preview to answer". The same reason the Spine node and the Folio give ("Checking: the dev deployment is ...").
+ * Why a "Checking" step is checking, from the live test runs of the app: one starting (or a job starting one, before its
+ * row exists) reads "the test run of your app is starting"; one that is up and not recorded as answering yet reads "waiting for
+ * your app to answer". The same reason the Spine node and the Folio give ("Checking: the test run of your app is ...").
  */
 export function checkingReason(r: Pick<RailRecords, 'liveDeploymentStatuses'>): string {
   const st = r.liveDeploymentStatuses ?? [];
-  return st.length === 0 || st.includes('starting') ? 'the preview is starting' : 'waiting for the preview to answer';
+  return st.length === 0 || st.includes('starting') ? 'the test run of your app is starting' : 'waiting for your app to answer';
 }
 
 /** The compact line under a Spine group: counts of the rail's own steps (no other number). */
@@ -200,12 +203,12 @@ export function railSummary(r: RailView): string {
   const attention = inRelease.filter((s) => s.state === 'failed').length;
   const moving = inRelease.filter((s) => s.state === 'in_progress').length;
   const checking = inRelease.filter((s) => s.state === 'checking').length;
-  const parts = [`${done} of ${inRelease.length} steps in this release done`];
+  const parts = [`${done} of ${inRelease.length} steps done`];
   if (attention > 0) parts.push(`${attention} need${attention === 1 ? 's' : ''} attention`);
   if (moving > 0) parts.push(`${moving} in progress`);
   if (checking > 0) parts.push(`${checking} checking`);
   const checkable = inRelease.filter((s) => s.state === 'awaiting_check').length;
   if (checkable > 0) parts.push(`${checkable} ready to check`);
-  if (later > 0) parts.push(`${later} not in this release`);
+  if (later > 0) parts.push(`${later} coming later`);
   return parts.join('; ');
 }

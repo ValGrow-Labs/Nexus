@@ -35,6 +35,8 @@ import { JobLogSheet } from '../runs/JobLogSheet';
 import { ApprovalsSection } from './ApprovalsSection';
 import { AgentPanel } from '../agent/AgentPanel';
 import { RequirementSheet } from './RequirementSheet';
+import { FirstBuildLine } from './FirstBuildLine';
+import { firstBuildLine } from './firstBuildLineModel';
 import { ExecutionUiContext, type ExecutionUi } from './execContext';
 import type { LogRange } from './evidenceModel';
 import { applicationDrafts, checkedVersionIds, railRecordsFor, spineChecks, versionsToRead, withApplicationWords, type SpineGroup, type ValidatorStatuses } from './spineModel';
@@ -167,16 +169,16 @@ export function ProjectBench({ id, tool }: { id: string; tool: ProjectTool }) {
     let alive = true;
     setErr(null);
     window.cth.projectSetActive(id)
-      .then((p) => { if (alive) { if (p) setActiveProject(p); else setErr('The project could not be opened.'); } })
+      .then((p) => { if (alive) { if (p) setActiveProject(p); else setErr('Nexus could not open this project. Press Retry. If it keeps happening, restart the app.'); } })
       .catch((e) => { if (alive) setErr(e instanceof Error ? e.message : String(e)); });
     return () => { alive = false; };
   }, [id, known, active?.id, setActiveProject, attempt]);
 
   if (!known && status === 'error' && projectCount === 0) {
-    return <div className="nx-page"><EmptyState level={1} icon="refresh" title="Couldn't load your projects" body={loadError ?? 'The project list could not be loaded.'} actions={<Button variant="primary" onClick={() => { void reloadProjects(); }}>Retry</Button>} /></div>;
+    return <div className="nx-page"><EmptyState level={1} icon="refresh" title="Couldn't load your projects" body={loadError ?? 'Nexus could not read your list of projects. Press Retry. If it keeps happening, restart the app.'} actions={<Button variant="primary" onClick={() => { void reloadProjects(); }}>Retry</Button>} /></div>;
   }
   if (!known && status !== 'loading') {
-    return <div className="nx-page"><EmptyState level={1} icon="projects" title="That project isn't in your list" body="It may have been removed. Open Projects to pick another."
+    return <div className="nx-page"><EmptyState level={1} icon="projects" title="That project isn't in your list" body="It may have been removed. Open your projects to pick another."
       actions={<Button variant="primary" onClick={() => navigate({ name: 'projects' })}>Back to Projects</Button>} /></div>;
   }
   if (err) {
@@ -265,7 +267,7 @@ function Workbench({ project, tool }: { project: Project; tool: ProjectTool }) {
   const openTerminal = useCallback(() => {
     setNotice(null);
     window.cth.openTerminalAt(project.rootPath)
-      .then((r) => { if (!r.ok) setNotice(r.error ?? 'The terminal could not be opened.'); })
+      .then((r) => { if (!r.ok) setNotice(r.error ?? 'Nexus could not open a terminal here.'); })
       .catch((e) => setNotice(e instanceof Error ? e.message : String(e)));
   }, [project.rootPath]);
   // The sheet's Passport unmounts when the sheet closes, so its own error line
@@ -306,6 +308,8 @@ function Workbench({ project, tool }: { project: Project; tool: ProjectTool }) {
   [versionChecks.words, versionChecks.validators, artifacts, projectDeployments.data, projectJobs.data, draftBuilds]);
   const rails = useGroupRails(project.id, groups, artifacts, versionChecks.validators, draftBuilds);
   const hasSde = (idx.byProject.get(project.id) ?? []).some((r) => r.status === 'active' && r.workspaceId === 'sde');
+  // A brand-new project: the three steps of "Your first build", until it has any suggested changes.
+  const firstLine = firstBuildLine({ hasAiHelper: hasSde, loaded: artifactsLoaded, artifacts });
   const [setupOpen, setSetupOpen] = useState(false);
   const [write, setWrite] = useState<{ workspaceId: string; kind: 'requirement' | 'problem_statement' } | null>(null);
   const [log, setLog] = useState<{ jobId: string; range?: LogRange | null } | null>(null);
@@ -324,9 +328,10 @@ function Workbench({ project, tool }: { project: Project; tool: ProjectTool }) {
       <Spine groups={groups} selectedId={tool === 'completion' || tool === 'runs' ? '' : node.id} onSelect={onSelect}
         line={line} onRetryLine={reloadArtifacts} truncated={artifactsTruncated} focusRequest={focusRequest} onFocused={focused} checks={checks} rails={rails} />
       <div className="nx-xstrip">
+        {firstLine && <FirstBuildLine line={firstLine} onOpen={execUi.openSetup} />}
         <ExecutionNotice availability={availability} onSetup={execUi.openSetup} />
         <ApprovalsSection projectId={project.id} except={hasSde ? ['repo.write_refs'] : []} />
-        {/* B2b: the agent is offered only where SDE takes part: no other domain claims to work yet. */}
+        {/* B2b: the AI helper is offered only where Software takes part: no other workspace claims to work yet. */}
         {hasSde && <AgentPanel projectId={project.id} workspaceId="sde" />}
       </div>
       <div className="nx-bench">

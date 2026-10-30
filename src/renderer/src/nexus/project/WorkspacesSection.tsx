@@ -92,23 +92,23 @@ export function WorkspacesSection({ projectId }: { projectId: string }) {
       <h2 id="nx-pws-title">Workspaces</h2>
       <PlatformNotice />
       <ul className="nx-pws__list">
-        {!hasPrimary && <li className="nx-pws__row"><span className="nx-pws__name">{UNASSIGNED_LABEL}</span><span className="nx-muted">No primary workspace</span></li>}
+        {!hasPrimary && <li className="nx-pws__row"><span className="nx-pws__name">{UNASSIGNED_LABEL}</span><span className="nx-muted">No main workspace</span></li>}
         {rows.map((r) => (
           <li key={r.participationId} className="nx-pws__row">
             <ProvenanceMark slot={r.hueSlot} size={10} />
             <span className="nx-pws__name">{r.label}</span>
-            {r.isPrimary ? <Badge>Primary</Badge> : <Badge>Attached</Badge>}
+            {r.isPrimary ? <Badge>Main</Badge> : <Badge>Added</Badge>}
             {r.canWithdraw && state.confirming !== r.participationId && (
               <span className="nx-pws__act" ref={(el) => { if (el) rowActs.current.set(r.participationId, el); else rowActs.current.delete(r.participationId); }}>
-                <Button variant="quiet" disabled={pending !== null} onClick={() => setState((s) => askConfirm(s, r.participationId))}>Withdraw</Button>
+                <Button variant="quiet" disabled={pending !== null} onClick={() => setState((s) => askConfirm(s, r.participationId))}>Remove</Button>
               </span>
             )}
             {r.canWithdraw && state.confirming === r.participationId && (
-              <div className="nx-pws__confirm" role="group" aria-label={`Withdraw from ${r.label}`} onKeyDown={onConfirmKey(r.participationId)}>
+              <div className="nx-pws__confirm" role="group" aria-label={`Remove from ${r.label}`} onKeyDown={onConfirmKey(r.participationId)}>
                 <p>{confirmQuestion(r.label)}</p>
                 <div className="nx-pws__confirm-actions">
                   <Button variant="primary" disabled={pending !== null} onClick={() => { void withdraw(r.participationId, r.label); }}>
-                    {pending?.kind === 'withdraw' && pending.participationId === r.participationId ? 'Withdrawing…' : 'Withdraw'}
+                    {pending?.kind === 'withdraw' && pending.participationId === r.participationId ? 'Removing…' : 'Remove'}
                   </Button>
                   <button ref={cancelRef} type="button" className="nx-btn" disabled={pending !== null} onClick={() => cancelWithdraw(r.participationId)}><span>Cancel</span></button>
                 </div>
@@ -117,13 +117,13 @@ export function WorkspacesSection({ projectId }: { projectId: string }) {
           </li>
         ))}
       </ul>
-      {hasPrimary && <p className="nx-muted nx-pws__hint">The primary workspace follows the detected domain.</p>}
+      {hasPrimary && <p className="nx-muted nx-pws__hint">Nexus chooses the main workspace from what it finds in your project.</p>}
       {canWrite && options.length > 0 && (
         <div className="nx-pws__add">
           {pending?.kind === 'attach' ? (
             <Button icon="plus" disabled>Adding…</Button>
           ) : (
-            <Popover kind="listbox" label="Workspaces to add" triggerClassName="nx-btn" trigger={<span>Add to workspace</span>}>
+            <Popover kind="listbox" label="Workspaces to add" triggerClassName="nx-btn" trigger={<span>Add to another workspace</span>}>
               {(close) => options.map((o) => (
                 <button key={o.workspaceId} type="button" role="option" tabIndex={-1} aria-selected={false} className="nx-menu__item"
                   disabled={pending !== null} onClick={() => { close(); void attach(o.workspaceId, o.label); }}>

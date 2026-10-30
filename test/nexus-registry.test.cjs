@@ -51,7 +51,10 @@ test('registry: no launcher-scene fields remain', () => {
 });
 
 test('getWorkspace: known id → config, unknown → null', () => {
-  assert.equal(getWorkspace('ml').label, 'ML');
+  // The short names people read are the plain words (the glossary's WORKSPACE_PLAIN_NAMES), never SDE / ML / DL / QA.
+  assert.equal(getWorkspace('ml').label, 'Machine learning');
+  assert.deepEqual(['sde', 'ml', 'dl', 'qa'].map((id) => getWorkspace(id).label), ['Software', 'Machine learning', 'Deep learning', 'Testing']);
+  for (const w of WORKSPACES) assert.doesNotMatch(`${w.label} ${w.name}`, /\b(SDE|ML|DL|QA)\b/, w.id);
   assert.equal(getWorkspace('nope'), null);
   assert.equal(getWorkspace(''), null);
 });

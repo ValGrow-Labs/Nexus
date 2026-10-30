@@ -16,7 +16,7 @@ import { gridMove } from './gridNav';
 import { slugOf, digitIndex } from './wallModel';
 import { TileScene } from './TileScene';
 
-const STATIC_PLACEHOLDER = 'Filter: a kind of work, or a thing like "model"';
+const STATIC_PLACEHOLDER = 'Search: a kind of work, or a word like "model"';
 
 function useReducedMotion(): boolean {
   const q = '(prefers-reduced-motion: reduce)';
@@ -33,10 +33,10 @@ function useTypedPlaceholder(active: boolean): string {
     const iv = setInterval(() => setTick((t) => t + 1), 95);
     return () => clearInterval(iv);
   }, [active]);
-  return active ? `Filter, e.g. "${typewriterText(tick)}"` : STATIC_PLACEHOLDER;
+  return active ? `Search, e.g. "${typewriterText(tick)}"` : STATIC_PLACEHOLDER;
 }
 
-/** The environment picker as an instrument wall: a dense dark console of
+/** The workspace picker as an instrument wall: a dense dark console of
  *  panels, each a live readout of its kind of work, with the selection's
  *  details on a status bar. Keyboard: type to filter, arrows move, 1–9 jump,
  *  Enter opens. */
@@ -95,12 +95,12 @@ export function LauncherPage() {
     <div className="nx-wall">
       <header className="nx-wall__head">
         <div>
-          <p className="nx-wall__kicker">Environments</p>
+          <p className="nx-wall__kicker">Workspaces</p>
           <h1 className="nx-wall__title" tabIndex={-1}>What are you working on?</h1>
         </div>
         <label className="nx-wall__find">
           <span aria-hidden="true">⌕</span>
-          <span className="nx-visually-hidden">Filter environments</span>
+          <span className="nx-visually-hidden">Search workspaces</span>
           <input ref={input} role="combobox" aria-expanded="true" aria-controls={listId} aria-autocomplete="list"
             aria-activedescendant={shown[active] ? optionId(shown[active].id) : undefined}
             value={query} onChange={(e) => onQuery(e.target.value)} onKeyDown={onKey}
@@ -110,7 +110,7 @@ export function LauncherPage() {
         </label>
       </header>
 
-      <div ref={grid} id={listId} role="listbox" aria-label="Environments" className="nx-wall__grid">
+      <div ref={grid} id={listId} role="listbox" aria-label="Workspaces" className="nx-wall__grid">
         {shown.map((e, i) => {
           const ws = getWorkspace(e.id);
           const count = ws ? projectsInWorkspace(idx, projects, ws.id).length : 0;
@@ -121,8 +121,8 @@ export function LauncherPage() {
               onMouseEnter={() => setActive(i)} onClick={() => open(e.id)}>
               <div className="nx-panel__head">
                 <i className="nx-panel__led" aria-hidden="true" />
-                <b>~/{slugOf(e.name)}</b>
-                <span className="nx-panel__stat">{count ? `${count} project${count === 1 ? '' : 's'}` : 'idle'}</span>
+                <b>{slugOf(e.name)}</b>
+                <span className="nx-panel__stat">{count ? `${count} project${count === 1 ? '' : 's'}` : 'no projects'}</span>
                 <kbd aria-hidden="true">{i + 1 <= 9 ? i + 1 : ''}</kbd>
               </div>
               <div className="nx-panel__body"><TileScene id={e.id} /></div>
@@ -134,7 +134,7 @@ export function LauncherPage() {
           );
         })}
       </div>
-      {shown.length === 0 && <p className="nx-wall__none" role="status">No environment matches "{query.trim()}". Press Escape to see all.</p>}
+      {shown.length === 0 && <p className="nx-wall__none" role="status">No workspace matches "{query.trim()}". Press Escape to see them all.</p>}
 
       {sel && (
         <footer className="nx-wall__bar nx-prov" style={provenanceStyle(sel.hueSlot)} aria-live="polite">

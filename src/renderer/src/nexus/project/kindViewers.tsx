@@ -74,7 +74,7 @@ function Rows({ versionId, part, title, empty }: { versionId: string; part: Prev
         </ul>
       )}
       {total !== null && <p className="nx-muted">{rows.length} of {total} shown.</p>}
-      {p.more && <Button variant="quiet" onClick={p.more}>Load more</Button>}
+      {p.more && <Button variant="quiet" onClick={p.more}>Show more</Button>}
     </section>
   );
 }
@@ -108,7 +108,7 @@ function Structured({ version, kind }: { version: VersionView; kind: 'requiremen
         <h2>Requirement</h2>
         {typeof j.title === 'string' && <p className="nx-xv__title">{j.title}</p>}
         {typeof j.body === 'string' && <p className="nx-xv__body">{j.body}</p>}
-        <h2>Acceptance criteria</h2>
+        <h2>How you will know it works</h2>
         <ol className="nx-xv__rows">{criteria.map((x, i) => <li key={String(x.id ?? i)}><span className="nx-id">{String(x.id ?? '')}</span> <span>{String(x.text ?? '')}</span></li>)}</ol>
       </section>
     );
@@ -119,8 +119,8 @@ function Structured({ version, kind }: { version: VersionView; kind: 'requiremen
       {typeof j.question === 'string' && <p className="nx-xv__title">{j.question}</p>}
       {typeof j.context === 'string' && <p className="nx-xv__body">{j.context}</p>}
       {typeof j.audience === 'string' && <p className="nx-muted">For: {j.audience}</p>}
-      {list(j.successCriteria).length > 0 && <><h2>Success criteria</h2><ul className="nx-xv__rows">{list(j.successCriteria).map((x, i) => <li key={`${i}:${x}`}>{x}</li>)}</ul></>}
-      {list(j.constraints).length > 0 && <><h2>Constraints</h2><ul className="nx-xv__rows">{list(j.constraints).map((x, i) => <li key={`${i}:${x}`}>{x}</li>)}</ul></>}
+      {list(j.successCriteria).length > 0 && <><h2>What a good answer looks like</h2><ul className="nx-xv__rows">{list(j.successCriteria).map((x, i) => <li key={`${i}:${x}`}>{x}</li>)}</ul></>}
+      {list(j.constraints).length > 0 && <><h2>Limits to keep in mind</h2><ul className="nx-xv__rows">{list(j.constraints).map((x, i) => <li key={`${i}:${x}`}>{x}</li>)}</ul></>}
     </section>
   );
 }
@@ -136,7 +136,7 @@ function DiagnosticReport({ version }: { version: VersionView }) {
       <section>
         <h2>Report</h2>
         <p className="nx-muted">{partialReportNote(c.readBytes, c.totalBytes)}</p>
-        <Button variant="quiet" onClick={c.more}>Load more</Button>
+        <Button variant="quiet" onClick={c.more}>Show more</Button>
       </section>
     );
   }
@@ -148,7 +148,7 @@ function DiagnosticReport({ version }: { version: VersionView }) {
   return (
     <section>
       <h2>Report</h2>
-      {facts.length === 0 ? <p className="nx-muted">The report holds no fact.</p> : (
+      {facts.length === 0 ? <p className="nx-muted">The report has no findings yet.</p> : (
         <dl className="nx-xe__facts">{facts.map((f, i) => <div key={`${f.name}:${i}`}><dt>{f.name}</dt><dd>{f.value} <span className="nx-muted">({f.source})</span></dd></div>)}</dl>
       )}
       {ui && ranges.length > 0 && (
@@ -163,7 +163,7 @@ function DiagnosticReport({ version }: { version: VersionView }) {
 function Repository({ version }: { version: VersionView }) {
   const c = useContent(version.id);
   if (!c.loaded || !c.text) return null;
-  return <section><h2>Snapshot</h2><pre className="nx-xv__text">{c.text}</pre></section>;
+  return <section><h2>Starting point</h2><pre className="nx-xv__text">{c.text}</pre></section>;
 }
 
 /** What a version holds, by kind: a change made by the agent (diff and decisions), a test suite's discovered tests and JUnit table (failures first), a build's
@@ -171,10 +171,10 @@ function Repository({ version }: { version: VersionView }) {
  *  a repository snapshot. Other kinds keep the Passport's own content line. */
 export function KindViewer({ kind, version }: { kind: string; version: VersionView }) {
   switch (kind) {
-    case 'test_suite': return <><Rows versionId={version.id} part="junit_summary" title="Test results" empty="No test result is recorded yet." />
-      <Rows versionId={version.id} part="discovery" title="Discovered tests" empty="No test was discovered." /></>;
-    case 'build': return <Rows versionId={version.id} part="manifest" title="Build output" empty="The build recorded no file." />;
-    case 'application': return <Rows versionId={version.id} part="manifest" title="Application manifest" empty="The manifest lists nothing." />;
+    case 'test_suite': return <><Rows versionId={version.id} part="junit_summary" title="Test results" empty="No test results are saved yet." />
+      <Rows versionId={version.id} part="discovery" title="Tests Nexus found" empty="Nexus did not find any tests." /></>;
+    case 'build': return <Rows versionId={version.id} part="manifest" title="What the build made" empty="The build did not save any files." />;
+    case 'application': return <Rows versionId={version.id} part="manifest" title="App settings" empty="The settings file lists nothing." />;
     case 'diagnostic_report': return <DiagnosticReport version={version} />;
     case 'requirement': case 'problem_statement': return <Structured version={version} kind={kind} />;
     case 'repository': return <Repository version={version} />;

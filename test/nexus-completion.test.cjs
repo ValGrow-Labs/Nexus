@@ -20,10 +20,11 @@ test('completion copy never claims anything is complete or verified', () => {
   const c = completionCopy({ domainLabel: 'Software engineering' });
   const all = [c.title, c.badge, c.lead, c.planned, c.detail, ...c.facts.map((f) => `${f.label} ${f.value}`)].join(' ');
   assert.doesNotMatch(all, /\b(completed?|verified|progress|tests? pass(ed)?|confidence)\b|\d+\s*%/i);
-  // C9: nothing real backs completion in B1, so the badge names no phase.
-  assert.equal(c.badge, 'Planned');
+  // C9: nothing real backs the checklist yet, so the badge says it comes later and names no phase.
+  assert.equal(c.badge, 'Coming later');
+  assert.equal(c.title, 'Checklist', 'the tool is called Checklist for people (the route id stays completion)');
   assert.doesNotMatch(all, /\bB\d\b|phase B/);
-  assert.deepEqual(completionCopy({}).facts, [{ label: 'Domain', value: 'Unassigned' }]);
+  assert.deepEqual(completionCopy({}).facts, [{ label: 'Workspace', value: 'Unassigned' }]);
 });
 
 test('no legacy plan execution path survives (O.9 #5)', () => {

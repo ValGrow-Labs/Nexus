@@ -1,4 +1,4 @@
-/** Helpers for the instrument wall (the environment picker at #/browse). */
+/** Helpers for the instrument wall (the workspace picker at #/browse). */
 
 /** "UI / UX Design" → "ui-ux-design": the path shown in a panel header. */
 export function slugOf(name: string): string {

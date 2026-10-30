@@ -3,9 +3,9 @@ import type { NexusIconName } from '../iconNames';
 export interface PlannedContent { title: string; icon: NexusIconName; what: string; fits: string; today: string; todayAction: 'files' | 'projects' | 'assistant' | 'agents' }
 export const PLANNED: Record<'deployments', PlannedContent> = {
   deployments: {
-    title: 'Deployments', icon: 'deployments',
-    what: 'Build, run and publish what you made, with environments, logs, URLs and rollback.',
-    fits: 'Deployment is the last step of the loop: work, artifact, handoff, app, deploy.',
-    today: 'Your agents can run build and test commands inside a project.', todayAction: 'agents'
+    title: 'Publishing', icon: 'deployments',
+    what: 'Build, run and publish what you made, see how it is doing, and go back to an earlier version if something goes wrong.',
+    fits: 'Publishing is the last step: you do the work, save the result, hand it on, make an app, then publish it.',
+    today: 'The AI helper can build and test your project in a safe space. You can also try your app on this computer.', todayAction: 'agents'
   }
 };

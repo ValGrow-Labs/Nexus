@@ -117,7 +117,7 @@ test('HA1 no domain is ever called complete; FUTURE steps never carry a state', 
       for (const t of railTexts(r)) assert.doesNotMatch(t, /\bcomplete(d)?\b|finished|end to end/i, `${v.id}: ${t}`);
       for (const s of r.steps.filter((x) => x.future)) {
         assert.ok(s.state === null || s.state === 'unavailable', `${v.id}/${s.id}`);
-        assert.equal(s.word, 'Not in this release');
+        assert.equal(s.word, 'Coming later');
       }
     }
   }
@@ -174,10 +174,10 @@ test('HA1 (final review C6a) no B2a activity sentence or job-run headline calls 
   // The sentences really read the details (the DTO keeps them): answers differ, and recovery decisions keep their words.
   const say = (action, details) => ACT.activityText(DTO.activityView(entry(action, details)), ACT_CTX);
   assert.notEqual(say('approval.respond', { reason: 'egress.deps', decision: 'once' }), say('approval.respond', { reason: 'egress.deps', decision: 'deny' }));
-  assert.match(say('exec.recover', { decision: 'fail', status: 'oom' }), /^Job failed/);
+  assert.match(say('exec.recover', { decision: 'fail', status: 'oom' }), /^Task failed/);
   assert.match(say('exec.recover', { decision: 'interrupt' }), /interrupted/);
-  assert.equal(say('exec.recover', { decision: 'brand_new' }), 'Restart recovery recorded a decision');
-  assert.equal(say('job.transition', { to: 'completed' }), 'Job ran; its checks give the result');
+  assert.equal(say('exec.recover', { decision: 'brand_new' }), 'After a restart, Nexus recorded what to do with a task');
+  assert.equal(say('job.transition', { to: 'completed' }), 'Task ran; its checks give the result');
   for (const t of texts) assert.deepEqual(scanText(t, true), [], t);
 
   // Every headline, for every kind of run, with and without a sourced reason: headline, word and stage labels.

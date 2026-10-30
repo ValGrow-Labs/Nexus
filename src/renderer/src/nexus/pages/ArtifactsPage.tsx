@@ -22,9 +22,9 @@ import {
   detailNode, listNotice, pagingOf, projectChoices, sortedRows, staleError, type ArtifactFilters, type ArtifactSort
 } from './artifactsPageModel';
 
-const UNAVAILABLE_DETAIL_TEXT = 'Artifact details are read from workspace data, so they cannot be shown right now.';
+const UNAVAILABLE_DETAIL_TEXT = 'Nexus cannot read its saved information right now, so this saved item cannot be shown. Restart the app to try again.';
 
-/** The Artifacts page: every artifact the person may read (nexus:artifacts:list) with filters for project,
+/** The Saved items page: every saved item the person may read (nexus:artifacts:list) with filters for project,
  *  workspace, kind and status, and, at `#/artifacts/<id>`, a detail pane that reuses the artifact Passport
  *  (its version actions render only while platform writes are on). Nothing is shown that the platform did not
  *  return: no artifacts gives an honest empty state, an unavailable platform the platform notice. */
@@ -56,10 +56,10 @@ export function ArtifactsPage({ id }: { id: string | null }) {
     <div className="nx-page">
       <header className="nx-pagehead">
         <span className="nx-pagehead__icon"><Icon name="artifacts" size={20} /></span>
-        <h1 tabIndex={-1}>Artifacts</h1>
+        <h1 tabIndex={-1}>Saved items</h1>
       </header>
       <PlatformNotice />
-      <div className="nx-toolbar" role="group" aria-label="Filter artifacts">
+      <div className="nx-toolbar" role="group" aria-label="Filter saved items">
         <select className="nx-input nx-focusable" value={filters.projectId} onChange={(e) => set('projectId', e.target.value)} aria-label="Project">
           <option value="">All projects</option>
           {projectChoices(projects).map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
@@ -68,13 +68,13 @@ export function ArtifactsPage({ id }: { id: string | null }) {
           <option value="">All workspaces</option>
           {WORKSPACES.map((w) => <option key={w.id} value={w.id}>{w.label}</option>)}
         </select>
-        <select className="nx-input nx-focusable" value={filters.kind} onChange={(e) => set('kind', e.target.value)} aria-label="Kind">
-          <option value="">All kinds</option>
+        <select className="nx-input nx-focusable" value={filters.kind} onChange={(e) => set('kind', e.target.value)} aria-label="Type">
+          <option value="">All types</option>
           {ARTIFACT_KINDS.map((k) => <option key={k} value={k}>{kindLabel(k)}</option>)}
         </select>
-        <select className="nx-input nx-focusable" value={filters.status} onChange={(e) => set('status', e.target.value as ArtifactFilters['status'])} aria-label="Status">
-          <option value="">Active and archived</option>
-          <option value="active">Active</option>
+        <select className="nx-input nx-focusable" value={filters.status} onChange={(e) => set('status', e.target.value as ArtifactFilters['status'])} aria-label="Archived or not">
+          <option value="">Archived or not</option>
+          <option value="active">Not archived</option>
           <option value="archived">Archived</option>
         </select>
         <select className="nx-input nx-focusable" value={filters.sort} onChange={(e) => set('sort', e.target.value as ArtifactSort)} aria-label="Sort">
@@ -83,8 +83,8 @@ export function ArtifactsPage({ id }: { id: string | null }) {
         </select>
       </div>
       <div className="nx-afx" data-detail={id ? 'open' : undefined}>
-        <section className="nx-afx__list" aria-label="Artifact list">
-          {notice?.kind === 'loading' && <p className="nx-muted" role="status">Reading artifacts…</p>}
+        <section className="nx-afx__list" aria-label="List of saved items">
+          {notice?.kind === 'loading' && <p className="nx-muted" role="status">Reading your saved items…</p>}
           {/* While the platform is off the PlatformNotice above says why; the list adds nothing (notice kind 'unavailable'). */}
           {notice?.kind === 'error' && (
             <div className="nx-afx__line" role="alert">
@@ -94,7 +94,7 @@ export function ArtifactsPage({ id }: { id: string | null }) {
           )}
           {notice?.kind === 'empty' && (
             <EmptyState level={2} icon="artifacts" title={EMPTY_TITLE} body={EMPTY_BODY}
-              actions={<Button variant="primary" icon="projects" onClick={() => navigate({ name: 'projects' })}>Open Projects</Button>} />
+              actions={<Button variant="primary" icon="projects" onClick={() => navigate({ name: 'projects' })}>Open your projects</Button>} />
           )}
           {notice?.kind === 'no-match' && (
             <div className="nx-afx__line" role="status">
@@ -131,7 +131,7 @@ export function ArtifactsPage({ id }: { id: string | null }) {
           {rows.length > 0 && (
             <div className="nx-afx__foot">
               <p ref={countRef} tabIndex={-1} className="nx-muted nx-afx__count" role="status">
-                {list.loading ? 'Reading artifacts…' : `${rows.length} ${rows.length === 1 ? 'artifact' : 'artifacts'}${list.truncated ? ' shown' : ''}`}
+                {list.loading ? 'Reading your saved items…' : `${rows.length} ${rows.length === 1 ? 'saved item' : 'saved items'}${list.truncated ? ' shown' : ''}`}
               </p>
               {paging === 'more' && <Button onClick={showMore}>{list.loading && moreAsked ? 'Showing more…' : 'Show more'}</Button>}
               {paging === 'capped' && <p className="nx-muted">{CAPPED_TEXT}</p>}
@@ -139,7 +139,7 @@ export function ArtifactsPage({ id }: { id: string | null }) {
           )}
         </section>
         {id && (
-          <section className="nx-afx__detail" aria-label="Artifact details">
+          <section className="nx-afx__detail" aria-label="Saved item details">
             <ArtifactDetailPane key={id} id={id} projects={projects} projectsRead={projectsRead} />
           </section>
         )}
@@ -152,14 +152,14 @@ type P = { id: string; name: string; rootPath: string };
 
 function ArtifactDetailPane({ id, projects, projectsRead }: { id: string; projects: P[]; projectsRead: boolean }) {
   const d = useArtifactDetail(id);
-  const back = <Button variant="quiet" icon="chevronLeft" onClick={() => navigate({ name: 'artifacts' })}>All artifacts</Button>;
+  const back = <Button variant="quiet" icon="chevronLeft" onClick={() => navigate({ name: 'artifacts' })}>All saved items</Button>;
   if (d.status === 'ready' && d.detail) {
     return <ArtifactDetailBody detail={d.detail} projects={projects} projectsRead={projectsRead} back={back} stale={d.error ? { text: d.error, retry: d.retry, reload: d.reload } : null} />;
   }
   return (
     <div className="nx-afx__pane">
       <div className="nx-afx__bar">{back}</div>
-      {d.status === 'loading' && <p className="nx-muted" role="status">Reading the artifact…</p>}
+      {d.status === 'loading' && <p className="nx-muted" role="status">Reading this saved item…</p>}
       {d.status === 'missing' && <EmptyState level={2} icon="artifacts" title={MISSING_TITLE} body={MISSING_BODY} />}
       {d.status === 'unavailable' && <p className="nx-muted" role="status">{UNAVAILABLE_DETAIL_TEXT}</p>}
       {d.status === 'error' && (
@@ -182,7 +182,7 @@ function ArtifactDetailBody({ detail, projects, projectsRead, back, stale }: {
   const summaries = useProjectArtifacts(projectId);
   const node = useMemo(() => detailNode(detail), [detail]);
   const canWrite = usePlatform(selectCanWrite);
-  // The send sheet opens from the Passport's "Hand off…" and is hosted here.
+  // The send sheet opens from the details' "Send to another workspace…" and is hosted here.
   const [handoffStart, setHandoffStart] = useState<HandoffStart | null>(null);
   useEffect(() => { if (!canWrite) setHandoffStart(null); }, [canWrite]);
   return (

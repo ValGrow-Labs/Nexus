@@ -1,5 +1,5 @@
-// A registry domain that has no workspace yet (Data Scientist in B2a; its workspace row arrives with B4): an honest
-// page that draws the domain's lifecycle rail from the registry. It offers no action, no way to create a project and no
+// A registry domain that has no workspace yet (data science): an honest
+// page that draws the domain's steps from the registry. It offers no action, no way to create a project and no
 // project list, and it writes nothing: no workspace row is created for it.
 import { useDomains } from '../data/useExecution';
 import { navigate } from '../router/useRoute';
@@ -7,13 +7,15 @@ import { Button } from '../ui/Button';
 import { EmptyState } from '../ui/EmptyState';
 import { domainOnlyLead, railFor } from '../workspaces/lifecycleModel';
 import { LifecycleRail } from '../workspaces/LifecycleRail';
+import { plainView } from '../workspaces/plainDomainCopy';
 
 export function DomainPage({ id }: { id: string }) {
-  const view = useDomains().list.find((d) => d.id === id) ?? null;
+  const raw = useDomains().list.find((d) => d.id === id) ?? null;
+  const view = raw ? plainView(raw) : null;
   if (!view) {
     return (
       <div className="nx-page">
-        <EmptyState level={1} icon="close" title="Not found" body="That domain is not in this build's registry."
+        <EmptyState level={1} icon="close" title="We can't find that page" body="That workspace is not part of this version of Nexus."
           actions={<Button variant="primary" onClick={() => navigate({ name: 'workspaces' })}>Go to Workspaces</Button>} />
       </div>
     );
@@ -29,7 +31,7 @@ export function DomainPage({ id }: { id: string }) {
           <Button onClick={() => navigate({ name: 'workspaces' })}>Back to Workspaces</Button>
         </div>
       </header>
-      <p className="nx-muted">What it is planned for: {view.description}</p>
+      <p className="nx-muted">What it will be for: {view.description}</p>
       <LifecycleRail rail={railFor(view)} />
     </div>
   );

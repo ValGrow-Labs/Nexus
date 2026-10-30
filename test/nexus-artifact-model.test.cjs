@@ -56,12 +56,21 @@ test("AM4: Promote and Roll back pass the artifact's currentVersionId as expecte
 });
 
 test('labels: kinds and statuses in words', () => {
-  assert.equal(A.kindLabel('git_commit'), 'Commit');
-  assert.equal(A.kindLabel('text_file'), 'Text file');
-  assert.equal(A.kindLabel('handoff_receipt'), 'Received');
-  assert.equal(A.kindLabel('change_set'), 'Change set');
-  assert.deepEqual(['draft', 'candidate', 'active', 'failed', 'deprecated'].map(A.statusLabel), ['draft', 'ready', 'active', 'failed', 'deprecated']);
-  assert.equal(A.relationLabel('derived_from'), 'derived from');
+  // The glossary names: a commit is a saved version, a change set is suggested changes, a repository snapshot is a starting point.
+  assert.equal(A.kindLabel('git_commit'), 'Saved version');
+  assert.equal(A.kindLabel('text_file'), 'File');
+  assert.equal(A.kindLabel('handoff_receipt'), 'Received item');
+  assert.equal(A.kindLabel('change_set'), 'Suggested changes');
+  assert.equal(A.kindLabel('repository'), 'Starting point');
+  assert.equal(A.kindLabel('diagnostic_report'), 'Problem report');
+  // A version is a draft, ready, in use (the one the project uses now) or replaced.
+  assert.deepEqual(['draft', 'candidate', 'active', 'failed', 'deprecated'].map(A.statusLabel), ['draft', 'ready', 'in use', 'failed', 'replaced']);
+  assert.equal(A.relationLabel('derived_from'), 'made from');
+  assert.equal(A.relationLabel('found_in'), 'found in', 'a link without a plain word reads as its own words');
+  // Software keeps the plain names whatever its registry vocabulary says; another workspace keeps its own words.
+  assert.equal(A.kindLabelIn('change_set', 'sde'), 'Suggested changes');
+  assert.equal(A.kindLabelIn('repository', 'sde'), 'Starting point');
+  assert.equal(A.kindLabelIn('problem_statement', 'data'), 'Business question');
 });
 
 // ---------- the project's summaries ----------
@@ -123,18 +132,18 @@ const input = (o = {}) => ({
 test('passport: the artifact, its versions newest first with statuses, the current one marked', () => {
   const v = A.artifactPassportView(input());
   assert.equal(v.title, 'Release');
-  assert.equal(v.kind, 'Commit');
+  assert.equal(v.kind, 'Saved version');
   const rows = Object.fromEntries(v.rows.map((r) => [r.label, r.value]));
-  assert.deepEqual(rows, { Kind: 'Commit', Workspace: 'SDE', 'Current version': 'Version 2', Versions: '3' });
-  assert.deepEqual(v.versions.map((x) => [x.versionNo, x.status, x.current, x.shown]), [[3, 'draft', false, false], [2, 'active', true, true], [1, 'deprecated', false, false]]);
+  assert.deepEqual(rows, { Type: 'Saved version', Workspace: 'SDE', 'Version in use': 'Version 2', Versions: '3' });
+  assert.deepEqual(v.versions.map((x) => [x.versionNo, x.status, x.current, x.shown]), [[3, 'draft', false, false], [2, 'in use', true, true], [1, 'replaced', false, false]]);
 });
 
 test('passport: git versions show the full SHA; the subject only when the project git log knows the commit', () => {
   const v = A.artifactPassportView(input());
   const byNo = Object.fromEntries(v.versions.map((x) => [x.versionNo, x]));
-  assert.equal(byNo[2].content, `Commit ${SHA}`);
+  assert.equal(byNo[2].content, `Saved version ${SHA}`);
   assert.equal(byNo[2].subject, 'Ship the release');
-  assert.equal(byNo[1].content, `Commit ${OTHER}`);
+  assert.equal(byNo[1].content, `Saved version ${OTHER}`);
   assert.equal(byNo[1].subject, null, 'not in the allow-list: no subject');
   assert.equal(byNo[3].content, 'File docs/notes.md');
   assert.equal(byNo[3].subject, null);
@@ -150,8 +159,8 @@ test('passport: lineage as sources and uses, with truncated; names only from the
   assert.deepEqual(v.upstream, []);
   assert.equal(v.upstreamTruncated, false);
   assert.deepEqual(v.downstream, [
-    { versionId: 'NV1', label: 'Text file Notes, version 1', relation: 'derived from', status: 'ready' },
-    { versionId: 'RV1', label: 'Received, version 1', relation: 'depends on', status: 'active' }
+    { versionId: 'NV1', label: 'File Notes, version 1', relation: 'made from', status: 'ready' },
+    { versionId: 'RV1', label: 'Received item, version 1', relation: 'needs', status: 'in use' }
   ]);
   assert.equal(v.downstreamTruncated, true);
   const unread = A.artifactPassportView(input({ up: null, down: null }));
@@ -163,7 +172,7 @@ test('passport: a withdrawn owner and an archived artifact say so in words; no p
   const v = A.artifactPassportView(input({ detail: archived, owner: { label: 'QA', active: false } }));
   const rows = Object.fromEntries(v.rows.map((r) => [r.label, r.value]));
   assert.equal(rows.Workspace, 'QA (withdrawn)');
-  assert.equal(rows['Current version'], 'None yet');
+  assert.equal(rows['Version in use'], 'None yet');
   assert.equal(rows.Status, 'Archived');
   const text = JSON.stringify(A.artifactPassportView(input()));
   for (const leak of ['PART-1', 'user:', 'participationId', 'createdBy', 'producedByAction', 'user.save_commit']) assert.ok(!text.includes(leak), leak);
@@ -220,7 +229,7 @@ test('save: the name is prefilled from the commit subject or the file name; an e
   const typed = S.setTarget(fresh, { mode: 'new', name: '  release ' });
   const steer = S.steerTarget(typed, commitSrc, choices, ARTS);
   assert.equal(steer.artifactId, 'A-REL');
-  assert.equal(S.steerText(steer.name, 'SDE'), 'An artifact named “Release” already exists in SDE. Add this as a new version of it instead of making a second one.');
+  assert.equal(S.steerText(steer.name, 'SDE'), 'A saved item named “Release” already exists in SDE. Add this as a new version of it instead of making a second one.');
   assert.equal(S.steerTarget(S.setTarget(fresh, { mode: 'new', name: 'Brand new' }), commitSrc, choices, ARTS), null);
 });
 
@@ -350,8 +359,8 @@ test('pin: the project Passport offers saving only when the bench passes onSave,
   assert.match(panel, /return <ArtifactPassport key=\{props\.node\.artifactId\} project=\{props\.project\} node=\{props\.node\} artifacts=\{props\.artifacts\} onHandOff=\{handOff\} \/>;/);
   assert.match(panel, /if \(onBeforeAction\) \{ onBeforeAction\(\); setTimeout\(\(\) => onHandOff\(start\), 0\); \} else onHandOff\(start\);/);
   assert.match(panel, /\{onSave && c && \(/);
-  assert.match(panel, />Save as artifact<\/Button>/);
-  assert.match(panel, /\{onSave && node\.kind === 'source' && <Button icon="files" onClick=\{\(\) => save\(\{ kind: 'file', relPath: null \}\)\}>Save a file…<\/Button>\}/);
+  assert.match(panel, />Add to saved items<\/Button>/);
+  assert.match(panel, /\{onSave && node\.kind === 'source' && <Button icon="files" onClick=\{\(\) => save\(\{ kind: 'file', relPath: null \}\)\}>Add a file to saved items…<\/Button>\}/);
   assert.match(panel, /\{p\.relationshipsNote && <p className="nx-muted">\{p\.relationshipsNote\}<\/p>\}/);
 });
 
@@ -370,7 +379,7 @@ test('the passport relationships note gives way once the project has artifacts',
   assert.equal(passportFor({ project, idx, node, commits: [] }).relationshipsNote, RELATIONSHIPS_NOTE);
   assert.equal(passportFor({ project, idx, node, commits: [], hasArtifacts: true }).relationshipsNote, null);
   const artNode = { kind: 'artifact', id: 'artifact:A', artifactId: 'A', artifactKind: 'text_file', name: 'n', versionNo: 1, status: 'draft', isCurrent: false };
-  assert.equal(passportFor({ project, idx, node: artNode, commits: [] }).kind, 'Text file');
+  assert.equal(passportFor({ project, idx, node: artNode, commits: [] }).kind, 'File');
 });
 
 // ---------- Task 11: version actions in the Passport ----------
@@ -435,7 +444,7 @@ test('VA3: the pending/confirm machine blocks double submits and starts destruct
 
 test('VA4: a promote or roll back conflict says plainly that the current version changed, and reloads', () => {
   const conflict = { code: 'conflict', detail: { currentVersionId: 'X' } };
-  assert.equal(A.actionFailureText('promote', conflict), 'The current version changed; the list is refreshed');
+  assert.equal(A.actionFailureText('promote', conflict), 'Another version was put in use first, so nothing changed. The list has been updated.');
   assert.equal(A.actionFailureText('rollback', conflict), A.PROMOTE_CONFLICT_TEXT);
   assert.equal(A.shouldReloadAfterAction(conflict), true);
   // A conflict elsewhere (an archived artifact) keeps the general sentence.
@@ -463,21 +472,22 @@ test('VA6: which failures reload the readers', () => {
 });
 
 test('VA7: labels, confirmation questions and result sentences', () => {
-  assert.equal(A.actionLabel('markReady', false), 'Mark ready');
-  assert.equal(A.actionLabel('markReady', true), 'Marking ready…');
-  assert.equal(A.actionLabel('promote', false), 'Make current');
-  assert.equal(A.actionLabel('rollback', true), 'Rolling back…');
+  assert.equal(A.actionLabel('markReady', false), 'Mark as ready');
+  assert.equal(A.actionLabel('markReady', true), 'Marking as ready…');
+  assert.equal(A.actionLabel('promote', false), 'Use this version');
+  assert.equal(A.actionLabel('rollback', false), 'Go back to this version');
+  assert.equal(A.actionLabel('rollback', true), 'Going back…');
   assert.equal(A.actionLabel('discard', true), 'Discarding…');
-  assert.equal(A.actionLabel('link', false), 'Link a source…');
+  assert.equal(A.actionLabel('link', false), 'Add what it was made from…');
   assert.match(A.confirmText('discard', 3, 2), /^Discard version 3\?/);
-  assert.equal(A.confirmText('rollback', 1, 2), 'Make version 1 current again? Version 2 stops being current.');
-  assert.equal(A.confirmText('rollback', 1, null), 'Make version 1 current again?');
+  assert.equal(A.confirmText('rollback', 1, 2), 'Go back to version 1? Version 2 will stop being in use.');
+  assert.equal(A.confirmText('rollback', 1, null), 'Go back to version 1?');
   assert.equal(A.actionDoneText('markReady', 3), 'Version 3 is ready.');
-  assert.equal(A.actionDoneText('promote', 3), 'Version 3 is now current.');
-  assert.equal(A.actionDoneText('rollback', 1), 'Rolled back: version 1 is current again.');
+  assert.equal(A.actionDoneText('promote', 3), 'Version 3 is now in use.');
+  assert.equal(A.actionDoneText('rollback', 1), 'Went back: version 1 is in use again.');
   assert.equal(A.actionDoneText('discard', 4), 'Version 4 was discarded.');
-  assert.equal(A.actionDoneText('link', 2, { created: 1, sourceLabel: 'Commit Release, version 1' }), 'Commit Release, version 1 is now a source of version 2.');
-  assert.equal(A.actionDoneText('link', 2, { created: 0, sourceLabel: 'Commit Release, version 1' }), 'Commit Release, version 1 was already a source of version 2.');
+  assert.equal(A.actionDoneText('link', 2, { created: 1, sourceLabel: 'Saved version Release, version 1' }), 'Version 2 is now made from Saved version Release, version 1.');
+  assert.equal(A.actionDoneText('link', 2, { created: 0, sourceLabel: 'Saved version Release, version 1' }), 'Version 2 was already made from Saved version Release, version 1.');
 });
 
 test('VA8: link choices come only from returned versions: out of draft, other non-archived artifacts of this project, not already linked', () => {
@@ -493,9 +503,9 @@ test('VA8: link choices come only from returned versions: out of draft, other no
   ];
   const c = A.sourceChoices('SELF', 'p', details, new Set(['N2']));
   assert.deepEqual(c, [
-    { versionId: 'N1', label: 'Text file Notes, version 1', status: 'ready' },
-    { versionId: 'R3', label: 'Commit Release, version 3', status: 'ready' },
-    { versionId: 'R2', label: 'Commit Release, version 2', status: 'active' }
+    { versionId: 'N1', label: 'File Notes, version 1', status: 'ready' },
+    { versionId: 'R3', label: 'Saved version Release, version 3', status: 'ready' },
+    { versionId: 'R2', label: 'Saved version Release, version 2', status: 'in use' }
   ]);
   assert.deepEqual(A.sourceChoices('SELF', 'p', [], new Set()), []);
 });
@@ -547,7 +557,7 @@ test('pin: discard and roll back confirm inline with focus on Cancel', () => {
 });
 
 test('pin: link sources picks from returned versions in a Popover; no id is typed; loaders never reject', () => {
-  assert.match(passport, /<Popover kind="listbox" label=\{`Versions to link as sources of version \$\{shownVersion\.versionNo\}`\}/);
+  assert.match(passport, /<Popover kind="listbox" label=\{`Versions that version \$\{shownVersion\.versionNo\} was made from`\}/);
   assert.match(passport, /sourceChoices\(node\.artifactId, project\.id, candidates\.details, linked\)/);
   assert.doesNotMatch(passport, /<input|<textarea|contentEditable/);
   assert.equal((passport.match(/\} catch \{/g) || []).length, 2, 'both async loaders catch');
@@ -571,7 +581,7 @@ test('pin: link candidates are read only after the picker was first opened, then
   assert.match(passport, /if \(!enabled\) \{ setState\(NO_CANDIDATES\); return; \}/);
   assert.match(passport, /\}, \[enabled, key, rev\]\);/);
   // Nothing about the candidates shows before the picker opened; inside it, a loading line until the read lands.
-  assert.match(passport, /\{\(close\) => !candidates\.loaded \? \(\s*<p className="nx-muted nx-apx__pick-note" role="status">Reading versions to link…<\/p>/);
+  assert.match(passport, /\{\(close\) => !candidates\.loaded \? \(\s*<p className="nx-muted nx-apx__pick-note" role="status">Reading the versions you can choose…<\/p>/);
   assert.match(passport, /\{pickerOpened && candidates\.error && /);
   assert.match(passport, /\{pickerOpened && candidates\.capped && /);
   // The shared Popover reports opening, focuses items that arrive late, and closes on Escape from the trigger.
@@ -589,11 +599,11 @@ test('pin: focus rests on the status line while an action runs and when it ends;
   assert.match(passport, /\{pending && <p ref=\{resultRef\} tabIndex=\{-1\} className="nx-apx__status" role="status">\{actionPendingText\(pending\.kind, /);
   assert.match(passport, /setActs\(\(s\) => cancelActionConfirm\(s\)\);\s*requestFocus\('row', versionId\);/);
   assert.match(passport, /rowActs\.current\.get\(focusReq\.versionId\)\?\.querySelector<HTMLButtonElement>\('button:not\(\[disabled\]\)'\)\?\.focus\(\)/);
-  assert.equal(A.actionPendingText('markReady', 3), 'Marking version 3 ready…');
-  assert.equal(A.actionPendingText('promote', 3), 'Making version 3 current…');
-  assert.equal(A.actionPendingText('rollback', 1), 'Rolling back to version 1…');
+  assert.equal(A.actionPendingText('markReady', 3), 'Marking version 3 as ready…');
+  assert.equal(A.actionPendingText('promote', 3), 'Switching to version 3…');
+  assert.equal(A.actionPendingText('rollback', 1), 'Going back to version 1…');
   assert.equal(A.actionPendingText('discard', 4), 'Discarding version 4…');
-  assert.equal(A.actionPendingText('link', 2), 'Linking a source to version 2…');
+  assert.equal(A.actionPendingText('link', 2), 'Adding what version 2 was made from…');
 });
 
 test('pin: Escape closes the inline confirmation while nothing is pending', () => {

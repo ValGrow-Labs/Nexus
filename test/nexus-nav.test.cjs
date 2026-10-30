@@ -10,7 +10,7 @@ const I = legacyIndex(P);
 
 test('home has no path', () => { assert.deepEqual(pathSegments({ name: 'home' }, P, I), []); });
 test('workspace shows one segment with its slot', () => {
-  assert.deepEqual(pathSegments({ name: 'workspace', id: 'ml' }, P, I), [{ kind: 'workspace', id: 'ml', label: 'ML', hueSlot: 1 }]);
+  assert.deepEqual(pathSegments({ name: 'workspace', id: 'ml' }, P, I), [{ kind: 'workspace', id: 'ml', label: 'Machine learning', hueSlot: 1 }]);
 });
 test('project shows its workspace then itself', () => {
   const s = pathSegments({ name: 'project', id: 'p1', tool: 'bench' }, P, I);
@@ -29,7 +29,7 @@ test('menu lists planned places separately', () => {
   // Task 12 moved Artifacts and Task 13 moved Handoffs to "Go to"; only Deployments stays planned.
   const planned = MENU_GROUPS.flatMap((g) => g.items).filter((i) => i.planned).map((i) => i.id);
   assert.deepEqual(planned, ['deployments']);
-  assert.deepEqual(MENU_GROUPS.find((g) => g.label === 'Planned').items.map((i) => i.id), ['deployments']);
+  assert.deepEqual(MENU_GROUPS.find((g) => g.label === 'Coming later').items.map((i) => i.id), ['deployments']);
 });
 test('Artifacts is a real place in "Go to", after Projects', () => {
   const go = MENU_GROUPS.find((g) => g.label === 'Go to').items;
