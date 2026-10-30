@@ -150,7 +150,9 @@ test('P6 a passing preflight runs every nexus-exec-* file under the test:db rule
   // Under plain node the real-Docker files print their skip banner (the convention of the real-SQLite files).
   const env = { ...process.env, NEXUS_TEST_EXEC: '' };
   delete env.NODE_TEST_CONTEXT;                       // a plain run of the file, not a child of this test runner
-  for (const f of files) {
+  // Only under plain node: `process.execPath` under Electron-as-node would RUN each gated file on real Docker (the preflight can pass),
+  // starting containers this test never meant to start (a leaked agent container was found that way). The plain-node run covers it.
+  for (const f of process.versions.electron ? [] : files) {
     const r = spawnSync(process.execPath, [path.join(ROOT, f)], { encoding: 'utf8', timeout: 60_000, cwd: ROOT, env });
     assert.equal(r.status, 0, `${f}: ${r.stderr}`);
     assert.match(r.stdout, /# skipped 1/, f);
