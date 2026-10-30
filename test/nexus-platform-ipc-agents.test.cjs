@@ -661,28 +661,33 @@ test('IA8 #50 cancel answers cancelled; the only confirmation the accept service
   }
 });
 
-test('M1 the merge dialog lists the commits, names the branch, defaults to Cancel and says only tracked files are checked; only the Merge button confirms', async () => {
+test('M1 the merge window lists the kept changes, names the main version, defaults to Cancel and says only unsaved edits to existing files are checked; only the "Add to my project" button (index 1) confirms', async () => {
   const sha = (c) => c.repeat(40);
   const info = { projectId: PROJECT, branch: 'main', from: sha('a'), to: sha('b'), commitCount: 3, accepted: [
     { versionId: UNKNOWN, title: 'Add the export', mergeCommit: sha('1'), acceptedAt: 1 },
     { versionId: UNKNOWN, title: 'Line one\nline two with\ttabs ghp_abcdefghijklmnopqrstuvwxyz0123456789 and ' + 'x'.repeat(300), mergeCommit: sha('2'), acceptedAt: 2 },
     { versionId: UNKNOWN, title: '', mergeCommit: sha('3'), acceptedAt: 3 }] };
   const o = mergeDialogOptions(info);
-  assert.deepEqual(o.buttons, ['Cancel', 'Merge']);
+  // SECURITY (words changed, indices did not): Cancel is index 0 and the default and escape button; the confirming button is index 1.
+  assert.deepEqual(o.buttons, ['Cancel', 'Add to my project']);
+  assert.equal(loadTs('src/main/nexusExec/mergeDialog.ts').MERGE_CONFIRM_INDEX, 1);
+  assert.equal(o.buttons[0], 'Cancel');
   assert.equal(o.defaultId, 0); assert.equal(o.cancelId, 0);
   assert.equal(o.noLink, true);
-  assert.match(o.message, /3 accepted changes/); assert.match(o.message, /"main"/);
-  assert.match(o.detail, /11111111/); assert.match(o.detail, /22222222/); assert.match(o.detail, /33333333/);
-  assert.match(o.detail, /Add the export/); assert.match(o.detail, /Agent change/);
-  assert.match(o.detail, /aaaaaaaa to bbbbbbbb/);
-  assert.match(o.detail, /tracked/); assert.match(o.detail, /untracked/);
+  assert.equal(o.title, 'Add to my project');
+  assert.match(o.message, /3 kept changes/); assert.match(o.message, /"main"/);
+  assert.match(o.detail, /\[11111111\]/); assert.match(o.detail, /\[22222222\]/); assert.match(o.detail, /\[33333333\]/);
+  assert.match(o.detail, /Add the export/); assert.match(o.detail, /Suggested change/);
+  assert.match(o.detail, /saved version \[aaaaaaaa\].*newest saved version \[bbbbbbbb\]/);
+  assert.match(o.detail, /unsaved edits/); assert.match(o.detail, /New files/);
+  assert.doesNotMatch(`${o.title} ${o.message} ${o.detail}`, /fast-forward|commit|branch|tracked|git\b/i, 'plain words: no git words in the window');
   assert.doesNotMatch(o.detail, /ghp_/, 'a secret-shaped title is redacted');
   for (const l of o.detail.split('\n')) assert.ok(l.length < 400, 'titles are cut');
   // 14 commits: ten are listed, the rest counted.
   const many = mergeDialogOptions({ ...info, commitCount: 14, accepted: Array.from({ length: 14 }, (_, i) => ({ versionId: UNKNOWN, title: `T${i}`, mergeCommit: sha('4'), acceptedAt: i })) });
   assert.match(many.detail, /and 4 more/);
-  assert.equal(mergeDialogOptions({ ...info, commitCount: 1, accepted: info.accepted.slice(0, 1) }).message.startsWith('Merge 1 accepted change into'), true);
-  // Only the Merge button confirms.
+  assert.equal(mergeDialogOptions({ ...info, commitCount: 1, accepted: info.accepted.slice(0, 1) }).message.startsWith('Add 1 kept change to your project'), true);
+  // Only the "Add to my project" button (index 1) confirms.
   assert.equal(await confirmMergeWith(async () => ({ response: 1 }), info), true);
   for (const r of [{ response: 0 }, { response: 2 }, { response: '1' }, {}, null, undefined]) assert.equal(await confirmMergeWith(async () => r, info), false, JSON.stringify(r));
   assert.equal(await confirmMergeWith(async () => { throw new Error('closed'); }, info), false);
@@ -952,7 +957,7 @@ test('S3 #43 answers closed SessionView rows; #50 is single-flight per project: 
   assert.equal(third.reason, 'git_missing');
 });
 
-test('M2 the merge dialog fails closed: with no live window to parent it nothing is shown and the answer is no; only the Merge button on a live window confirms', async () => {
+test('M2 the merge window fails closed: with no live window to parent it nothing is shown and the answer is no; only the "Add to my project" button (index 1) on a live window confirms', async () => {
   const { confirmMergeOn } = loadTs('src/main/nexusExec/mergeDialog.ts');
   const info = { projectId: PROJECT, branch: 'main', from: BASE, to: HEAD, commitCount: 1, accepted: [{ versionId: UNKNOWN, title: 'T', mergeCommit: HEAD, acceptedAt: 1 }] };
   let shown = 0;

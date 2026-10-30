@@ -131,11 +131,11 @@ test('E2E-B2b-1 node: requirement -> turn -> change set -> cs.tests_pass -> revi
   const merge = await w.okd('nexus:repo:mergeAccepted', w.PROJECT, { branch: st1.branch, expectedAcceptedHead: st1.acceptedHead });
   assert.equal(merge.after, mergeA);
   assert.equal(w.dialogs.length, 1);
-  assert.deepEqual(w.dialogs[0].opts.buttons, ['Cancel', 'Merge']);
+  assert.deepEqual(w.dialogs[0].opts.buttons, ['Cancel', 'Add to my project']);
   assert.equal(w.dialogs[0].opts.defaultId, 0);
   assert.match(w.dialogs[0].opts.detail, /Add the ledger export/);
-  assert.match(w.dialogs[0].opts.message, /^Merge 1 accepted change into /, 'one accepted change set is one change, not its two commits');
-  assert.match(w.dialogs[0].opts.detail, /^Your branch .* will move from [0-9a-f]{8} to [0-9a-f]{8}/);
+  assert.match(w.dialogs[0].opts.message, /^Add 1 kept change to your project/, 'one accepted change set is one change, not its two commits');
+  assert.match(w.dialogs[0].opts.detail, /^Your project's main version, .*, is at the saved version \[[0-9a-f]{8}\]\. It will be updated to the newest saved version \[[0-9a-f]{8}\]/);
   assert.equal(w.userHead(), mergeA, 'the user\'s branch is fast-forwarded to the confirmed sha');
   assert.equal(w.git('symbolic-ref', 'HEAD'), `refs/heads/${st1.branch}`);
   assert.ok(fs.existsSync(path.join(w.repoDir, 'src', 'ledger.js')) && fs.existsSync(path.join(w.repoDir, 'test', 'ledger.test.js')));

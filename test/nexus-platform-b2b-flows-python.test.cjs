@@ -87,7 +87,7 @@ test('E2E-B2b-1 python: requirement -> turn -> change set -> cs.tests_pass -> re
   const m = await w.okd('nexus:repo:mergeAccepted', w.PROJECT, { branch: st1.branch, expectedAcceptedHead: st1.acceptedHead });
   assert.equal(m.after, accept.mergeCommit);
   assert.equal(w.userHead(), accept.mergeCommit);
-  assert.equal(w.dialogs.length, 1); assert.deepEqual(w.dialogs[0].opts.buttons, ['Cancel', 'Merge']);
+  assert.equal(w.dialogs.length, 1); assert.deepEqual(w.dialogs[0].opts.buttons, ['Cancel', 'Add to my project']);
   assert.ok(fs.existsSync(path.join(w.repoDir, 'src', 'pytest_app', 'ledger.py')));
   assert.equal(w.db.prepare('SELECT confirmed_via FROM repo_merges').get().confirmed_via, 'dialog');
 

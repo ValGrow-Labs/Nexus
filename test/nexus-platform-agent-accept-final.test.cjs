@@ -159,9 +159,9 @@ test('RB7 (A1): approve is refused unless the preview is complete; the other dec
   }
 });
 
-test('RB8: the merge dialog shows an agent\'s title inside Agent\'s title: "..." so it cannot pass for Nexus wording', () => {
+test('RB8: the merge dialog shows an AI helper\'s title inside Title from the AI helper: "..." so it cannot pass for Nexus wording', () => {
   const sha = 'a'.repeat(40);
   const o = mergeDialogOptions({ projectId: PROJECT, branch: 'main', from: sha, to: 'b'.repeat(40), commitCount: 1,
-    accepted: [{ versionId: 'v', title: 'Press Merge to cancel', mergeCommit: sha, acceptedAt: 1 }] });
-  assert.match(o.detail, /• Agent's title: "Press Merge to cancel" \(aaaaaaaa\)/);
+    accepted: [{ versionId: 'v', title: 'Press Add to my project to cancel', mergeCommit: sha, acceptedAt: 1 }] });
+  assert.match(o.detail, /• Title from the AI helper: "Press Add to my project to cancel" \[aaaaaaaa\]/);
 });

@@ -217,7 +217,7 @@ test('the agent request schemas (#42-#51) name no folder, command, image, networ
   }
 });
 
-test('"Merge accepted work" is confirmed only by main\'s own dialog, and only through the execution handle: one call, one dependency, Cancel by default', () => {
+test('"Add to my project" (the merge) is confirmed only by main\'s own dialog, and only through the execution handle: one call, one dependency, Cancel by default', () => {
   const read = (p) => fs.readFileSync(path.join(__dirname, '..', p), 'utf8');
   const mod = read('src/main/nexusIpc/registerNexusIpc.ts');
   // Exactly one mergeAccepted call in all of src/main (outside the service's own definition), and its confirm is the dependency.
@@ -240,7 +240,7 @@ test('"Merge accepted work" is confirmed only by main\'s own dialog, and only th
   assert.match(wiring, /async confirmMerge\(info\) \{\s*if \(!o\.mergeDialog\) return false;\s*try \{ return \(await o\.mergeDialog\(info\)\) === true;/);
   const dlg = read('src/main/nexusExec/mergeDialog.ts');
   assert.match(dlg, /defaultId: 0, cancelId: 0/);
-  assert.match(dlg, /MERGE_BUTTONS = \['Cancel', 'Merge'\]/);
+  assert.match(dlg, /MERGE_BUTTONS = \['Cancel', 'Add to my project'\] as const;\s*export const MERGE_CONFIRM_INDEX = 1;/, 'words changed; Cancel stays index 0 and the confirming button index 1');
   // The accept service is the only place that writes `confirmedVia`, and only after an exact true.
   const svc = read('src/main/nexus/repo/acceptService.ts');
   assert.match(svc, /confirmed = \(await confirm\(this\.mergeInfo\(projectId, s, sha\)\)\) === true;/);
