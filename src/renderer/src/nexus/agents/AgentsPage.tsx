@@ -81,6 +81,14 @@ export function AgentsPage({ config }: { config: HarnessConfig }) {
     </details>
   );
 
+  // A new install starts no lead agent by itself (it is an agent program running in a terminal): it starts only from here.
+  const requestLeadStart = useStore((s) => s.requestLeadStart);
+  const startLeadButton = (primary: boolean) => (
+    <button type="button" className={`nx-btn nx-focusable${primary ? ' nx-btn--primary' : ''}`} onClick={requestLeadStart}>
+      <Icon name="terminal" /> Start the lead agent
+    </button>
+  );
+
   const addButton = (primary: boolean) => (
     <button type="button" className={`nx-btn nx-focusable${primary ? ' nx-btn--primary' : ''}`} onClick={() => setAddAgentOpen(true)}>
       <Icon name="plus" /> Add agent
@@ -93,6 +101,7 @@ export function AgentsPage({ config }: { config: HarnessConfig }) {
         <h1 className="nxa__title">Agents</h1>
         <span className="nxa__auto">{autoOn ? 'Auto mode is on: agents skip their CLI approval prompts' : 'Auto mode is off: agents use their CLI approval prompts'}</span>
         <div className="nxa__actions">
+          {godStatus === 'off' && rows.length > 0 && startLeadButton(false)}
           {addButton(false)}
           <button type="button" className="nx-btn nx-btn--quiet nx-focusable" onClick={toggleFullscreen}>
             <Icon name="panel" /> {fullscreenAgentId ? 'Exit fullscreen' : 'Fullscreen terminal'}
@@ -108,6 +117,15 @@ export function AgentsPage({ config }: { config: HarnessConfig }) {
         godStatus === 'booting' ? (
           <div className="nxa__empty">
             <p className="nxa__note" role="status">The lead agent is starting. Its terminal appears here when it is ready.</p>
+            {memory}
+          </div>
+        ) : godStatus === 'off' ? (
+          <div className="nxa__empty">
+            <div className="nx-empty">
+              <h2 className="nx-empty__title">The lead agent is not running</h2>
+              <p className="nx-empty__body">Nothing starts by itself. The lead agent takes your requests in the terminal and hands work to other agents. It needs an agent program that is installed and signed in on this computer, which you choose in Settings. Start it only if you want it. Building in a project does not need it.</p>
+              <div className="nx-empty__actions">{startLeadButton(true)}{addButton(false)}</div>
+            </div>
             {memory}
           </div>
         ) : (

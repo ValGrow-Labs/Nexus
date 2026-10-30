@@ -183,6 +183,10 @@ export interface HarnessConfig {
   /** The model GOD runs on. Unset falls back to the provider preset's
    *  `recommendedOrchestratorModel`, then MODEL_GOD. Default 'claude-opus-4-8'. */
   godModel?: string;
+  /** Whether the lead agent starts by itself when the app opens. The setup wizard writes it (true only when the person chose an
+   *  engine in the engine step); absent on installs from before it existed, which keep starting it as they always did. Never a
+   *  default: see src/shared/leadStart.ts. */
+  leadAutoStart?: boolean;
   /** Per-server consent state for the default MCP bundle, keyed by catalog id.
    *  Seeded from MCP_CATALOG (safe-readonly ON, write/secret OFF); the user flips
    *  these in Settings. A server is wired into an agent only when enabled here. */

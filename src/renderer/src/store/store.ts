@@ -130,8 +130,10 @@ export type SidebarTab = 'terminal' | 'messages' | 'traces' | 'git';
 /** Lifecycle of the god agent ("Michael") bootstrap on launch.
  *  'booting' until his PTY is confirmed live, then 'ready' (or 'failed' if the
  *  spawn errored). The empty-floor UI shows a loader while 'booting' so users
- *  don't see the "add agent" prompt before Michael has clocked in. */
-export type GodStatus = 'booting' | 'ready' | 'failed';
+ *  don't see the "add agent" prompt before Michael has clocked in.
+ *  'off': nothing started it (a new install starts no lead agent by itself; the
+ *  Start button, or an engine chosen in the wizard, does). See shared/leadStart. */
+export type GodStatus = 'booting' | 'ready' | 'failed' | 'off';
 
 interface State {
   agents: Agent[];
@@ -177,6 +179,9 @@ interface State {
   sidebarWidth: number;
   sidebarTab: SidebarTab;
   godStatus: GodStatus;
+  /** Counts presses of the lead agent's Start button this session (session-only, never stored); the boot effect starts it when this moves. */
+  leadStartRequests: number;
+  requestLeadStart: () => void;
   /** Per-agent outgoing message queue (agent id → messages awaiting delivery).
    *  Lets the user keep "talking" to a busy agent: messages park here and are
    *  drained to the terminal one-by-one once the agent is free. */
@@ -616,6 +621,8 @@ export const useStore = create<State>((set) => ({
   sidebarWidth: initialSidebarWidth,
   sidebarTab: initialSidebarTab,
   godStatus: 'booting',
+  leadStartRequests: 0,
+  requestLeadStart: () => set((s) => ({ leadStartRequests: s.leadStartRequests + 1 })),
   messageQueues: initialQueues,
   deliveredIds: {},
   lastDelivered: {},

@@ -5,6 +5,7 @@ import { Icon, type IconName } from './Icon';
 import { ProviderLogo } from './ProviderLogo';
 import { AGENT_PROVIDER_PRESETS, modelsForProvider, type AgentProvider, type HarnessConfig } from '@/store/config';
 import { canReceiveInbox, providerPreset } from '@shared/agentProvider';
+import { wizardLeadConfig, type WizardLeadChoice } from '@shared/leadStart';
 
 export interface OnboardingWizardProps {
   onComplete: (config: HarnessConfig) => void;
@@ -93,6 +94,9 @@ export function OnboardingWizard({ onComplete }: OnboardingWizardProps) {
   // Anonymous usage stats (TELEMETRY.md). Default ON (opt-out); persisted by
   // finish() so unchecking before finishing means nothing is ever sent.
   const [shareStats, setShareStats] = useState<boolean>(true);
+  // The engine step's first-run default is "not now": nothing is started when setup finishes. An engine is started only when the
+  // person picks one here (the pick is the consent). The provider kept below is only the engine a later explicit Start uses.
+  const [leadChoice, setLeadChoice] = useState<WizardLeadChoice>('later');
   const [godProvider, setGodProvider] = useState<AgentProvider>('claude');
   const [godModel, setGodModel] = useState<string | undefined>(
     providerPreset('claude').recommendedOrchestratorModel
@@ -178,6 +182,8 @@ export function OnboardingWizard({ onComplete }: OnboardingWizardProps) {
       autoMode,
       godProvider,
       godModel,
+      // Written every time, so a new install never falls under the "install from before this choice" rule that starts the lead agent.
+      ...wizardLeadConfig(leadChoice),
       telemetryEnabled: shareStats
     });
     setBusy(false);
@@ -350,14 +356,15 @@ export function OnboardingWizard({ onComplete }: OnboardingWizardProps) {
               <>
                 <p style={{ margin: 0, lineHeight: '22px' }}>
                   {plain ? (
-                    <><strong>The lead agent works on your behalf</strong> — it reads your requests,
-                    breaks them into tasks, and hands them to the right agent. You stay in
-                    charge of it. Choose which AI engine powers it.</>
+                    <><strong>The lead agent is an optional helper</strong> — it reads your requests,
+                    breaks them into tasks, and hands them to the right agent. You do not need it to
+                    build a project in Nexus. You can start nothing for now, or pick an AI assistant
+                    program that is already installed on this computer.</>
                   ) : (
-                    <><strong>The lead agent works on your behalf</strong>. It triages your
-                    requests, assigns tasks, and coordinates the other agents, while escalating
-                    anything that genuinely needs you. Pick the engine and model that power it;
-                    a longer-context, higher-capability model works best.</>
+                    <><strong>The lead agent is optional</strong>. It is a terminal agent that triages
+                    your requests and coordinates the other agents. Building in a project does not need it:
+                    that runs on free online AI, a model on this computer, or a plan you already have,
+                    chosen later under Setup. Start nothing now, or pick the engine program that powers it.</>
                   )}
                 </p>
 
@@ -370,24 +377,55 @@ export function OnboardingWizard({ onComplete }: OnboardingWizardProps) {
                   <span style={{ flexShrink: 0, marginTop: 1 }}><Icon name="sparkle" /></span>
                   <span>
                     {plain ? (
-                      <>A <strong>CLI agent</strong> is an AI coding assistant that runs on your
-                      computer — popular ones are Claude Code (Anthropic), Codex (OpenAI) and
-                      Antigravity (Google Gemini). <strong>The lead agent</strong> is the always-on
-                      one that coordinates the others. We recommend Claude Code on Opus 4.8 (1M).
-                      You can add or switch the others later.</>
+                      <><strong>Nothing starts until you say so.</strong> "Not now" is the safe choice and
+                      costs nothing. The other options are AI assistant programs (Claude Code, Codex,
+                      Antigravity, Qwen) that must already be installed and signed in on this computer;
+                      Nexus never installs them or signs in for you. Picking one starts it as soon as setup
+                      finishes, and it uses your own plan with that company. You can start or change it
+                      any time in Agents.</>
                     ) : (
-                      <>Each option is a <strong>CLI engine</strong> you have installed (Claude Code,
-                      Codex, Antigravity/Gemini, or a local proxy like Qwen).
-                      <strong> The lead agent</strong> is the engine that orchestrates the whole
-                      team. Recommended: Claude Code · Opus 4.8 · 1M — other providers can be wired
-                      per agent later.</>
+                      <><strong>Nothing starts until you say so.</strong> "Not now" starts no process. Each
+                      other option is a <strong>CLI engine</strong> you have installed and signed in
+                      (Claude Code, Codex, Antigravity/Gemini, or a local proxy like Qwen); picking one
+                      starts it as the lead agent when setup finishes, on your own plan with that provider.
+                      You can start it later from Agents instead, or change the engine in Settings.</>
                     )}
                   </span>
                 </div>
 
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                  <label style={{
+                    display: 'flex', alignItems: 'center', gap: 10,
+                    padding: '8px 10px',
+                    background: leadChoice === 'later' ? 'var(--cth-mint-light)' : 'var(--cth-paper-100)',
+                    boxShadow: `inset 0 0 0 ${leadChoice === 'later' ? 2 : 1}px ${leadChoice === 'later' ? 'var(--cth-mint)' : 'var(--cth-ink-300)'}`,
+                    cursor: 'pointer'
+                  }}>
+                    <input
+                      type="radio"
+                      name="godProvider"
+                      value="none"
+                      checked={leadChoice === 'later'}
+                      onChange={() => setLeadChoice('later')}
+                      style={{ width: 16, height: 16, flexShrink: 0 }}
+                    />
+                    <span style={{ flex: 1, minWidth: 0 }}>
+                      <span style={{ display: 'block', fontFamily: 'var(--cth-font-display)', fontSize: 11 }}>
+                        NOT NOW
+                      </span>
+                      <span style={{ display: 'block', fontSize: 11, color: 'var(--cth-ink-500)' }}>
+                        Start no lead agent. You can start one later from Agents.
+                      </span>
+                    </span>
+                    <span style={{
+                      fontSize: 10, padding: '1px 5px', lineHeight: '16px',
+                      background: 'var(--cth-lemon)',
+                      boxShadow: 'inset 0 0 0 1px var(--cth-ink-300)',
+                      fontFamily: 'var(--cth-font-display)', flexShrink: 0
+                    }}>DEFAULT</span>
+                  </label>
                   {AGENT_PROVIDER_PRESETS.filter((p) => canReceiveInbox(p.id)).map((p) => {
-                    const sel = godProvider === p.id;
+                    const sel = leadChoice === 'engine' && godProvider === p.id;
                     return (
                       <label key={p.id} style={{
                         display: 'flex', alignItems: 'center', gap: 10,
@@ -402,6 +440,7 @@ export function OnboardingWizard({ onComplete }: OnboardingWizardProps) {
                           value={p.id}
                           checked={sel}
                           onChange={() => {
+                            setLeadChoice('engine');
                             setGodProvider(p.id);
                             // Reset the model to the new provider's recommended pick so the
                             // dropdown below always shows a valid model for the chosen engine.
@@ -425,19 +464,11 @@ export function OnboardingWizard({ onComplete }: OnboardingWizardProps) {
                             </span>
                           )}
                         </span>
-                        {p.id === 'claude' && (
-                          <span style={{
-                            fontSize: 10, padding: '1px 5px', lineHeight: '16px',
-                            background: 'var(--cth-lemon)',
-                            boxShadow: 'inset 0 0 0 1px var(--cth-ink-300)',
-                            fontFamily: 'var(--cth-font-display)', flexShrink: 0
-                          }}>RECOMMENDED</span>
-                        )}
                       </label>
                     );
                   })}
                 </div>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                {leadChoice === 'engine' && <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
                   <div style={{ fontSize: 12, color: 'var(--cth-ink-500)' }}>Model</div>
                   <select
                     value={godModel ?? ''}
@@ -451,7 +482,7 @@ export function OnboardingWizard({ onComplete }: OnboardingWizardProps) {
                   <div style={{ fontSize: 12, color: 'var(--cth-ink-500)' }}>
                     This only sets the lead agent's engine. You can run other providers per agent later.
                   </div>
-                </div>
+                </div>}
               </>
             )}
 

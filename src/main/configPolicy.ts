@@ -33,6 +33,7 @@ export const CONFIG_KEY_POLICY: Record<keyof HarnessConfig, KeyPolicy> = {
   defaultModel: 'renderer',           // validated: a model id
   godProvider: 'renderer',            // validated: a provider id (lead engine picker)
   godModel: 'renderer',               // validated: a model id (lead engine picker)
+  leadAutoStart: 'renderer',          // validated: a boolean (the wizard's engine-step choice)
   mcpDefaults: 'renderer',
   semanticMemory: 'renderer',
   embeddingModel: 'renderer',
@@ -249,6 +250,7 @@ export function classifyConfigPatch(
         if (validModel(value)) apply[key] = value === '' || value === null ? undefined : value; else out.rejected.push(key);
         break;
       case 'autoModeReviewedV1':
+      case 'leadAutoStart':
         if (typeof value === 'boolean') apply[key] = value; else out.rejected.push(key);
         break;
       case 'serverPostureNoticeV1':

@@ -18,6 +18,7 @@ import { DEFAULT_CONTEXT_TRIGGER, type ContextRule } from '../../../shared/trigg
 import type { AgentProvider } from '../../../shared/agentProvider';
 import { LEAD_HIVE_NAME, LEAD_HIVE_ROLE } from '../../../shared/agentDisplay';
 import { normalizeAutoFlagCommand } from '../../../shared/autoModeFlag';
+import { leadMayStart } from '../../../shared/leadStart';
 import { acquireTerminal, resetTerminal, isTerminalAutomationSafe } from '@/components/terminalPool';
 import { deliverWithAcknowledgement } from './queueDelivery';
 import { OFFICE_CAST, DEFAULT_CHARACTER } from '@/scene/office/cast';
@@ -318,10 +319,15 @@ export function useHive(config: HarnessConfig | null): void {
   const breakerLevel = useRef<Record<string, string>>({});
 
   // 1) Bootstrap the god agent (source of truth = live PTYs, to dodge restarts).
+  //    A new install starts NOTHING by itself: the lead agent is a vendor CLI process, and nothing may start one before the person
+  //    asked for it (the Start button, or an engine chosen in the setup wizard). An install from before that choice existed keeps
+  //    starting it as it always did. The decision is `leadMayStart` (shared/leadStart.ts, tested).
+  const leadStartRequests = useStore((s) => s.leadStartRequests);
+  const leadAllowed = leadMayStart(config, leadStartRequests > 0);
   useEffect(() => {
     if (!config?.onboardingComplete || !config.harnessHome) return;
     let cancelled = false;
-    useStore.getState().setGodStatus('booting');
+    useStore.getState().setGodStatus(leadAllowed ? 'booting' : 'off');
     const t = setTimeout(async () => {
       if (cancelled) return;
       const live = await window.cth.listPtys().catch(() => []);
@@ -329,6 +335,8 @@ export function useHive(config: HarnessConfig | null): void {
         if (!cancelled) useStore.getState().setGodStatus('ready');
         return;
       }
+      // Not asked for: nothing is spawned (the status stays 'off').
+      if (!leadAllowed) return;
       // Synchronous guard (no await between check and set) → exactly one spawn.
       if (cancelled || godSpawning.current) return;
       godSpawning.current = true;
@@ -411,7 +419,7 @@ export function useHive(config: HarnessConfig | null): void {
       })();
     }, 1200);
     return () => { cancelled = true; clearTimeout(t); };
-  }, [config?.onboardingComplete, config?.harnessHome]);
+  }, [config?.onboardingComplete, config?.harnessHome, leadAllowed]);
 
   // 2) Drive avatars from real hook events emitted by each agent's shim.
   useEffect(() => {
