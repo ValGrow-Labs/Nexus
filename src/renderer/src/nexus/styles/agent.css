@@ -41,3 +41,9 @@
 .nx-runpill { display: inline-flex; align-items: center; height: 24px; padding: 0 10px; border: 1px solid var(--nx-ink); border-radius: 999px; font: 600 12px/1 var(--nx-font); color: var(--nx-ink); text-decoration: none; white-space: nowrap; background: repeating-linear-gradient(-45deg, var(--nx-hatch) 0 2px, transparent 2px 6px), var(--nx-surface); }
 .nx-runpill--input { border-color: var(--nx-warn); }
 .nx-runpill:focus-visible { outline: 2px solid var(--nx-ink); outline-offset: 2px; }
+.nx-intent__mode { font-size: 11.5px; font-weight: 600; color: var(--nx-text-2); white-space: nowrap; }
+.nx-run__next { margin: 0; font-size: 12px; color: var(--nx-text-2); }
+/* The AI helper panel: the plain progress line, the "waiting for you" card and how the last request ended. */
+.nx-ag__progress, .nx-ag__wait, .nx-ag__end { margin: 0; padding: var(--nx-s2) var(--nx-s3); border: 1px solid var(--nx-line-strong); border-radius: var(--nx-r-obj); background: var(--nx-surface); display: grid; gap: 2px; }
+.nx-ag__progress p, .nx-ag__wait p { margin: 0; }
+.nx-ag__wait { border-color: var(--nx-ink); }

@@ -15,16 +15,16 @@ import { nexusClient } from '../data/nexusClient';
 import { usePlatform } from '../data/platformStore';
 import { availabilityFrom } from '../data/executionModel';
 import { useExecStore, withIntent } from '../data/useExecution';
-import { agentFailText, agentPanelModel, continuableSession, intentRoute, messageKey, startArgs } from '../agent/agentModel';
+import { agentFailText, agentPanelModel, continuableSession, intentRoute, intentWords, messageKey, startArgs } from '../agent/agentModel';
 
 const TOOL_PAGE: Record<ProjectTool, string> = { bench: 'Bench', changes: 'Changes', completion: 'Completion', runs: 'Runs' };
 
 let requestSeq = 0;
 function newRequestId(): string { requestSeq += 1; return `r-${Date.now()}-${requestSeq}`; }
 
-/** One line, bound to what the user is looking at, that sends a request to the
- *  lead agent. `summoned`: mounted on demand (Ctrl/Cmd+J or an "Ask" button)
- *  on a route that does not dock it, so it takes focus on mount and can close. */
+/** One line, bound to what the user is looking at, that sends a request to an AI helper: this project's AI helper on a software
+ *  project that is ready, the lead AI helper everywhere else. A label and one plain line say which. `summoned`: mounted on demand
+ *  (Ctrl/Cmd+J or an "Ask" button) on a route that does not dock it, so it takes focus on mount and can close. */
 export function IntentLine({ summoned = false, onClose }: { summoned?: boolean; onClose?: () => void }) {
   const port = useAssistant();
   const route = useRoute();
@@ -78,8 +78,8 @@ export function IntentLine({ summoned = false, onClose }: { summoned?: boolean; 
     return { ws: route.name === 'workspace' ? getWorkspace(route.id) : null, project: null, page: routeTitle(route), selection: null };
   }, [route, projects, selection, idx]);
 
-  // B2b: on an SDE project route, with the agent ready to take a message, the line sends to the project's agent (#42). Every other
-  // route, workspace and state keeps the legacy lead-agent behaviour. Reads only what the bench already loaded: no request of its own.
+  // B2b: on an SDE project route, with the AI helper ready to take a message, the line sends to the project's AI helper (#42). Every other
+  // route, workspace and state keeps the lead AI helper behaviour. Reads only what the bench already loaded: no request of its own.
   const execHealth = useExecStore((st) => st.health);
   const platformOff = usePlatform((st) => st.unavailable);
   const askable = useMemo(() => {
@@ -99,11 +99,8 @@ export function IntentLine({ summoned = false, onClose }: { summoned?: boolean; 
   });
 
   const s = port.status;
-  const statusText = mode === 'agent' ? `Sends to this project’s agent. It works in its own copy of the repository; your files change only when you accept and merge.${askable.note ? ` ${askable.note}` : ''}`
-    : s.state === 'unavailable' ? s.reason
-    : s.state === 'starting' ? 'Lead agent starting. Requests are queued until it is ready.'
-    : s.deliveryPaused ? 'Lead agent ready. Delivery is paused in Agents.'
-    : 'Lead agent ready.';
+  // ONE plain line that says who gets the message and what happens next, and a short label for the same thing.
+  const words = intentWords({ mode, lead: s, onSoftwareProject: route.name === 'project' && ctx.ws?.id === 'sde' && !canAsk, note: askable.note, replyHint: port.replyHint });
 
   const sendToAgent = async (text: string, projectId: string) => {
     if (sending) return;
@@ -119,7 +116,7 @@ export function IntentLine({ summoned = false, onClose }: { summoned?: boolean; 
     if (!r.ok) { setError(agentFailText(r)); setSent(null); return; }
     usePlatform.getState().bumpRev();
     setDraft(''); setError(null);
-    setSent({ href: formatRoute({ name: 'project', id: projectId, tool: 'bench' }), label: 'Follow it in the agent panel', lead: sessionId ? 'Sent to the agent in your open conversation.' : 'Sent to the agent in a new conversation.' });
+    setSent({ href: formatRoute({ name: 'project', id: projectId, tool: 'bench' }), label: words.followLabel, lead: words.sentLead(sessionId !== null) });
   };
 
   const send = () => {
@@ -136,8 +133,8 @@ export function IntentLine({ summoned = false, onClose }: { summoned?: boolean; 
     setDraft('');
     setError(null);
     setSent(projectId
-      ? { href: formatRoute({ name: 'project', id: projectId, tool: 'runs' }), label: 'Follow it in Runs', lead: 'Queued.' }
-      : { href: formatRoute({ name: 'agents' }), label: 'Open Agents', lead: 'Queued.' });
+      ? { href: formatRoute({ name: 'project', id: projectId, tool: 'runs' }), label: words.followLabel, lead: words.sentLead(false) }
+      : { href: formatRoute({ name: 'agents' }), label: 'Open Agents', lead: words.sentLead(false) });
   };
 
   const prefill = (text: string) => {
@@ -148,17 +145,18 @@ export function IntentLine({ summoned = false, onClose }: { summoned?: boolean; 
   };
 
   return (
-    <form className="nx-intent" aria-label={mode === 'agent' ? 'Ask the project’s agent' : 'Ask the lead agent'} onSubmit={(e) => { e.preventDefault(); send(); }}>
+    <form className="nx-intent" aria-label={words.ariaLabel} onSubmit={(e) => { e.preventDefault(); send(); }}>
       <div className="nx-intent__row">
+        <span className="nx-intent__mode" data-mode={mode}>{words.label}</span>
         {chip && (
-          <span className="nx-intent__chip" title={mode === 'agent' ? `You are looking at: ${chip}. The agent is told your message and which project this is, not this selection.` : `Sent with context: ${chip}`}>
-            <span className="nx-visually-hidden">{mode === 'agent' ? 'Looking at: ' : 'Context: '}</span>{chip}
+          <span className="nx-intent__chip" title={words.chipTitle(chip)}>
+            <span className="nx-visually-hidden">Looking at: </span>{chip}
           </span>
         )}
-        <label className="nx-visually-hidden" htmlFor={ids.field}>{mode === 'agent' ? 'Ask the project’s agent' : 'Ask the lead agent'}</label>
+        <label className="nx-visually-hidden" htmlFor={ids.field}>{words.ariaLabel}</label>
         <textarea
           id={ids.field} ref={ta} className="nx-intent__field" rows={1}
-          placeholder={mode === 'agent' ? 'Describe a change for the project’s agent' : 'Ask the lead agent to plan, build or fix something'}
+          placeholder={words.placeholder}
           value={draft}
           aria-describedby={error ? `${ids.error} ${ids.status}` : ids.status}
           aria-invalid={error ? true : undefined}
@@ -169,13 +167,13 @@ export function IntentLine({ summoned = false, onClose }: { summoned?: boolean; 
           }}
         />
         <div className="nx-intent__suggest" ref={popRef}>
-          <button type="button" className="nx-btn nx-btn--quiet nx-iconbtn" aria-label="Suggestions" title="Suggestions"
+          <button type="button" className="nx-btn nx-btn--quiet nx-iconbtn" aria-label="Ideas to start from" title="Ideas to start from"
             aria-expanded={suggestOpen} aria-controls={ids.pop} onClick={() => setSuggestOpen((v) => !v)}
             onKeyDown={(e) => { if (e.key === 'Escape' && suggestOpen) { e.preventDefault(); e.stopPropagation(); setSuggestOpen(false); } }}>
             <Icon name="sparkles" size={15} />
           </button>
           {suggestOpen && (
-            <ul id={ids.pop} className="nx-intent__pop" aria-label="Suggestions"
+            <ul id={ids.pop} className="nx-intent__pop" aria-label="Ideas to start from"
               onKeyDown={(e) => { if (e.key === 'Escape') { e.stopPropagation(); setSuggestOpen(false); ta.current?.focus(); } }}>
               {SUGGESTIONS.map((sg) => (
                 <li key={sg.id}>
@@ -187,8 +185,8 @@ export function IntentLine({ summoned = false, onClose }: { summoned?: boolean; 
             </ul>
           )}
         </div>
-        <button type="submit" className="nx-btn nx-btn--primary" aria-label={mode === 'agent' ? 'Ask the agent' : 'Send'} disabled={!draft.trim() || sending}>
-          <Icon name="send" size={15} /><span className="nx-intent__send-text">{mode === 'agent' ? 'Ask the agent' : 'Send'}</span>
+        <button type="submit" className="nx-btn nx-btn--primary" aria-label={words.button} disabled={!draft.trim() || sending}>
+          <Icon name="send" size={15} /><span className="nx-intent__send-text">{words.button}</span>
         </button>
         {summoned && onClose && (
           <button type="button" className="nx-btn nx-btn--quiet nx-iconbtn" aria-label="Close" title="Close" onClick={onClose}>
@@ -198,7 +196,7 @@ export function IntentLine({ summoned = false, onClose }: { summoned?: boolean; 
       </div>
       {error && <p id={ids.error} className="nx-intent__error" role="alert">{error}</p>}
       <p id={ids.status} className="nx-intent__status">
-        <span>{statusText}</span> <span>{mode === 'agent' ? 'A message continues this project’s open conversation, or starts one when there is none; follow it in the agent panel on the bench.' : port.replyHint}</span>
+        <span>{words.explain}</span>
         <span role="status">
           {sent && <> {sent.lead} <a href={sent.href}>{sent.label}</a></>}
         </span>

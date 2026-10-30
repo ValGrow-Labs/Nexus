@@ -31,20 +31,20 @@ export function useLeadAgentPort(): AssistantPort {
     return agents.find((a) => a.id === id) ?? null;
   }, [agents, hint]);
   const canon = useCanonicalAgents();
-  const godLabel = god ? displayAgents(canon, hint).get(god.id)?.label ?? 'Lead agent' : null;
+  const godLabel = god ? displayAgents(canon, hint).get(god.id)?.label ?? 'Lead AI helper' : null;
   const godStatus = useStore((s) => s.godStatus);
   const paused = useDeliveryPaused(god?.id ?? null);
   const status = resolveAssistantStatus({ god: god && godLabel ? { id: god.id, name: godLabel } : null, godStatus, deliveryPaused: paused });
   return {
     status,
-    replyHint: 'Replies appear in the lead agent\u2019s terminal in Agents.',
+    replyHint: 'Its reply shows up in Agents.',
     send: ({ text, contextHeader }) => {
       const trimmed = text.trim();
       if (!trimmed) return { ok: false, error: 'Type a message first.' };
       if (status.state === 'unavailable') return { ok: false, error: status.reason };
       const instruction = contextHeader ? `${contextHeader}\n${trimmed}` : trimmed;
       const queuedMessageId = useStore.getState().enqueueMessage(status.target.id, trimmed, { instruction });
-      if (!queuedMessageId) return { ok: false, error: 'The message could not be queued.' };
+      if (!queuedMessageId) return { ok: false, error: 'Nexus could not hand the message to the lead AI helper. Try again.' };
       return { ok: true, target: status.target, queuedMessageId };
     },
     openConversation: () => {

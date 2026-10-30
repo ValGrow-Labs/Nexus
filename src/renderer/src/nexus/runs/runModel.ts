@@ -2,10 +2,10 @@ export type StageId = 'context' | 'plan' | 'execute' | 'output' | 'review';
 export type StageState = 'done' | 'active' | 'waiting' | 'pending' | 'unreported';
 export type RunView = { id: string; title: string; headline: string; stages: { id: StageId; label: string; state: StageState }[]; needsInput: boolean; agentOffline: boolean };
 
-const LABELS: Record<StageId, string> = { context: 'Context', plan: 'Plan', execute: 'Execute', output: 'Output', review: 'Review' };
+const LABELS: Record<StageId, string> = { context: 'Your request', plan: 'Plan', execute: 'Work', output: 'Result', review: 'Look over' };
 const WORKING = new Set(['working', 'thinking']);
 
-/** The lead agent reports only queue state, acknowledged deliveries and its
+/** The lead AI helper reports only queue state, acknowledged deliveries and its
  *  terminal status. Plan, output and review stay "unreported" until an
  *  AgentRuntime provides them.
  *  - queued: the message is still in the agent's queue;
@@ -20,15 +20,15 @@ export function leadAgentRun(input: {
   const { queued, delivered, isLatestDelivered, agentPresent, agentStatus, blocked } = input;
   const live = delivered && isLatestDelivered && agentPresent;
   let execute: StageState; let headline: string;
-  if (queued && !agentPresent) { execute = 'pending'; headline = 'Queued. The lead agent is not running'; }
-  else if (queued) { execute = 'pending'; headline = 'Queued for the lead agent'; }
-  else if (live && blocked) { execute = 'waiting'; headline = 'Waiting for you in its terminal'; }
-  else if (live && agentStatus && WORKING.has(agentStatus)) { execute = 'active'; headline = 'The lead agent is working'; }
-  else if (delivered) { execute = 'unreported'; headline = 'Delivered. See the lead agent’s terminal for the result'; }
+  if (queued && !agentPresent) { execute = 'pending'; headline = 'Waiting. The lead AI helper is not running. Open Agents to start it'; }
+  else if (queued) { execute = 'pending'; headline = 'Waiting for the lead AI helper to pick it up'; }
+  else if (live && blocked) { execute = 'waiting'; headline = 'The lead AI helper is waiting for you. Open Agents to answer it'; }
+  else if (live && agentStatus && WORKING.has(agentStatus)) { execute = 'active'; headline = 'The lead AI helper is working on it'; }
+  else if (delivered) { execute = 'unreported'; headline = 'Handed to the lead AI helper. Open Agents to see its reply'; }
   // Removing an agent deletes its queue, so without the agent we cannot say more.
-  else if (!agentPresent) { execute = 'unreported'; headline = 'Not tracked. The lead agent it was sent to is no longer running'; }
+  else if (!agentPresent) { execute = 'unreported'; headline = 'Nexus can no longer follow this. The lead AI helper it went to is not running'; }
   // Removed or cleared by the user, or dropped by the drain after failed writes.
-  else { execute = 'unreported'; headline = 'Left the queue without being delivered'; }
+  else { execute = 'unreported'; headline = 'It was taken off the waiting list before the lead AI helper got it. Send it again'; }
   const state: Record<StageId, StageState> = { context: 'done', plan: 'unreported', execute, output: 'unreported', review: 'unreported' };
   return {
     id: input.request.id,

@@ -7,6 +7,7 @@ import { errorCopy, execFailText } from '../data/errorCopy';
 import { useDeployments, useJobs, useExecStore, withIntent } from '../data/useExecution';
 import { useExecutionUi } from '../project/execContext';
 import { Button } from '../ui/Button';
+import { GLOSSARY } from '../data/glossary';
 import { RunStrip } from './RunStrip';
 import { useRuns } from './useRuns';
 import { STAGE_STATE_TEXT, awaitingUserCheck, expectedChecksFor, jobRun, livePreviewsOf } from './jobRunModel';
@@ -90,7 +91,7 @@ function JobRow({ job, explain, jobs, deployments }: { job: JobView; explain: bo
         <span className="nx-run__headline" aria-live="polite" title={run.codes.length ? run.codes.join(', ') : undefined}>{run.headline}</span>
       </header>
       {run.stages.length > 0 && (
-        <ol className="nx-run__stages" aria-label="Stages">
+        <ol className="nx-run__stages" aria-label="Steps of this task">
           {run.stages.map((s) => (
             <li key={s.id} data-state={s.state === 'stopped' ? 'unreported' : s.state === 'waiting' ? 'waiting' : s.state}>
               <span>{s.label}</span>
@@ -99,18 +100,19 @@ function JobRow({ job, explain, jobs, deployments }: { job: JobView; explain: bo
           ))}
         </ol>
       )}
-      <p className="nx-run__note">{run.word} · {new Date(job.createdAt).toLocaleString()}{job.attempts > 1 ? ` · ${job.attempts} attempts` : ''}</p>
+      <p className="nx-run__note">{run.word} · {new Date(job.createdAt).toLocaleString()}{job.attempts > 1 ? ` · ${job.attempts} tries` : ''}</p>
+      {run.next && <p className="nx-run__next">{run.next}</p>}
       <div className="nx-run__actions">
         {run.canCancel && <Button disabled={busy !== null} onClick={() => { void act('cancel'); }}>{busy === 'cancel' ? 'Cancelling…' : 'Cancel'}</Button>}
         {run.canRetry && <Button disabled={busy !== null} onClick={() => { void act('retry'); }}>{busy === 'retry' ? 'Retrying…' : 'Retry'}</Button>}
-        {ui && job.attempts > 0 && <Button variant="quiet" onClick={() => ui.openLog({ jobId: job.id })}>Logs</Button>}
+        {ui && job.attempts > 0 && <Button variant="quiet" onClick={() => ui.openLog({ jobId: job.id })}>See the log</Button>}
       </div>
       {note && <p className="nx-passport__note" role="alert">{note}</p>}
     </article>
   );
 }
 
-/** Jobs of this project, persisted (nexus:jobs:list), newest first. */
+/** Tasks of this project, persisted (nexus:jobs:list), newest first. */
 function JobsSection({ projectId }: { projectId: string }) {
   const jobs = useJobs(projectId);
   const deployments = useDeployments(projectId);
@@ -119,16 +121,16 @@ function JobsSection({ projectId }: { projectId: string }) {
   return (
     <section className="nx-xj" aria-labelledby="nx-xj-title">
       <div className="nx-xj__head">
-        <h2 id="nx-xj-title" className="nx-xj__title">Jobs</h2>
+        <h2 id="nx-xj-title" className="nx-xj__title">Tasks</h2>
         {/* The setup sheet opens from here in every state of this computer, ready included (Check again, the GPU line). */}
-        {ui && <Button variant="quiet" onClick={ui.openSetup}>This computer’s execution setup</Button>}
+        {ui && <Button variant="quiet" onClick={ui.openSetup}>{GLOSSARY.getReady.name}</Button>}
       </div>
       {/* The execution notice is the bench's (one line above every tool), not repeated here. */}
       {off && off.kind !== 'execution_unavailable' && off.kind !== 'unavailable' && (
         <p className="nx-muted" role="status">{off.text} {off.retry && <Button variant="quiet" onClick={jobs.reload}>Try again</Button>}</p>
       )}
-      {!jobs.loaded && !off && <p className="nx-muted" role="status">Reading jobs…</p>}
-      {jobs.loaded && !off && (jobs.data ?? []).length === 0 && <p className="nx-muted">No jobs have run for this project.</p>}
+      {!jobs.loaded && !off && <p className="nx-muted" role="status">Reading your tasks…</p>}
+      {jobs.loaded && !off && (jobs.data ?? []).length === 0 && <p className="nx-muted">No tasks have run for this project yet.</p>}
       {(jobs.data ?? []).length > 0 && (
         <ul className="nx-runs">
           {(jobs.data ?? []).map((j, i) => <li key={j.id}><JobRow job={j} explain={i < 5} jobs={jobs.data ?? []} deployments={deployments.data} /></li>)}
@@ -138,7 +140,7 @@ function JobsSection({ projectId }: { projectId: string }) {
   );
 }
 
-/** Jobs of this project (persisted), then the requests sent from it in this session, newest first. */
+/** Tasks of this project (persisted), then the requests sent from it to the lead AI helper since Nexus was opened, newest first. */
 export function ProjectRuns({ projectId }: { projectId: string }) {
   const port = useAssistant();
   const setDraft = useNexusUi((s) => s.setDraft);
@@ -148,9 +150,9 @@ export function ProjectRuns({ projectId }: { projectId: string }) {
     <section className="nx-surface" aria-labelledby="nx-surface-title">
       <h1 id="nx-surface-title" className="nx-surface__title" tabIndex={-1}>Runs</h1>
       <JobsSection projectId={projectId} />
-      <h2 className="nx-xj__title">Requests sent this session</h2>
+      <h2 className="nx-xj__title">Requests to the lead AI helper</h2>
       {entries.length === 0 ? (
-        <p className="nx-muted">No requests sent from this project in this session. Requests you send with the intent line appear here.</p>
+        <p className="nx-muted">You have not sent the lead AI helper a request from this project since you opened Nexus. Requests you send to the lead AI helper appear here. Requests to this project’s AI helper are in its own panel.</p>
       ) : (
         <ul className="nx-runs">
           {entries.map(({ request, run }) => (

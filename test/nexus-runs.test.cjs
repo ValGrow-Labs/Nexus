@@ -11,13 +11,13 @@ const run = (o) => leadAgentRun({ ...base, ...o });
 test('queued request: context done, execute pending, the rest unreported', () => {
   const r = run({ queued: true });
   assert.deepEqual(states(r), { context: 'done', plan: 'unreported', execute: 'pending', output: 'unreported', review: 'unreported' });
-  assert.equal(r.headline, 'Queued for the lead agent');
+  assert.equal(r.headline, 'Waiting for the lead AI helper to pick it up');
 });
 
 test('latest delivered and working: execute active', () => {
   const r = run({ delivered: true, isLatestDelivered: true, agentStatus: 'working' });
   assert.equal(states(r).execute, 'active');
-  assert.equal(r.headline, 'The lead agent is working');
+  assert.equal(r.headline, 'The lead AI helper is working on it');
   assert.equal(states(run({ delivered: true, isLatestDelivered: true, agentStatus: 'thinking' })).execute, 'active');
 });
 
@@ -25,13 +25,13 @@ test('latest delivered and blocked: waiting for input in the terminal', () => {
   const r = run({ delivered: true, isLatestDelivered: true, agentStatus: 'blocked', blocked: true });
   assert.equal(states(r).execute, 'waiting');
   assert.equal(r.needsInput, true);
-  assert.equal(r.headline, 'Waiting for you in its terminal');
+  assert.equal(r.headline, 'The lead AI helper is waiting for you. Open Agents to answer it');
 });
 
 test('delivered and idle: no claim that the work finished', () => {
   const r = run({ delivered: true, isLatestDelivered: true, agentStatus: 'idle' });
   assert.equal(states(r).execute, 'unreported');
-  assert.equal(r.headline, 'Delivered. See the lead agent’s terminal for the result');
+  assert.equal(r.headline, 'Handed to the lead AI helper. Open Agents to see its reply');
 });
 
 test('delivered but not the latest delivery: the agent’s live status is not claimed', () => {
@@ -39,28 +39,28 @@ test('delivered but not the latest delivery: the agent’s live status is not cl
     const r = run({ delivered: true, isLatestDelivered: false, ...o });
     assert.equal(states(r).execute, 'unreported');
     assert.equal(r.needsInput, false);
-    assert.equal(r.headline, 'Delivered. See the lead agent’s terminal for the result');
+    assert.equal(r.headline, 'Handed to the lead AI helper. Open Agents to see its reply');
   }
 });
 
 test('left the queue without delivery (removed, cleared or dropped): never "delivered"', () => {
   const r = run({ queued: false, delivered: false, agentStatus: 'working' });
   assert.equal(states(r).execute, 'unreported');
-  assert.equal(r.headline, 'Left the queue without being delivered');
+  assert.equal(r.headline, 'It was taken off the waiting list before the lead AI helper got it. Send it again');
 });
 
 test('agent offline: still queued, never working', () => {
   const r = run({ queued: true, agentPresent: false, agentStatus: null });
   assert.equal(r.agentOffline, true);
   assert.equal(states(r).execute, 'pending');
-  assert.equal(r.headline, 'Queued. The lead agent is not running');
+  assert.equal(r.headline, 'Waiting. The lead AI helper is not running. Open Agents to start it');
 });
 
 test('agent gone and message neither queued nor delivered: not tracked', () => {
   const r = run({ agentPresent: false, agentStatus: null });
   assert.equal(states(r).execute, 'unreported');
   assert.equal(r.agentOffline, true);
-  assert.equal(r.headline, 'Not tracked. The lead agent it was sent to is no longer running');
+  assert.equal(r.headline, 'Nexus can no longer follow this. The lead AI helper it went to is not running');
 });
 
 test('title is the request text, trimmed to 80 characters', () => {
@@ -81,7 +81,7 @@ test('runsFor: queued from the queue, delivered from the delivery record, live s
   assert.equal(states(a).execute, 'unreported');
   assert.equal(states(b).execute, 'active');
   assert.equal(states(c).execute, 'pending');
-  assert.equal(d.headline, 'Left the queue without being delivered');
+  assert.equal(d.headline, 'It was taken off the waiting list before the lead AI helper got it. Send it again');
   assert.deepEqual([a, b, c, d].map(isRunLive), [false, true, true, false]);
 });
 

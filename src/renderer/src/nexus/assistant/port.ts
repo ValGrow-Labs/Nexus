@@ -17,7 +17,7 @@ export interface AssistantPort {
 }
 
 export function resolveAssistantStatus(input: { god: { id: string; name: string } | null; godStatus: string; deliveryPaused: boolean }): AssistantStatus {
-  if (!input.god) return { state: 'unavailable', reason: 'No lead agent is running.' };
+  if (!input.god) return { state: 'unavailable', reason: 'The lead AI helper is not running. Open Agents to start it.' };
   const target: AssistantTarget = { id: input.god.id, name: input.god.name, kind: 'lead-agent' };
   if (input.godStatus === 'booting') return { state: 'starting', target };
   return { state: 'ready', target, deliveryPaused: input.deliveryPaused };

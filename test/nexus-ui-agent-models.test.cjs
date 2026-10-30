@@ -227,37 +227,37 @@ test('UA5 no percentage, and no cost without the "reported" or "estimated" label
     A.usageTodayLine({ usdCents: 120, turns: 2, estimated: false }), A.usageTodayLine({ usdCents: 200, turns: 1, estimated: true }), A.usageTodayLine({ usdCents: 0, turns: 0, estimated: false })];
   for (const t of lines) {
     assert.doesNotMatch(t, /%|percent/i, t);
-    if (/\$/.test(t)) assert.match(t, /reported by the agent runtime|estimated/, t);
+    if (/\$/.test(t)) assert.match(t, /reported by the AI service|estimated/, t);
   }
   assert.equal(A.usageLine(null), null);
-  assert.match(A.usageLine(usage()), /cost \$0\.42 \(reported by the agent runtime\)/);
+  assert.match(A.usageLine(usage()), /cost \$0\.42 \(reported by the AI service\)/);
   assert.match(A.usageLine(usage({ estimated: true })), /estimated/);
-  assert.doesNotMatch(A.usageLine(usage({ estimated: true })), /reported by the agent runtime/);
+  assert.doesNotMatch(A.usageLine(usage({ estimated: true })), /reported by the AI service/);
   // The panel, the log and the setup rows say the same.
   const panel = A.agentPanelModel({ health: health({ agent: agentView({ usageToday: { usdCents: 150, turns: 3, estimated: true } }) }), availability: READY, sessions: [], sessionsFail: null });
   assert.match(panel.usageToday, /estimated/);
   const log = A.sessionLogModel({ ...session(), turnHistory: [{ jobId: 'J1', state: 'completed', headline: 'checks_passed', outcome: 'completed', error: null, usage: usage({ costUsdCents: 99 }), createdAt: NOW, startedAt: NOW, finishedAt: NOW }],
     messages: [], toolCalls: [], versions: [], approvals: [] });
-  assert.match(log.turns[0].usage, /\(reported by the agent runtime\)/);
+  assert.match(log.turns[0].usage, /\(reported by the AI service\)/);
   for (const r of X.agentSetupRows(agentView({ usageToday: { usdCents: 99, turns: 1, estimated: false } }))) {
     const t = `${r.text} ${r.action ?? ''}`;
     assert.doesNotMatch(t, /%/);
-    if (/cost \$/.test(t)) assert.match(t, /reported by the agent runtime|estimated/);
+    if (/cost \$/.test(t)) assert.match(t, /reported by the AI service|estimated/);
   }
 });
 
-test('UA12 a partial turn with no change reads "The agent made no change", never done; no turn calls itself complete', () => {
+test('UA12 a partial turn with no change reads "The AI helper made no changes", never done; no turn calls itself complete', () => {
   const noChange = job({ state: 'partial', outcome: 'no_change', headline: 'checks_could_not_run', startedAt: NOW, finishedAt: NOW });
   const v = R.jobRun(noChange);
-  assert.equal(v.headline, 'The agent made no change');
-  assert.equal(v.word, 'No change');
-  assert.equal(R.agentTurnHeadline(noChange), 'The agent made no change');
+  assert.equal(v.headline, 'The AI helper made no changes');
+  assert.equal(v.word, 'No changes');
+  assert.equal(R.agentTurnHeadline(noChange), 'The AI helper made no changes');
   assert.doesNotMatch(`${v.headline} ${v.word} ${v.title}`, /done|complete|finished|passed/i);
   // Only the recorded outcome `no_change` justifies that sentence: a partial turn with no or an unknown outcome says only that it ended in part.
   for (const outcome of [null, 'surprise', 'completed']) {
     const p = R.jobRun(job({ state: 'partial', outcome, headline: 'checks_could_not_run', startedAt: NOW }));
-    assert.equal(p.headline, 'The agent’s turn ended in part; what it changed is not recorded', String(outcome));
-    assert.equal(p.word, 'Ended in part');
+    assert.equal(p.headline, 'The AI helper stopped early. Nexus did not keep a record of what it changed', String(outcome));
+    assert.equal(p.word, 'Stopped early');
   }
   // A turn has no sandbox / collecting / checking ladder: no stage of an agent.run job reads done (it has none at all).
   assert.deepEqual(v.stages, []);
@@ -274,31 +274,34 @@ test('UA12 a partial turn with no change reads "The agent made no change", never
     if (state === 'completed') assert.doesNotMatch(r.headline, /checks passed|checks could not run/);
   }
   assert.ok(n > 500);
-  assert.equal(R.agentTurnHeadline(job({ state: 'completed', outcome: 'completed' })), 'The agent ended its turn and registered its work');
-  assert.equal(R.jobTitle(job()), 'Agent turn');
-  assert.equal(R.jobTitle({ kind: 'tool.run', actionId: null, recipeId: 'changeset.collect' }), 'Collect the change');
+  assert.equal(R.agentTurnHeadline(job({ state: 'completed', outcome: 'completed' })), 'The AI helper handed in its suggested changes');
+  assert.equal(R.jobTitle(job()), 'Request to the AI helper');
+  assert.equal(R.jobTitle({ kind: 'tool.run', actionId: null, recipeId: 'changeset.collect' }), 'Collect what the AI helper changed');
 });
 
 // ---------- UA6 ----------
 
-test('UA6 the agent\'s messages are labelled display only, and a tool call shows its name and result size, never its arguments', () => {
+test('UA6 what the AI helper wrote is labelled for reading only, and a step shows its plain description and whether it worked, never its arguments', () => {
   const d = { ...session(), turnHistory: [], versions: [{ versionId: 'V1', kind: 'change_set', status: 'candidate' }], approvals: [],
     messages: [{ seq: 1, ts: NOW, from: 'user', text: 'fix it', displayOnly: true }, { seq: 2, ts: NOW, from: 'agent', text: 'I fixed it. All checks are green.', displayOnly: true }],
     toolCalls: [{ seq: 3, ts: NOW, jobId: 'J1', tool: 'Read', ok: true, resultBytes: 2048 }, { seq: 4, ts: NOW, jobId: 'J1', tool: 'rm -rf / <script>', ok: false, resultBytes: null },
       { seq: 5, ts: NOW, jobId: 'J1', tool: 'Edit', ok: null, resultBytes: null }] };
   const v = A.sessionLogModel(d);
   assert.match(v.note, /for reading only/);
-  assert.match(v.note, /not evidence/);
-  assert.equal(v.messages[1].author, 'Agent (display only)');
+  assert.match(v.note, /not proof/);
+  assert.equal(v.messages[1].author, 'AI helper (for reading only)');
   assert.equal(v.messages[0].author, 'You');
-  assert.equal(v.toolCalls[0].size, '2 KB');
-  assert.equal(v.toolCalls[1].tool, 'a tool', 'a name that is not a plain tool name is never shown');
-  assert.equal(v.toolCalls[1].size, 'size not recorded');
-  assert.equal(v.toolCalls[2].outcome, 'result not recorded');
-  assert.deepEqual(v.versions[0], { key: 'V1', versionId: 'V1', kind: 'Change set', status: 'ready' });
+  assert.equal(v.toolCalls[0].tool, 'Reading a file');
+  assert.equal(v.toolCalls[0].outcome, 'Worked');
+  assert.equal(v.toolCalls[1].tool, 'A step', 'a name that is not a plain tool name is never shown');
+  assert.equal(v.toolCalls[1].outcome, 'Did not work');
+  assert.equal(v.toolCalls[2].tool, 'Writing a file');
+  assert.equal(v.toolCalls[2].outcome, 'Result not recorded');
+  for (const c of v.toolCalls) assert.equal('size' in c, false, 'no result size is shown: it means nothing to a person');
+  assert.deepEqual(v.versions[0], { key: 'V1', versionId: 'V1', kind: ART.kindLabel('change_set'), status: ART.statusLabel('candidate') });
   const tsx = src('agent/SessionLog.tsx');
   assert.match(tsx, /view\.note/, 'the note is rendered');
-  assert.match(tsx, /display only/i);
+  assert.match(tsx, /for reading only/i);
 });
 
 // ---------- UA7 ----------
@@ -354,7 +357,7 @@ test('UA7 every unmet prerequisite is a sentence, never a button that would be r
   const waiting = A.agentPanelModel({ health: health(), availability: READY, sessionsFail: null, sessions: [session({ status: 'running', liveJobId: 'J1' })],
     jobs: new Map([['J1', job({ state: 'queued', phase: 'waiting:consent' })]]) });
   assert.equal(waiting.sessions[0].word, 'Waiting');
-  assert.equal(waiting.sessions[0].turn, 'Waiting for your network permission');
+  assert.equal(waiting.sessions[0].turn, 'Waiting for your internet permission');
   assert.equal(waiting.working, null);
   assert.equal(A.agentPanelModel({ health: health(), availability: READY, sessionsFail: null, sessions: [session({ status: 'awaiting_approval', liveJobId: 'J2' })] }).working, 'Waiting for you');
   // The setup row: the disclosure appears once, on the permission row, in every state.
@@ -476,13 +479,13 @@ test('carry: a consent revoke row reads revoked, a grant row reads given; an unk
 });
 
 test('carry: a queued job says why it waits (the phase), the flow actions are never a job-start button, the client has the new methods', () => {
-  for (const [phase, text] of [['waiting:consent', 'Waiting for your network permission'], ['waiting:budget', 'Waiting for budget'], ['waiting:slots', 'Waiting for a free slot'],
-    ['waiting:runtime', 'Waiting for the agent to be checked on this computer'], ['waiting:approval', 'Waiting for your approval']]) {
+  for (const [phase, text] of [['waiting:consent', 'Waiting for your internet permission'], ['waiting:budget', 'Waiting: the AI helper has used its limit for today'], ['waiting:slots', 'Waiting for room to start'],
+    ['waiting:runtime', 'Waiting for the AI helper to be checked on this computer'], ['waiting:approval', 'Waiting for your OK']]) {
     assert.equal(R.jobRun(job({ phase })).headline, text, phase);
     assert.equal(R.jobRun(job({ kind: 'tool.run', actionId: 'sde.tests.run', phase })).headline, text, `${phase} on a recipe job`);
   }
-  assert.equal(R.jobRun(job({ kind: 'tool.run', phase: null })).headline, 'Queued; it starts when a slot is free');
-  assert.equal(R.jobRun(job({ kind: 'tool.run', phase: 'waiting:mystery' })).headline, 'Queued; it starts when a slot is free');
+  assert.equal(R.jobRun(job({ kind: 'tool.run', phase: null })).headline, 'Waiting to start. It starts as soon as there is room');
+  assert.equal(R.jobRun(job({ kind: 'tool.run', phase: 'waiting:mystery' })).headline, 'Waiting to start. It starts as soon as there is room');
   // An AVAILABLE flow action is never a button on the generic action bar (it would start a job); the generic bar skips it.
   const sde = DOMAINS.find((d) => d.id === 'sde');
   const flows = ['sde.agent.turn', 'sde.changeset.review', 'sde.changeset.accept', 'sde.repo.merge'];
@@ -513,7 +516,7 @@ test('source pins: the merge asks only the channel (the dialog is main\'s), Acce
   assert.match(rv, /nexusClient\.changeSetAccept\(/);
   assert.match(rv, /nexusClient\.reviewDecide\(/);
   assert.doesNotMatch(rv, /confirm\(|window\.confirm|showMessageBox/, 'the confirmation is main\'s native dialog, never a renderer one');
-  assert.doesNotMatch(rv + src('agent/AgentPanel.tsx') + src('data/useAgents.ts').replace(/setInterval\(\(\) => read\(0\), CONSENT_REASK_MS\)/, ''), /setInterval/, 'no background polling');
+  assert.doesNotMatch(rv + src('agent/AgentPanel.tsx').replace(/setInterval\(\(\) => setNow\(Date\.now\(\)\), PROGRESS_TICK_MS\)/, '') + src('data/useAgents.ts').replace(/setInterval\(\(\) => read\(0\), CONSENT_REASK_MS\)/, ''), /setInterval/, 'no background polling (the one tick is a local clock for "working for 2 minutes" while a request is live: it asks main for nothing)');
   const hooks = src('data/useAgents.ts');
   assert.equal((hooks.match(/setInterval\(/g) || []).length, 1, 'only the open setup sheet re-asks');
   assert.match(hooks, /if \(!open\) return;/);
@@ -532,8 +535,13 @@ test('source pins: the merge asks only the channel (the dialog is main\'s), Acce
 
 test('F1 the intent line says the legacy reply hint only in legacy mode; in agent mode each send starts a new conversation (UA8 pin)', () => {
   const il = src('intent/IntentLine.tsx');
-  assert.match(il, /mode === 'agent' \? 'A message continues this project’s open conversation, or starts one when there is none;[^']*' : port\.replyHint/);
-  assert.equal((il.match(/port\.replyHint/g) || []).length, 1, 'the lead-agent terminal hint is rendered only through the legacy branch');
+  const lead = { state: 'ready', deliveryPaused: false };
+  const agentWords = A.intentWords({ mode: 'agent', lead, onSoftwareProject: false, note: null, replyHint: 'Its reply shows up in Agents.' });
+  const legacyWords = A.intentWords({ mode: 'legacy', lead, onSoftwareProject: false, note: null, replyHint: 'Its reply shows up in Agents.' });
+  assert.doesNotMatch(agentWords.explain, /Its reply shows up in Agents/, 'the lead AI helper reply hint is said only in the lead AI helper mode');
+  assert.match(legacyWords.explain, /Its reply shows up in Agents\./);
+  assert.match(agentWords.explain, /open conversation|AI helper panel/);
+  assert.equal((il.match(/port\.replyHint/g) || []).length, 1, 'the lead AI helper reply hint is handed to the words once, and only the lead mode says it');
 });
 
 test('F2 the change view is keyed by version (no asking, comment, note or busy state leaks across versions); ActionArtifact.kind is required', () => {
@@ -587,15 +595,15 @@ test('F4 a SessionLog heading sits one level under the panel heading', () => {
   assert.match(log, /<h3 /);
 });
 
-test('F5 a no-change turn that main headlines `checks_could_not_run` reads "The agent made no change" in the run row, the log and the runs list', () => {
+test('F5 a no-change turn that main headlines `checks_could_not_run` reads "The AI helper made no changes" in the run row, the log and the runs list', () => {
   const t = job({ state: 'partial', outcome: 'no_change', headline: 'checks_could_not_run', startedAt: NOW, finishedAt: NOW });
   const run = R.jobRun(t, { reason: 'No tests were executed.' });
-  assert.equal(run.headline, 'The agent made no change');
+  assert.equal(run.headline, 'The AI helper made no changes');
   assert.doesNotMatch(`${run.headline} ${run.word}`, /checks|could not run/i);
   // The conversation log words the same turn from its state and outcome, never from the headline.
   const log = A.sessionLogModel({ ...session(), turnHistory: [{ jobId: 'J1', state: 'partial', headline: 'checks_could_not_run', outcome: 'no_change', error: null, usage: null, createdAt: NOW, startedAt: NOW, finishedAt: NOW }],
     messages: [], toolCalls: [], versions: [], approvals: [] });
-  assert.equal(log.turns[0].headline, 'The agent made no change');
+  assert.equal(log.turns[0].headline, 'The AI helper made no changes');
   // The runs list does not even read a check reason for an agent turn.
   assert.match(src('runs/ProjectRuns.tsx'), /explain && job\.kind !== 'agent\.run' && \(job\.headline === 'checks_failed'/);
 });
@@ -635,7 +643,7 @@ test('R4-I1 the program is "signed in" only when the view says so; an unreadable
   assert.match(X.agentSetupRows(agentView({ signedIn: 'yes' })).find((x) => x.id === 'agent').text, /installed and signed in/);
   assert.match(X.agentSetupRows(agentView({ signedIn: 'yes' })).find((x) => x.id === 'agent').text, /^Your AI program is installed and signed in/);
   const p = A.agentPanelModel({ health: health({ agent: agentView({ signedIn: 'unknown' }) }), availability: READY, sessions: [], sessionsFail: null });
-  assert.equal(p.note, 'Nexus could not confirm that the agent program is signed in.');
+  assert.equal(p.note, 'Nexus could not confirm that the program for your own plan is signed in.');
 });
 
 test('R4-I2 agent work off is its own state: one sentence, no check-again advice, no Grant row; flow actions use the same sentence', () => {
@@ -663,7 +671,7 @@ test('R4-I3 a stale check with a live permission is askable (the send checks aga
   const p = A.agentPanelModel({ health: stale, availability: READY, sessions: [], sessionsFail: null });
   assert.equal(p.canAsk, true);
   assert.equal(p.kind, 'ready');
-  assert.equal(p.note, 'Nexus will check the agent again when you send.');
+  assert.equal(p.note, 'Nexus will check the AI helper again when you send.');
   assert.deepEqual(p.blockers, []);
   assert.doesNotMatch(JSON.stringify(p), /has not been checked/);
   assert.equal(A.intentRoute({ routeName: 'project', primaryWorkspaceId: 'sde', canAsk: p.canAsk }), 'agent', 'the intent line sends to the agent');
@@ -676,18 +684,21 @@ test('R4-I3 a stale check with a live permission is askable (the send checks aga
 
 test('R4-I4 failed-turn outcomes each read their own sentence', () => {
   const f = (outcome) => R.jobRun(job({ state: 'failed', outcome, headline: 'failed', error: { code: outcome, message: 'raw runtime text' } })).headline;
-  assert.equal(f('worktree_guard'), 'The agent was stopped: it changed something outside its working copy; nothing was collected');
+  assert.equal(f('worktree_guard'), 'The AI helper tried to change something outside its safe copy, so it was stopped. Nothing was kept');
   assert.equal(f('consent_mismatch'), E.AGENT_REASON_TEXT.consent_mismatch.replace(/\.$/, ''));
   assert.match(f('consent_mismatch'), /Take it back and allow it again in “Get this computer ready”/);
-  assert.equal(f('proxy_failed'), 'The agent’s network proxy could not start; check again in Setup');
+  assert.equal(f('proxy_failed'), 'The AI helper’s link to the internet could not start');
   assert.equal(f('runtime_unknown'), E.AGENT_REASON_TEXT.runtime_unknown.replace(/\.$/, ''));
-  assert.equal(f('some_new_word'), 'The agent’s turn failed');
+  assert.equal(f('some_new_word'), 'The request did not work');
   for (const o of ['worktree_guard', 'consent_mismatch', 'proxy_failed']) assert.doesNotMatch(f(o), /_|raw runtime text/);
 });
 
 test('R4-I5 the intent chip makes no promise the code does not keep in agent mode', () => {
   const il = src('intent/IntentLine.tsx');
-  assert.match(il, /mode === 'agent' \? `You are looking at: \$\{chip\}\. The agent is told your message and which project this is, not this selection\.` : `Sent with context: \$\{chip\}`/);
+  assert.match(il, /title=\{words\.chipTitle\(chip\)\}/);
+  const w = (mode) => A.intentWords({ mode, lead: { state: 'ready', deliveryPaused: false }, onSoftwareProject: false });
+  assert.equal(w('agent').chipTitle('Fix login'), 'You are looking at: Fix login. The AI helper is told your message and which project this is, not this selection.');
+  assert.equal(w('legacy').chipTitle('Fix login'), 'Sent with context: Fix login');
   const built = A.startArgs({ projectId: 'P', workspaceId: 'sde', sessionId: null, message: 'x', intentId: 'I' });
   assert.deepEqual(built.args.focusVersionIds, [], 'agent mode sends no focus, so it never says "sent with context"');
 });
@@ -710,10 +721,12 @@ test('R4-minors copy and hygiene: merge copy, no raw ids, hashed intent keys, pl
   assert.doesNotMatch(A.messageKey('my secret message'), /secret|message/);
   assert.doesNotMatch(src('agent/AgentPanel.tsx') + src('intent/IntentLine.tsx'), /message\.slice\(0, 64\)|text\.slice\(0, 64\)/);
   // Tool ids in plain words.
-  assert.equal(A.toolLabel('mcp__nexus__changeset_register'), 'Register the change');
-  assert.equal(A.toolLabel('sandbox_exec'), 'Run a command in the sandbox');
-  assert.equal(A.toolLabel('mcp__other__weird_tool'), 'a tool');
-  assert.equal(A.toolLabel('Read'), 'Read');
+  assert.equal(A.toolLabel('mcp__nexus__changeset_register'), 'Saving the suggested changes');
+  assert.equal(A.toolLabel('sandbox_exec'), 'Running a command in the safe space');
+  assert.equal(A.toolLabel('review_request'), 'Sending the suggested changes for review');
+  assert.equal(A.toolLabel('write_file'), 'Writing a file');
+  assert.equal(A.toolLabel('mcp__other__weird_tool'), 'A step');
+  assert.equal(A.toolLabel('Read'), 'Reading a file');
   assert.doesNotMatch(src('agent/SessionLog.tsx'), /className="nx-id">\{c\.tool\}/);
   // Refusals with a next step each.
   for (const k of ['not_fast_forward', 'integration_unexpected', 'merge_conflict', 'branch_mismatch']) {
@@ -982,9 +995,11 @@ test('V9-5 layout pins: the notice strip is bounded and scrolls (the bench keeps
 
 test('V9-6 the project agent is asked with the same words in the panel and in the intent line', () => {
   const il = src('intent/IntentLine.tsx');
-  assert.ok(il.includes("aria-label={mode === 'agent' ? 'Ask the agent' : 'Send'}"));
-  assert.ok(il.includes("{mode === 'agent' ? 'Ask the agent' : 'Send'}</span>"));
-  assert.ok(src('agent/AgentPanel.tsx').includes("'Ask the agent'}</Button>"));
+  const ask = A.intentWords({ mode: 'agent', lead: { state: 'ready' }, onSoftwareProject: false }).button;
+  assert.equal(ask, 'Ask the AI helper');
+  assert.ok(il.includes('aria-label={words.button}'));
+  assert.ok(il.includes('{words.button}</span>'));
+  assert.ok(src('agent/AgentPanel.tsx').includes(`'${ask}'}</Button>`));
 });
 
 test('V9-7 an answer that lists fewer runtimes than the sheet showed (a revoke answers before the probe refills) keeps the missing rows, no longer in use; a complete answer is taken as is', () => {
@@ -1016,27 +1031,33 @@ const SPINE = loadTs('src/renderer/src/nexus/project/spineModel.ts');
 
 test('V9d-1 a failed turn says why, with the fixed sentence for its reason (never the runtime text), and the panel offers the snapshot when that is the way forward', () => {
   const failed = (outcome, createdAt = 2, extra = {}) => ({ state: 'failed', phase: null, headline: 'failed', outcome, cancelRequested: false, createdAt, error: { code: outcome, message: 'RAW internal text' }, ...extra });
-  assert.equal(J.agentTurnHeadline(failed('branch_unknown')), 'Nexus has not saved a starting point for this project yet. Save one first.');
-  assert.equal(J.agentTurnHeadline(failed('git_missing')), 'Git, a free program Nexus needs, is not installed on this computer. Install it, then try again.');
-  assert.match(J.agentTurnHeadline(failed('denied')), /you denied the approval/);
+  assert.equal(J.agentTurnHeadline(failed('branch_unknown')), 'Nexus has not saved a starting point for this project yet. Save one first');
+  assert.equal(J.agentTurnHeadline(failed('git_missing')), 'Git, a free program Nexus needs, is not installed on this computer. Install it, then try again');
+  assert.match(J.agentTurnHeadline(failed('denied')), /you said no/);
   assert.match(J.agentTurnHeadline(failed('expired')), /not answered in time/);
-  assert.equal(J.agentTurnHeadline(failed('some_unknown_code')), 'The agent’s turn failed', 'a reason without copy stays the plain sentence');
-  assert.equal(J.agentTurnHeadline(failed('runtime_auth')), 'The agent could not sign in. Open Setup to check it', 'the earlier wording is unchanged');
+  assert.equal(J.agentTurnHeadline(failed('some_unknown_code')), 'The request did not work', 'a reason without copy stays the plain sentence');
+  assert.equal(J.agentTurnHeadline(failed('runtime_auth')), 'The AI helper could not sign in', 'the reason is one sentence; what to do is the separate next step');
+  assert.match(J.agentTurnNext(failed('runtime_auth')), /Get this computer ready/);
   const panel = (jobs) => A.agentPanelModel({ health: health(), availability: READY, sessions: [], sessionsFail: null, jobs: new Map(jobs.map((j, n) => [`J${n}`, j])) });
   const p = panel([failed('branch_unknown')]);
-  assert.deepEqual(p.failure, { text: 'Nexus has not saved a starting point for this project yet. Save one first.', snapshot: true });
+  assert.deepEqual(p.failure, { text: 'Nexus has not saved a starting point for this project yet. Save one first', snapshot: true });
+  assert.equal(p.ending.tone, 'failed');
+  assert.equal(p.ending.text, 'Nexus has not saved a starting point for this project yet. Save one first.');
+  assert.equal(p.ending.next, null, 'the sentence already says what to do');
+  assert.equal(p.ending.snapshot, true);
   assert.doesNotMatch(JSON.stringify(p.failure), /RAW internal text/);
-  assert.deepEqual(panel([failed('git_missing')]).failure, { text: 'Git, a free program Nexus needs, is not installed on this computer. Install it, then try again.', snapshot: false });
+  assert.deepEqual(panel([failed('git_missing')]).failure, { text: 'Git, a free program Nexus needs, is not installed on this computer. Install it, then try again', snapshot: false });
   assert.equal(panel([failed('branch_unknown', 1), { ...failed('branch_unknown'), state: 'completed', outcome: 'completed', createdAt: 5 }]).failure, null, 'only the newest turn is shown, and only when it failed');
   assert.equal(panel([]).failure, null);
   const panelSrc = src('agent/AgentPanel.tsx');
   assert.ok(panelSrc.includes("actionId: 'sde.repository.snapshot'"));
-  assert.ok(panelSrc.includes('Take a repository snapshot'));
+  assert.ok(panelSrc.includes('Save a starting point'));
   assert.ok(panelSrc.includes('!snapshotStarted'), 'once the snapshot was started from the panel the old failure is not shown again');
 });
 
 test('V9d-2 a turn waiting for the repository-write approval says so in the panel and the approval is answered there; the strip leaves it out; the second step of the confirm is labelled', () => {
-  assert.ok(A.REPO_APPROVAL_WAIT_TEXT.startsWith('Waiting for your approval to let Nexus write hidden refs in this repository.'));
+  assert.ok(A.REPO_APPROVAL_WAIT_TEXT.startsWith('The AI helper is waiting for your OK. Nexus wants to keep hidden Nexus notes in a small hidden area of your project.'));
+  assert.doesNotMatch(A.REPO_APPROVAL_WAIT_TEXT, /refs|worktree|index|objects|branch|repository/i, 'no git word in the lead sentence of a blocking question');
   const panelSrc = src('agent/AgentPanel.tsx');
   assert.ok(panelSrc.includes('REPO_APPROVAL_WAIT_TEXT'));
   assert.ok(panelSrc.includes("a.reason === 'repo.write_refs'"));

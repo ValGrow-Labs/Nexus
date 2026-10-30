@@ -7,7 +7,7 @@ const STATE_TEXT: Record<StageState, string> = {
   active: 'in progress',
   waiting: 'waiting for you',
   pending: 'not started',
-  unreported: 'not reported by this agent'
+  unreported: 'Nexus cannot see this part'
 };
 
 export function RunStrip({ run, onOpenConversation, onRetry }: { run: RunView; onOpenConversation(): void; onRetry(): void }) {
@@ -21,7 +21,7 @@ export function RunStrip({ run, onOpenConversation, onRetry }: { run: RunView; o
       </header>
       <ol className="nx-run__stages" aria-label="Stages">
         {run.stages.map((s) => (
-          <li key={s.id} data-state={s.state} title={s.state === 'unreported' ? 'Not reported by this agent' : undefined}>
+          <li key={s.id} data-state={s.state} title={s.state === 'unreported' ? 'Nexus cannot see this part' : undefined}>
             <span>{s.label}</span>
             <span className="nx-visually-hidden">: {STATE_TEXT[s.state]}</span>
           </li>
@@ -29,11 +29,11 @@ export function RunStrip({ run, onOpenConversation, onRetry }: { run: RunView; o
       </ol>
       {unreported.length > 0 && (
         // Visible key for the dashed bars; screen readers get it per stage above.
-        <p className="nx-run__note" aria-hidden="true">Not reported by this agent: {unreported.join(', ')}</p>
+        <p className="nx-run__note" aria-hidden="true">Nexus cannot see these parts: {unreported.join(', ')}</p>
       )}
       <div className="nx-run__actions">
-        <button type="button" className={`nx-btn${run.needsInput ? ' nx-btn--primary' : ''}`} onClick={onOpenConversation}>Open conversation</button>
-        <button type="button" className="nx-btn nx-btn--quiet" onClick={onRetry}>Send again</button>
+        <button type="button" className={`nx-btn${run.needsInput ? ' nx-btn--primary' : ''}`} onClick={onOpenConversation}>Open Agents</button>
+        <button type="button" className="nx-btn nx-btn--quiet" onClick={onRetry}>Edit and send again</button>
       </div>
     </article>
   );

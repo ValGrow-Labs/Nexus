@@ -49,8 +49,8 @@ test('U-R1 every headline maps to a stage strip and one plain sentence; the brie
   assert.equal(R.jobRun(job({ headline: 'checks_failed', state: 'completed' }), { reason: 'No tests were executed.' }).headline,
     'Tests ran; checks failed: no tests were executed');
   assert.equal(R.jobRun(job({ actionId: 'sde.deps.install', recipeId: 'sde.deps.node', headline: 'waiting_for_approval', state: 'awaiting_approval' })).headline,
-    'Waiting for your approval to download dependencies');
-  assert.equal(R.jobRun(job({ headline: 'waiting:memory' })).headline, 'Waiting: Docker memory is in use by other containers');
+    'Waiting for your OK to download the add-ons your project needs');
+  assert.equal(R.jobRun(job({ headline: 'waiting:memory' })).headline, 'Waiting: Docker is using all of its memory for other tasks');
 });
 
 test('U-R1 a job whose outputs failed their checks never reads completed or passed; stages follow the headline', () => {
@@ -563,7 +563,14 @@ test('(fix round 1, item 5) an unknown headline reads neutrally, never "Failed";
   assert.equal(u.headline, 'Status: completed');
   assert.equal(u.word, 'Status unknown');
   assert.equal(R.jobRun(job({ headline: 'validating', state: 'completed' })).word, 'Checking');
-  assert.equal(R.jobRun(job({ headline: 'failed', state: 'failed', error: { code: 'x', message: 'Out of memory.' } })).headline, 'Failed: out of memory');
+  // The message stored with an error is never shown: an unknown code reads the generic words, a known code its own plain sentence.
+  const raw = R.jobRun(job({ headline: 'failed', state: 'failed', error: { code: 'x', message: 'Out of memory.' } }));
+  assert.equal(raw.headline, 'Failed: Something went wrong while this ran');
+  assert.doesNotMatch(raw.headline, /memory/i, 'the raw message is not displayed');
+  assert.match(raw.next, /Press Retry/);
+  const oom = R.jobRun(job({ headline: 'failed', state: 'failed', error: { code: 'oom', message: 'the container ran out of memory (exit 137)' } }));
+  assert.equal(oom.headline, 'Failed: It ran out of memory, so Nexus stopped it');
+  assert.doesNotMatch(oom.headline, /137|container/);
 });
 
 test('(fix round 1, item 8) one shared health read, re-read on preflight and recovery, polled while the sheet is open; previews keep their pages', () => {
@@ -682,10 +689,10 @@ test('C3 "Check again" asks main for a fresh probe (#23 { probe: true }) and kee
 
 test('final fix: the new labels read as words (unreadable_output_entry, start_window_unobserved); Check again re-reads after 1.5 s', () => {
   assert.equal(R.jobRun(job({ headline: 'failed', state: 'failed', startedAt: NOW, error: { code: 'unreadable_output_entry', message: 'unreadable_output_entry' } })).headline,
-    'Failed: an output could not be read');
+    'Failed: One of the files the task made could not be read');
   assert.equal(R.jobRun(job({ headline: 'failed', state: 'failed', startedAt: NOW, error: { code: 'start_window_unobserved', message: 'start_window_unobserved' } })).headline,
-    'Failed: the app was closed or stalled while it started; start it again');
-  assert.equal(R.jobRun(job({ headline: 'failed', state: 'failed', error: { code: 'x', message: 'Out of memory.' } })).headline, 'Failed: out of memory');
+    'Failed: Nexus was closed or stalled while your app was starting, so it could not tell if the app started');
+  assert.equal(R.jobRun(job({ headline: 'failed', state: 'failed', error: { code: 'x', message: 'Out of memory.' } })).headline, 'Failed: Something went wrong while this ran', 'an unknown code never shows the stored message');
   assert.match(src('data/useExecution.ts'), /export const CHECK_AGAIN_REREAD_MS = 1_500;/);
 });
 
@@ -736,7 +743,7 @@ test('S1/S2 a project-owned repository version gets the SDE version bar: "Find t
 
 test('S3 the execution setup sheet opens from the Runs tool in every availability state, ready included', () => {
   const runs = src('runs/ProjectRuns.tsx');
-  assert.match(runs, /\{ui && <Button variant="quiet" onClick=\{ui\.openSetup\}>This computer’s execution setup<\/Button>\}/);
+  assert.match(runs, /\{ui && <Button variant="quiet" onClick=\{ui\.openSetup\}>\{GLOSSARY\.getReady\.name\}<\/Button>\}/);
   const jobs = runs.slice(runs.indexOf('function JobsSection'), runs.indexOf('export function ProjectRuns'));
   assert.doesNotMatch(jobs, /availability|useHealth/, 'the link is not gated by any availability state');
   assert.ok(jobs.indexOf('ui.openSetup') < jobs.indexOf('{off &&'), 'shown before (and whatever) the jobs read says');
@@ -899,13 +906,13 @@ test('S10 the Assemble job\'s Runs row reads "Ready to check — start a preview
   // The row: main's headline is `validating`; the renderer's records say nothing is checking.
   const assemble = job({ actionId: 'sde.app.assemble', recipeId: 'sde.app.assemble', state: 'completed', headline: 'validating', startedAt: NOW });
   const waiting = R.jobRun(assemble, { awaitingCheck: true });
-  assert.equal(waiting.headline, 'The application was assembled; ready to check — start a preview');
+  assert.equal(waiting.headline, 'The app was put together; ready to check: start a test run of your app');
   assert.equal(waiting.word, 'Ready to check');
   const st = waiting.stages.find((s) => s.id === 'validating');
   assert.deepEqual([st.state, R.STAGE_STATE_TEXT[st.state]], ['waiting', 'waiting']);
   assert.ok(!waiting.stages.some((s) => s.state === 'active'), 'no stage reads "in progress"');
-  assert.equal(R.jobRun(assemble).headline, 'The application was assembled; checking the results', 'unread or live: unchanged');
-  assert.equal(R.jobRun({ ...assemble, headline: 'checks_passed' }, { awaitingCheck: true }).headline, 'The application was assembled; checks passed');
+  assert.equal(R.jobRun(assemble).headline, 'The app was put together; checking the results', 'unread or live: unchanged');
+  assert.equal(R.jobRun({ ...assemble, headline: 'checks_passed' }, { awaitingCheck: true }).headline, 'The app was put together; checks passed');
   const runs = src('runs/ProjectRuns.tsx');
   assert.match(runs, /const awaitingCheck = useAwaitingCheck\(job, jobs, deployments\);\n\s*const run = jobRun\(job, \{ reason, awaitingCheck \}\);/);
   assert.match(runs, /const buildVersionId = job\.inputs\.find\(\(x\) => x\.slot === 'build'\)\?\.versionId \?\? null;/);
@@ -951,10 +958,10 @@ test('S12 reason codes ("(tests_failed)") never reach visible text in Runs or th
   assert.deepEqual([ev.rows[1].summary, ev.rows[1].codes], ['Checks could not run: The runner was lost.', ['runner_lost']]);
   const failed = R.jobRun(job({ actionId: 'sde.tests.discover', recipeId: 'sde.test.discover', headline: 'checks_failed', state: 'completed' }),
     { reason: '1 of 2 executed test(s) failed. (tests_failed)' });
-  assert.equal(failed.headline, 'Tests were listed; checks failed: 1 of 2 executed test(s) failed');
+  assert.equal(failed.headline, 'The tests were found; checks failed: 1 of 2 executed test(s) failed');
   assert.deepEqual(failed.codes, ['tests_failed']);
   const err = R.jobRun(job({ headline: 'failed', state: 'failed', error: { code: 'x', message: 'The container exited (oom_killed).' } }));
-  assert.equal(err.headline, 'Failed: the container exited');
+  assert.equal(err.headline, 'Failed: Something went wrong while this ran', 'the stored message is never shown');
   assert.doesNotMatch(`${failed.headline} ${err.headline} ${ev.rows.map((r) => r.summary).join(' ')}`, /\([a-z]+_[a-z_]+\)/);
   assert.match(src('project/EvidenceSection.tsx'), /<p className="nx-xe__text" title=\{r\.codes\.length \? r\.codes\.join\(', '\) : undefined\}>\{r\.summary\}<\/p>/);
   assert.match(src('runs/ProjectRuns.tsx'), /<span className="nx-run__headline" aria-live="polite" title=\{run\.codes\.length \? run\.codes\.join\(', '\) : undefined\}>\{run\.headline\}<\/span>/);

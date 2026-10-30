@@ -193,7 +193,7 @@ test('RG6 the agent panel with no permission: one sentence and one button that p
   assert.equal(panel(agent({ state: 'off', offReason: 'not_enabled' })).chooseRuntime, false);
   // The panel renders it with exactly one button (the primary one that opens Setup).
   const tsx = read('src/renderer/src/nexus/agent/AgentPanel.tsx');
-  assert.match(tsx, /\{panel\.chooseRuntime \? CHOOSE_RUNTIME_BUTTON : 'Open Setup'\}/);
+  assert.match(tsx, /\{panel\.chooseRuntime \? CHOOSE_RUNTIME_BUTTON : GLOSSARY\.getReady\.name\}/);
   assert.match(tsx, /onClick=\{ui\.openSetup\}/);
 });
 

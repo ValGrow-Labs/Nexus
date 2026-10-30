@@ -11,7 +11,7 @@ import { logLines } from './logModel';
 /** One read of the log: main answers whole frames, redacted again on read, at most this many bytes. */
 export const LOG_PAGE_BYTES = 64 * 1024;
 
-/** The paged, redacted log of one attempt of a job. "Load more" reads on from the byte offset main returned; a log
+/** The paged, redacted log of one try of a task. "Show more" reads on from the offset main returned; a log
  *  range from the evidence opens at its own offset. */
 export function JobLogSheet({ jobId, range, onClose }: { jobId: string; range?: LogRange | null; onClose: () => void }) {
   return (
@@ -57,21 +57,21 @@ function LogBody({ jobId, range, onClose }: { jobId: string; range: LogRange | n
   return (
     <div className="nx-xl">
       <header className="nx-xs__head">
-        <p className="nx-xs__kind">Run log</p>
-        <h2 id="nx-xl-title" className="nx-xs__title">{job.data ? jobTitle(job.data) : 'Log'}</h2>
+        <p className="nx-xs__kind">What the task wrote down</p>
+        <h2 id="nx-xl-title" className="nx-xs__title">{job.data ? jobTitle(job.data) : 'The log'}</h2>
       </header>
       {attempts.length > 1 && (
-        <div className="nx-xl__attempts" role="group" aria-label="Attempt">
+        <div className="nx-xl__attempts" role="group" aria-label="Which try">
           {attempts.map((n) => (
-            <button key={n} type="button" className="nx-btn nx-btn--quiet" aria-pressed={n === shown} onClick={() => setAttempt(n)}><span>Attempt {n}</span></button>
+            <button key={n} type="button" className="nx-btn nx-btn--quiet" aria-pressed={n === shown} onClick={() => setAttempt(n)}><span>Try {n}</span></button>
           ))}
         </div>
       )}
-      {range && <p className="nx-muted">{range.label}{target !== null ? `, attempt ${target}.` : attempts.length > 1 ? '. The report does not say which attempt; pick the one it was made from.' : '.'} Hash {range.sha256}.</p>}
-      {start > 0 && <p className="nx-muted">Starts at byte {start}.</p>}
-      {shown === null && job.loaded && <p className="nx-muted">This job has no attempt yet, so it has no log.</p>}
+      {range && <p className="nx-muted">{range.label}{target !== null ? `, try ${target}.` : attempts.length > 1 ? '. The report does not say which try it came from. Pick the one it was made from.' : '.'} Fingerprint {range.sha256}.</p>}
+      {start > 0 && <p className="nx-muted">This starts part of the way into the log.</p>}
+      {shown === null && job.loaded && <p className="nx-muted">This task has not started yet, so there is no log.</p>}
       {pages.length > 0 && (
-        <pre className="nx-xl__text" tabIndex={0} aria-label="Log text">
+        <pre className="nx-xl__text" tabIndex={0} aria-label="The log">
           {lines.map((l, i) => l.kind === 'frame' ? (
             <span key={i} className="nx-xl__line" data-stream={l.stream}>
               <span className="nx-xl__ts">{l.time}</span> <span className="nx-xl__st">{l.marker}</span> {l.text}
@@ -83,9 +83,9 @@ function LogBody({ jobId, range, onClose }: { jobId: string; range: LogRange | n
           ))}
         </pre>
       )}
-      {last?.truncatedMiddle && <p className="nx-muted">Part of the middle of this log was not kept (it ran past its size limit).</p>}
-      {last && !last.eof && <Button disabled={loading} onClick={() => { void read(last.nextOffset, true); }}>{loading ? 'Reading…' : 'Load more'}</Button>}
-      {last?.eof && <p className="nx-muted">End of the log (byte {last.nextOffset}).</p>}
+      {last?.truncatedMiddle && <p className="nx-muted">The middle of this log was left out because it was very long.</p>}
+      {last && !last.eof && <Button disabled={loading} onClick={() => { void read(last.nextOffset, true); }}>{loading ? 'Reading…' : 'Show more'}</Button>}
+      {last?.eof && <p className="nx-muted">That is the end of the log.</p>}
       {loading && pages.length === 0 && <p className="nx-muted" role="status">Reading the log…</p>}
       {error && <p className="nx-passport__note" role="alert">{error}</p>}
       <div className="nx-xs__actions"><Button onClick={onClose}>Close</Button></div>
