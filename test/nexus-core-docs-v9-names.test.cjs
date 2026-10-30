@@ -122,7 +122,7 @@ test('section 42 states the ruled disk gate (C2) in the renderer\'s own words', 
   assert.equal(a.kind, 'ready');
   const sec = between('## 42. ', '## 43. ');
   assert.ok(sec.includes(`"${a.advisories[0]}"`), 'the advisory sentence is quoted exactly');
-  assert.match(sec, /Only "Prepare image" is unavailable/);
+  assert.match(sec, /Only "Prepare this kit" is unavailable/);
   assert.match(sec, /heavy actions are not disabled for this reason/);
   assert.doesNotMatch(sec, /blocks heavy execution below these limits/);
 });
