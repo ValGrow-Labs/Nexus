@@ -6,86 +6,83 @@ import { ProviderLogo } from './ProviderLogo';
 import { AGENT_PROVIDER_PRESETS, modelsForProvider, type AgentProvider, type HarnessConfig } from '@/store/config';
 import { canReceiveInbox, providerPreset } from '@shared/agentProvider';
 import { wizardLeadConfig, type WizardLeadChoice } from '@shared/leadStart';
+import { termHelp, termName } from '@/nexus/data/glossary';
 
 export interface OnboardingWizardProps {
   onComplete: (config: HarnessConfig) => void;
 }
 
-type Audience = 'technical' | 'non-technical';
-type Step = 'persona' | 'welcome' | 'home' | 'orchestrator' | 'repos' | 'permissions' | 'done';
+type Step = 'welcome' | 'home' | 'orchestrator' | 'repos' | 'permissions' | 'done';
 
-// First-run showcase — the highest-value features a brand-new user should grasp
-// before any setup. Each carries a developer-register `desc` and a plain-language
-// `descPlain` so the same grid speaks to both audiences (item 1).
+// First-run showcase: the highest-value features a brand-new user should grasp before any setup. One register, in plain words for a
+// reader with no developer background (the old "technical" copy was never shown: Nexus's Welcome page asks who you are, not this wizard).
 interface Feature {
   icon: IconName;
   label: string;
-  desc: string;       // technical register
-  descPlain: string;  // non-technical register
+  desc: string;
   tint: string;       // tile background token
   edge: string;       // tile border token
 }
 const FEATURES: Feature[] = [
   {
     icon: 'mcp',
-    label: 'TEN ENGINES, ONE WORKSPACE',
-    desc: 'Claude Code, Codex, Grok, Kimi, Antigravity, Qwen, OpenCode, Crush, pi & Copilot — live agents in one workspace.',
-    descPlain: 'Ten AI assistants — Claude, Codex, Gemini, Grok and more — working side by side in one shared workspace.',
+    label: 'AI FOR EVERY BUDGET',
+    desc: 'Use a free online AI, an AI on this computer, or a plan you already have. Several AI helpers can work side by side.',
     tint: 'var(--cth-lilac-light)', edge: 'var(--cth-lilac)'
   },
   {
     icon: 'gear',
-    label: 'A LEAD AGENT COORDINATES',
-    desc: 'The lead agent triages requests, routes tasks, and escalates only what needs you.',
-    descPlain: 'The lead agent takes your requests, hands work to the right agent, and only interrupts you when it matters.',
+    label: 'A LEAD AI HELPER COORDINATES',
+    desc: 'The lead AI helper takes your requests, gives the work to the right AI helper, and only interrupts you when it matters.',
     tint: 'var(--cth-sky-light)', edge: 'var(--cth-sky)'
   },
   {
     icon: 'web',
-    label: 'LONG-TERM MEMORY',
-    desc: 'Each agent keeps notes, mined into a shared, searchable MemPalace.',
-    descPlain: "Agents remember what they've done, so they don't start from scratch every time.",
+    label: 'AI HELPERS REMEMBER',
+    desc: 'AI helpers remember what they did, so they do not start from zero each time.',
     tint: 'var(--cth-mint-light)', edge: 'var(--cth-mint)'
   },
   {
     icon: 'terminal',
-    label: 'LEAD AGENT CONTROLS',
-    desc: 'Terminal, team, tasks, activity and triggers in one control surface.',
-    descPlain: "One place to watch the work, the agents' memory, tasks, and triggers.",
+    label: 'ONE PLACE TO WATCH THE WORK',
+    desc: 'See what each AI helper is doing, what is waiting for you, and what each one remembers.',
     tint: 'var(--cth-lemon-light)', edge: 'var(--cth-lemon)'
   },
   {
     icon: 'pause',
-    label: 'GUARDRAILS',
-    desc: 'Per-agent token budgets, a steer→constrain→stop circuit breaker, and human approvals.',
-    descPlain: 'Spending limits and safety stops keep agents in check — and they can ask you before big actions.',
+    label: 'YOU STAY IN CHARGE',
+    desc: 'Spending limits and safety stops keep AI helpers in check. They can ask you before big actions.',
     tint: 'var(--cth-coral-light)', edge: 'var(--cth-coral)'
   },
   {
     icon: 'sparkle',
-    label: 'READY-MADE AGENTS',
-    desc: 'Grab a pre-configured agent from the Agent Gallery and spawn it in one click.',
-    descPlain: 'Add a ready-made agent from the gallery in one click — no setup needed.',
+    label: 'READY-MADE AI HELPERS',
+    desc: 'Add a ready-made AI helper from the gallery in one click. No setup needed.',
     tint: 'var(--cth-peach-light)', edge: 'var(--cth-peach)'
   }
 ];
 
-// One-liner of what each engine is, shown under its row on the orchestrator step
-// so a non-technical user knows what they're picking (item 3).
+// One line of what each helper program is, shown under its row on the lead AI helper step, so a person knows what they are picking.
 const PROVIDER_BLURB: Partial<Record<AgentProvider, string>> = {
-  claude: 'Claude Code — Anthropic',
-  codex: 'Codex — OpenAI',
-  antigravity: 'Antigravity — Google Gemini',
-  qwen: 'Qwen — runs a local Qwen model on your machine'
+  claude: 'Claude Code, from Anthropic. It uses your own Claude plan.',
+  codex: 'Codex, from OpenAI. It uses your own OpenAI plan.',
+  antigravity: 'Antigravity, from Google (it uses Gemini). It uses your own Google plan.',
+  qwen: 'Qwen. It runs a Qwen model on this computer.'
 };
 
+// The three ways to get AI, free ones first (the same names as everywhere else in Nexus).
+const AI_WAYS: ReadonlyArray<{ name: string; help: string }> = [
+  { name: termName('freeOnlineAi'), help: termHelp('freeOnlineAi') },
+  { name: termName('aiOnThisComputer'), help: termHelp('aiOnThisComputer') },
+  { name: termName('yourOwnPlan'), help: termHelp('yourOwnPlan') }
+];
+
+// The battery tip only makes sense on a Mac.
+const IS_MAC = typeof navigator !== 'undefined' && /Mac/i.test(`${navigator.platform || ''} ${navigator.userAgent || ''}`);
+
 export function OnboardingWizard({ onComplete }: OnboardingWizardProps) {
-  // The wizard no longer asks "which sounds like you?": Nexus's own Welcome page asks it (once), so asking it here as well made
-  // the person answer the same question twice. The first screen is "meet Nexus"; the legacy answer defaults to technical.
+  // The wizard does not ask "which sounds like you?": Nexus's own Welcome page asks it (once). The first screen is "meet Nexus".
   const [step, setStep] = useState<Step>('welcome');
-  // Self-identified audience (item 1). Unset here (Welcome owns the question); the rest of the wizard reads `plain` to swap copy registers.
-  const [audience, setAudience] = useState<Audience | undefined>();
-  const plain = audience === 'non-technical';
 
   const [home, setHome] = useState<string>('');
   const [repos, setRepos] = useState<string[]>([]);
@@ -129,7 +126,7 @@ export function OnboardingWizard({ onComplete }: OnboardingWizardProps) {
   };
   const openSettings = (url: string) => { void window.cth.openExternal(url); };
 
-  // Default-suggest a sensible harness home on first render.
+  // Default-suggest a sensible home folder on first render.
   //
   // This used to read `window.process.env.HOME`, which is ALWAYS undefined here:
   // the window runs with `contextIsolation: true` / `nodeIntegration: false` and
@@ -138,12 +135,12 @@ export function OnboardingWizard({ onComplete }: OnboardingWizardProps) {
   // field rendered empty — leaving the copy above promising a default the user
   // could not accept, and Finish failing with "Pick a harness home folder first."
   //
-  // Suggest the literal `~/HarnessAgents` instead. That is exactly the string
+  // Suggest the literal `~/Nexus` instead. That is exactly the kind of string
   // #140's normalizeHiveHome()/expandTilde() were built to absorb: it is expanded
   // at the config-write boundary AND at ensureHarnessHome's mkdir, so every
   // downstream reader still sees one absolute path. No new IPC surface.
   useEffect(() => {
-    if (!home) setHome('~/HarnessAgents');
+    if (!home) setHome('~/Nexus');
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -167,16 +164,16 @@ export function OnboardingWizard({ onComplete }: OnboardingWizardProps) {
     setBusy(true);
     setError(undefined);
     const harnessHome = home.trim(); // whitespace-only is not a folder
-    if (!harnessHome) { setError('Pick a harness home folder first.'); setBusy(false); setStep('home'); return; }
+    if (!harnessHome) { setError('Pick a folder for Nexus first.'); setBusy(false); setStep('home'); return; }
     const ensure = await window.cth.ensureHarnessHome(harnessHome);
     if (!ensure.ok) {
-      setError(ensure.error ?? 'could not create harness home');
+      setError(ensure.error ?? 'Nexus could not create that folder.');
       setBusy(false);
       return;
     }
     const next = await window.cth.updateConfig({
       onboardingComplete: true,
-      audience: audience ?? 'technical',
+      audience: 'technical',
       harnessHome, // the same trimmed value we just mkdir'd, not the raw field
       registeredRepos: repos,
       autoMode,
@@ -213,54 +210,16 @@ export function OnboardingWizard({ onComplete }: OnboardingWizardProps) {
         <PixelPanel
           variant="dialog"
           title={
-            step === 'persona' ? 'WELCOME TO NEXUS'
-            : step === 'welcome' ? 'MEET NEXUS'
-            : step === 'home' ? (plain ? 'STEP 1 OF 4 · A HOME FOR THE APP' : 'STEP 1 OF 4 · HARNESS HOME')
-            : step === 'orchestrator' ? (plain ? "STEP 2 OF 4 · YOUR LEAD AGENT" : "STEP 2 OF 4 · YOUR LEAD AGENT'S ENGINE")
-            : step === 'repos' ? (plain ? 'STEP 3 OF 4 · YOUR PROJECTS' : 'STEP 3 OF 4 · YOUR REPOS')
-            : step === 'permissions' ? 'STEP 4 OF 4 · PERMISSIONS & RELIABILITY'
+            step === 'welcome' ? 'MEET NEXUS'
+            : step === 'home' ? 'STEP 1 OF 4 · A FOLDER FOR NEXUS'
+            : step === 'orchestrator' ? 'STEP 2 OF 4 · YOUR AI HELPERS'
+            : step === 'repos' ? 'STEP 3 OF 4 · YOUR PROJECTS'
+            : step === 'permissions' ? 'STEP 4 OF 4 · SAFETY AND KEEPING WORK GOING'
             : 'ALL SET'
           }
           noPadding
         >
           <div style={{ padding: 20, display: 'flex', flexDirection: 'column', gap: 16 }}>
-
-            {step === 'persona' && (
-              <>
-                <div style={{ display: 'flex', gap: 12, alignItems: 'flex-start' }}>
-                  <div>
-                    <div style={{ fontFamily: 'var(--cth-font-display)', fontSize: 12, lineHeight: '18px' }}>
-                      A LEAD AGENT THAT KEEPS WORKING
-                    </div>
-                    <div style={{ fontSize: 12, color: 'var(--cth-ink-700)', lineHeight: '19px' }}>
-                      Nexus runs the CLI agent you already use as a lead agent: it
-                      coordinates long-running agents and keeps working while you are away.
-                      <span style={{ color: 'var(--cth-ink-500)' }}> Everything runs on this machine.</span>
-                    </div>
-                  </div>
-                </div>
-
-                <div style={{ fontFamily: 'var(--cth-font-display)', fontSize: 10, color: 'var(--cth-ink-700)' }}>
-                  FIRST — WHO ARE YOU? (we'll tailor the setup)
-                </div>
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
-                  <PersonaCard
-                    icon="code"
-                    title="I'M TECHNICAL"
-                    desc="I write code or work in a terminal. Show me CLI commands, flags, and model ids."
-                    selected={audience === 'technical'}
-                    onClick={() => { setAudience('technical'); setError(undefined); }}
-                  />
-                  <PersonaCard
-                    icon="sparkle"
-                    title="I'M NON-TECHNICAL"
-                    desc="I'm in marketing, sales, ops, or just starting out. Explain things in plain language."
-                    selected={audience === 'non-technical'}
-                    onClick={() => { setAudience('non-technical'); setError(undefined); }}
-                  />
-                </div>
-              </>
-            )}
 
             {step === 'welcome' && (
               <>
@@ -269,11 +228,9 @@ export function OnboardingWizard({ onComplete }: OnboardingWizardProps) {
                     <div style={{
                       fontFamily: 'var(--cth-font-display)',
                       fontSize: 12, lineHeight: '18px'
-                    }}>YOUR LEAD AGENT AND ITS TEAM</div>
+                    }}>NEXUS LETS AI HELPERS BUILD FOR YOU</div>
                     <div style={{ fontSize: 12, color: 'var(--cth-ink-700)', lineHeight: '18px' }}>
-                      {plain
-                        ? "Your lead agent runs a small team of AI workers, and you watch it all from one screen. Here's what's inside:"
-                        : "Your lead agent coordinates a team of AI coding agents — persistent, watchable, all local. Here's what's inside:"}
+                      You stay in charge and watch it all from one screen. Everything runs on this computer, except the AI service you choose to use. Here is what is inside:
                     </div>
                   </div>
                 </div>
@@ -300,7 +257,7 @@ export function OnboardingWizard({ onComplete }: OnboardingWizardProps) {
                           fontSize: 10, lineHeight: '14px', marginBottom: 3
                         }}>{f.label}</div>
                         <div style={{ fontSize: 12, lineHeight: '16px', color: 'var(--cth-ink-700)' }}>
-                          {plain ? f.descPlain : f.desc}
+                          {f.desc}
                         </div>
                       </div>
                     </div>
@@ -311,43 +268,30 @@ export function OnboardingWizard({ onComplete }: OnboardingWizardProps) {
 
             {step === 'home' && (
               <>
-                {plain ? (
-                  <p style={{ margin: 0, lineHeight: '22px' }}>
-                    Create a new, empty folder for the app to call home. Everything the app
-                    remembers — its own settings and your agents' memory — is stored here.
-                    Something like{' '}
-                    <code style={{ fontFamily: 'var(--cth-font-mono)', background: 'var(--cth-paper-100)', padding: '0 4px' }}>
-                      ~/HarnessAgents
-                    </code>{' '}
-                    works well. We'll create it for you if it doesn't exist.
-                  </p>
-                ) : (
-                  <p style={{ margin: 0, lineHeight: '22px' }}>
-                    Pick a folder where the harness will keep its own files — agent metadata,
-                    logs, and any new repos you create from here. Something like{' '}
-                    <code style={{ fontFamily: 'var(--cth-font-mono)', background: 'var(--cth-paper-100)', padding: '0 4px' }}>
-                      ~/HarnessAgents
-                    </code>{' '}
-                    is a fine default. We'll create it if it doesn't exist.
-                  </p>
-                )}
+                <p style={{ margin: 0, lineHeight: '22px' }}>
+                  Nexus needs one folder where it keeps its own notes: its settings and what your AI helpers remember.
+                  You can keep the folder suggested here, or pick another one. Something like{' '}
+                  <code style={{ fontFamily: 'var(--cth-font-mono)', background: 'var(--cth-paper-100)', padding: '0 4px' }}>
+                    ~/Nexus
+                  </code>{' '}
+                  works well. Nexus makes the folder for you if it does not exist yet.
+                </p>
                 <div style={{ display: 'flex', gap: 8 }}>
                   <input
                     value={home}
                     onChange={(e) => setHome(e.target.value)}
-                    placeholder="/path/to/HarnessAgents"
+                    placeholder="/path/to/Nexus"
+                    aria-label="Folder for Nexus"
                     style={inputStyle}
                   />
                   <PixelButton variant="secondary" size="md" onClick={pickHome}>
                     <span style={{ display: 'inline-flex', gap: 4, alignItems: 'center' }}>
-                      <Icon name="folder" /> {plain ? 'create / pick' : 'pick'}
+                      <Icon name="folder" /> choose a folder
                     </span>
                   </PixelButton>
                 </div>
                 <div style={{ fontSize: 12, color: 'var(--cth-ink-500)' }}>
-                  {plain
-                    ? "You won't need to open this folder day-to-day — it's just where the app keeps its notes so nothing is lost when you restart."
-                    : 'Think of this as the "town hall." The harness pins agent state there so sessions can be picked back up after a restart.'}
+                  You will not need to open this folder day to day. It is only where Nexus keeps its notes, so nothing is lost when you restart.
                 </div>
               </>
             )}
@@ -355,20 +299,23 @@ export function OnboardingWizard({ onComplete }: OnboardingWizardProps) {
             {step === 'orchestrator' && (
               <>
                 <p style={{ margin: 0, lineHeight: '22px' }}>
-                  {plain ? (
-                    <><strong>The lead agent is an optional helper</strong> — it reads your requests,
-                    breaks them into tasks, and hands them to the right agent. You do not need it to
-                    build a project in Nexus. You can start nothing for now, or pick an AI assistant
-                    program that is already installed on this computer.</>
-                  ) : (
-                    <><strong>The lead agent is optional</strong>. It is a terminal agent that triages
-                    your requests and coordinates the other agents. Building in a project does not need it:
-                    that runs on free online AI, a model on this computer, or a plan you already have,
-                    chosen later under Setup. Start nothing now, or pick the engine program that powers it.</>
-                  )}
+                  <strong>The lead AI helper is optional.</strong> It reads your requests, splits them into tasks and passes them to
+                  other AI helpers. You do not need it to build in a project. Building in a project works with any of the three kinds
+                  of AI below, and you choose one later under “Get this computer ready”.
                 </p>
 
-                {/* What is a CLI agent / your clone — item 3 */}
+                {/* The three ways to get AI, free first. */}
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 4, fontSize: 12, lineHeight: '17px', color: 'var(--cth-ink-700)' }}>
+                  <div style={{ fontFamily: 'var(--cth-font-display)', fontSize: 10, color: 'var(--cth-ink-700)' }}>
+                    THREE WAYS TO GET AI, FREE ONES FIRST
+                  </div>
+                  <ol style={{ margin: 0, paddingLeft: 18, display: 'flex', flexDirection: 'column', gap: 3 }}>
+                    {AI_WAYS.map((w) => (
+                      <li key={w.name}><strong>{w.name}.</strong> {w.help}</li>
+                    ))}
+                  </ol>
+                </div>
+
                 <div style={{
                   display: 'flex', gap: 8, alignItems: 'flex-start', padding: 10,
                   background: 'var(--cth-lemon-light)', boxShadow: 'inset 0 0 0 1px var(--cth-ink-300)',
@@ -376,24 +323,14 @@ export function OnboardingWizard({ onComplete }: OnboardingWizardProps) {
                 }}>
                   <span style={{ flexShrink: 0, marginTop: 1 }}><Icon name="sparkle" /></span>
                   <span>
-                    {plain ? (
-                      <><strong>Nothing starts until you say so.</strong> "Not now" is the safe choice and
-                      costs nothing. The other options are AI assistant programs (Claude Code, Codex,
-                      Antigravity, Qwen) that must already be installed and signed in on this computer;
-                      Nexus never installs them or signs in for you. Picking one starts it as soon as setup
-                      finishes, and it uses your own plan with that company. You can start or change it
-                      any time in Agents.</>
-                    ) : (
-                      <><strong>Nothing starts until you say so.</strong> "Not now" starts no process. Each
-                      other option is a <strong>CLI engine</strong> you have installed and signed in
-                      (Claude Code, Codex, Antigravity/Gemini, or a local proxy like Qwen); picking one
-                      starts it as the lead agent when setup finishes, on your own plan with that provider.
-                      You can start it later from Agents instead, or change the engine in Settings.</>
-                    )}
+                    <strong>Nothing starts until you say so.</strong> “Not now” is the safe choice and it costs nothing. The other
+                    choices start the lead AI helper with a plan you already have. That helper program must already be installed and
+                    signed in on this computer. Nexus never installs it and never signs in for you. If you pick one, it starts when setup
+                    finishes. You can also start it later from Agents, or change it in Settings.
                   </span>
                 </div>
 
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                <div role="radiogroup" aria-label="Start the lead AI helper" style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
                   <label style={{
                     display: 'flex', alignItems: 'center', gap: 10,
                     padding: '8px 10px',
@@ -414,7 +351,7 @@ export function OnboardingWizard({ onComplete }: OnboardingWizardProps) {
                         NOT NOW
                       </span>
                       <span style={{ display: 'block', fontSize: 11, color: 'var(--cth-ink-500)' }}>
-                        Start no lead agent. You can start one later from Agents.
+                        Do not start a lead AI helper now. You can start one later from Agents.
                       </span>
                     </span>
                     <span style={{
@@ -469,7 +406,7 @@ export function OnboardingWizard({ onComplete }: OnboardingWizardProps) {
                   })}
                 </div>
                 {leadChoice === 'engine' && <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-                  <div style={{ fontSize: 12, color: 'var(--cth-ink-500)' }}>Model</div>
+                  <div style={{ fontSize: 12, color: 'var(--cth-ink-500)' }}>Which model should the lead AI helper use?</div>
                   <select
                     value={godModel ?? ''}
                     onChange={(e) => setGodModel(e.target.value || undefined)}
@@ -480,7 +417,7 @@ export function OnboardingWizard({ onComplete }: OnboardingWizardProps) {
                     ))}
                   </select>
                   <div style={{ fontSize: 12, color: 'var(--cth-ink-500)' }}>
-                    This only sets the lead agent's engine. You can run other providers per agent later.
+                    This only sets the lead AI helper. Other AI helpers can use other AI services later.
                   </div>
                 </div>}
               </>
@@ -489,15 +426,8 @@ export function OnboardingWizard({ onComplete }: OnboardingWizardProps) {
             {step === 'repos' && (
               <>
                 <p style={{ margin: 0, lineHeight: '22px' }}>
-                  {plain ? (
-                    <>Add your <strong>projects</strong>. A project is simply a folder — it can hold
-                    code, documents, notes, or any files you want your agents to work with. You can
-                    create a brand-new folder or pick an existing one, and add more anytime.</>
-                  ) : (
-                    <>Add the repos you want your agents to work in. Each folder becomes a
-                    <strong> project</strong> — multiple agents can share one.
-                    You can add more later.</>
-                  )}
+                  Add your <strong>projects</strong>. A project is simply a folder. It can hold code, documents, notes, or any files you
+                  want your AI helpers to work with. You can pick a folder you already have, and add more at any time.
                 </p>
                 <div style={{
                   display: 'flex', flexDirection: 'column', gap: 6,
@@ -511,9 +441,7 @@ export function OnboardingWizard({ onComplete }: OnboardingWizardProps) {
                       background: 'var(--cth-paper-200)',
                       textAlign: 'center'
                     }}>
-                      {plain
-                        ? 'No projects added yet. Optional — you can add one later.'
-                        : 'No repos added yet. Optional, but recommended.'}
+                      No projects added yet. This step is optional. You can add one later.
                     </div>
                   )}
                   {repos.map((r) => (
@@ -537,7 +465,7 @@ export function OnboardingWizard({ onComplete }: OnboardingWizardProps) {
                 </div>
                 <PixelButton variant="secondary" size="md" onClick={pickRepo}>
                   <span style={{ display: 'inline-flex', gap: 6, alignItems: 'center' }}>
-                    <Icon name="plus" /> {plain ? 'add a project' : 'add a repo'}
+                    <Icon name="plus" /> add a project
                   </span>
                 </PixelButton>
               </>
@@ -545,12 +473,9 @@ export function OnboardingWizard({ onComplete }: OnboardingWizardProps) {
 
             {step === 'permissions' && (
               <>
-                {/* AUTONOMY — merged from the old "auto mode" step (item 5). One choice
-                    that maps to each engine's flag (item 6): autoMode → claude
-                    bypassPermissions / codex --dangerously-bypass-approvals-and-sandbox,
-                    etc.; off → each engine's ask-first default. */}
+                {/* AUTONOMY: one choice. On, each helper program skips its own ask-first questions; off, each asks first (the default). */}
                 <div style={{ fontFamily: 'var(--cth-font-display)', fontSize: 10, color: 'var(--cth-ink-700)' }}>
-                  HOW MUCH CAN AGENTS DO ON THEIR OWN?
+                  HOW MUCH MAY AI HELPERS DO ON THEIR OWN?
                 </div>
                 <label style={{
                   display: 'flex', alignItems: 'center', gap: 10,
@@ -567,41 +492,35 @@ export function OnboardingWizard({ onComplete }: OnboardingWizardProps) {
                   />
                   <div>
                     <div style={{ fontFamily: 'var(--cth-font-display)', fontSize: 10, lineHeight: '14px' }}>
-                      {plain ? 'LET AGENTS WORK ON THEIR OWN' : 'WORK AUTONOMOUSLY (AUTO MODE)'}
+                      LET AI HELPERS WORK WITHOUT ASKING
                     </div>
                     <div style={{ fontSize: 13, color: 'var(--cth-ink-700)' }}>
-                      {plain
-                        ? (autoMode
-                            ? 'On. Agents carry out tasks without stopping to ask — the smoothest experience.'
-                            : 'Off. Agents pause and ask you before changing files or running commands.')
-                        : (autoMode
-                            ? 'On. Agents never pause — Claude runs bypassPermissions, Codex bypasses approvals + sandbox, etc.'
-                            : 'Off. Each agent asks before edits / shell commands (Claude default, codex -a untrusted, …).')}
+                      {autoMode
+                        ? 'On. AI helpers change your files and run commands without asking you first. It is faster, but a mistake is not caught before it happens.'
+                        : 'Off (the safe choice). AI helpers stop and ask you before they change your files or run commands.'}
                     </div>
                   </div>
                 </label>
                 <div style={{ fontSize: 12, color: 'var(--cth-ink-500)' }}>
-                  {plain
-                    ? 'Best when agents work in their own projects. You can change this later, including for individual agents.'
-                    : 'Off by default. Useful when agents work in their own folders; risky on production repos. Override per agent in the Add Agent dialog.'}
+                  Off is the default. Turn it on only for projects you can afford to break, such as a copy or a test folder. You can change
+                  it later in Settings, and for one AI helper at a time when you add it.
                 </div>
 
                 <div style={{ height: 1, background: 'var(--cth-ink-300)', margin: '2px 0' }} />
 
                 {/* RELIABILITY — keeping work firing while you're away. */}
                 <div style={{ fontFamily: 'var(--cth-font-display)', fontSize: 10, color: 'var(--cth-ink-700)' }}>
-                  KEEP THINGS RUNNING WHILE YOU'RE AWAY
+                  KEEP WORK GOING WHILE YOU ARE AWAY
                 </div>
                 <p style={{ margin: 0, lineHeight: '20px', fontSize: 12, color: 'var(--cth-ink-700)' }}>
-                  {plain
-                    ? 'Your agents keep working on a schedule and in live terminals, even when you step away. These settings keep you in the loop and keep things running.'
-                    : 'Your agents keep working on a schedule and in live terminals. If your Mac fully sleeps those timers pause and catch up the moment you\'re back — nothing is lost, it may just run late.'}
+                  AI helpers can keep working on a schedule while you step away. If your computer goes to sleep, the work waits and
+                  catches up when you are back. Nothing is lost, it may just run late. These switches are all optional.
                 </p>
 
                 <ToggleRow
                   icon="clock"
-                  label="KEEP WORKING WHILE AWAY"
-                  desc="Strong keep-alive: stops your Mac from sleeping while an agent is live, so schedules and terminals fire on time even when you step away. Uses more battery — best on power. Off by default."
+                  label="KEEP THIS COMPUTER AWAKE"
+                  desc="Stops this computer from going to sleep while an AI helper is running, so scheduled work starts on time. It uses more battery, so it works best when plugged in. Off by default."
                   on={strongKeepalive}
                   tint="var(--cth-mint-light)"
                   edge="var(--cth-mint)"
@@ -611,7 +530,7 @@ export function OnboardingWizard({ onComplete }: OnboardingWizardProps) {
                 <ToggleRow
                   icon="bell"
                   label="DESKTOP NOTIFICATIONS"
-                  desc="Get pinged when an agent needs you or a terminal needs reviving — even while you're away. macOS asks permission the first time one fires."
+                  desc="Shows a message when an AI helper needs you, even while you are away. Your computer may ask for your permission the first time."
                   on={notifications}
                   tint="var(--cth-peach-light)"
                   edge="var(--cth-peach)"
@@ -621,7 +540,7 @@ export function OnboardingWizard({ onComplete }: OnboardingWizardProps) {
                 <ToggleRow
                   icon="play"
                   label="OPEN AT LOGIN"
-                  desc="Relaunch the harness after a reboot so scheduled missions resume on their own. No prompt — applies immediately."
+                  desc="Opens Nexus again after you restart or sign in to your computer, so scheduled work carries on by itself. It takes effect right away."
                   on={openAtLogin}
                   tint="var(--cth-sky-light)"
                   edge="var(--cth-sky)"
@@ -631,15 +550,15 @@ export function OnboardingWizard({ onComplete }: OnboardingWizardProps) {
                 <ToggleRow
                   icon="info"
                   label="SHARE ANONYMOUS USAGE STATS"
-                  desc="A handful of anonymous events (app opened, agent spawned, feature used) that help improve Nexus — never prompts, code, file paths, or agent output. Full list in TELEMETRY.md; change anytime in Settings."
+                  desc="Sends a few anonymous counts, such as “the app was opened”, to help improve Nexus. It never sends your requests, your code, your file names, or what an AI helper wrote. The full list is in TELEMETRY.md. You can change this at any time in Settings."
                   on={shareStats}
                   tint="var(--cth-lemon-light)"
                   edge="var(--cth-lemon)"
                   onChange={() => setShareStats(!shareStats)}
                 />
 
-                {/* LEVER 4 — instruction-only: macOS won't let the app flip Energy, so we deep-link the pane. */}
-                <div style={{
+                {/* Instruction only, and only on a Mac: macOS will not let the app flip this setting, so we open the pane. */}
+                {IS_MAC && <div style={{
                   display: 'flex', gap: 10, alignItems: 'flex-start', padding: 10,
                   background: 'var(--cth-lemon-light)',
                   boxShadow: 'inset 0 0 0 1px var(--cth-ink-300)'
@@ -654,14 +573,12 @@ export function OnboardingWizard({ onComplete }: OnboardingWizardProps) {
                   <div style={{ minWidth: 0, display: 'flex', flexDirection: 'column', gap: 8 }}>
                     <div>
                       <div style={{ fontFamily: 'var(--cth-font-display)', fontSize: 10, lineHeight: '14px', marginBottom: 3 }}>
-                        STAY AWAKE ON POWER (MANUAL)
+                        STAY AWAKE WHEN PLUGGED IN (YOU SET THIS)
                       </div>
                       <div style={{ fontSize: 12, lineHeight: '16px', color: 'var(--cth-ink-700)' }}>
-                        macOS only lets you set this one yourself. In Battery → Options,
-                        turn on “Prevent automatic sleeping when the display is off” (on
-                        power adapter) so timers keep firing with the display asleep.
-                        Without a sleep-preventing setting the Mac still truly sleeps —
-                        work survives and catches up on wake.
+                        Your Mac only lets you change this one yourself. Open Battery settings, go to Options, and turn on
+                        “Prevent automatic sleeping when the display is off” for when it is plugged in. Then scheduled work keeps
+                        running with the screen off. Without it, your Mac may fall asleep, and the work catches up when it wakes.
                       </div>
                     </div>
                     <PixelButton variant="secondary" size="sm"
@@ -671,7 +588,7 @@ export function OnboardingWizard({ onComplete }: OnboardingWizardProps) {
                       </span>
                     </PixelButton>
                   </div>
-                </div>
+                </div>}
               </>
             )}
 
@@ -689,7 +606,7 @@ export function OnboardingWizard({ onComplete }: OnboardingWizardProps) {
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 4 }}>
               <Dots step={step} />
               <div style={{ display: 'flex', gap: 8 }}>
-                {step !== 'persona' && step !== 'welcome' && (
+                {step !== 'welcome' && (
                   <PixelButton variant="ghost" size="md" onClick={() => setStep(prevStep(step))} disabled={busy}>
                     back
                   </PixelButton>
@@ -703,15 +620,14 @@ export function OnboardingWizard({ onComplete }: OnboardingWizardProps) {
                       // lives in finish(), so an empty field walks you through all
                       // four steps and then bounces you back to step 1 to be told.
                       if (step === 'home' && !home.trim()) {
-                        setError('Pick a harness home folder first.');
+                        setError('Pick a folder for Nexus first.');
                         return;
                       }
                       setError(undefined);
                       setStep(nextStep(step));
                     }}
-                    disabled={step === 'persona' && !audience}
                   >
-                    {step === 'welcome' ? 'set it up' : 'next'}
+                    {step === 'welcome' ? 'start setup' : 'next'}
                   </PixelButton>
                 )}
                 {step === 'permissions' && (
@@ -725,39 +641,6 @@ export function OnboardingWizard({ onComplete }: OnboardingWizardProps) {
         </PixelPanel>
       </div>
     </div>
-  );
-}
-
-function PersonaCard({ icon, title, desc, selected, onClick }: {
-  icon: IconName;
-  title: string;
-  desc: string;
-  selected: boolean;
-  onClick: () => void;
-}) {
-  return (
-    <button
-      onClick={onClick}
-      style={{
-        textAlign: 'left', cursor: 'pointer', border: 'none',
-        padding: 12, display: 'flex', flexDirection: 'column', gap: 6,
-        background: selected ? 'var(--cth-mint-light)' : 'var(--cth-paper-100)',
-        boxShadow: `inset 0 0 0 ${selected ? 2 : 1}px ${selected ? 'var(--cth-mint)' : 'var(--cth-ink-300)'}`
-      }}
-    >
-      <span style={{
-        width: 28, height: 28, display: 'flex', alignItems: 'center', justifyContent: 'center',
-        background: 'var(--cth-paper-100)', boxShadow: 'inset 0 0 0 1px var(--cth-ink-300)'
-      }}>
-        <Icon name={icon} />
-      </span>
-      <span style={{ fontFamily: 'var(--cth-font-display)', fontSize: 11, lineHeight: '15px', color: 'var(--cth-ink-900)' }}>
-        {title}
-      </span>
-      <span style={{ fontSize: 12, lineHeight: '16px', color: 'var(--cth-ink-700)' }}>
-        {desc}
-      </span>
-    </button>
   );
 }
 
@@ -818,8 +701,7 @@ function Dots({ step }: { step: Step }) {
 }
 
 function nextStep(s: Step): Step {
-  return s === 'persona' ? 'welcome'
-    : s === 'welcome' ? 'home'
+  return s === 'welcome' ? 'home'
     : s === 'home' ? 'orchestrator'
     : s === 'orchestrator' ? 'repos'
     : s === 'repos' ? 'permissions'
