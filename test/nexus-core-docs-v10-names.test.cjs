@@ -102,9 +102,9 @@ test('DOC10-3 section 51.1 names every v10 table and states the stored ceilings 
 
 // ---------- structure ----------
 
-test('DOC10-4 Part IV has sections 49 to 62 in order, and the contents list links each of them', () => {
+test('DOC10-4 Part IV has sections 49 to 63 in order, and the contents list links each of them', () => {
   const heads = PART4.split('\n').filter((l) => /^## \d+\. /.test(l)).map((l) => Number(/^## (\d+)\./.exec(l)[1]));
-  assert.deepEqual(heads, [49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62]);
+  assert.deepEqual(heads, [49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63]);
   const contents = between('## Contents', '---');
   for (const n of heads) assert.ok(new RegExp(`^${n}\\. \\[`, 'm').test(contents), `section ${n} is in the contents`);
   assert.ok(contents.includes('[Part IV: Schema v10 and B2b](#part-iv-schema-v10-and-b2b)'));
@@ -116,6 +116,8 @@ test('DOC10-4 Part IV has sections 49 to 62 in order, and the contents list link
   assert.match(PART4, /## 61\. The Task 0 probe results and the STOP rules/);
   // The local-model runtime section follows the probe section.
   assert.match(PART4, /## 62\. The local-model runtime/);
+  // The hosted-model runtime section follows the local-model section.
+  assert.match(PART4, /## 63\. The hosted-model runtime/);
 });
 
 test('DOC10-5 the two Part III corrections are made: test:exec passed 39 of 39 in stabilization, and nothing says it never passed', () => {
@@ -141,8 +143,8 @@ test('DOC10-6 Part IV points at no git-ignored report or ledger', () => {
 test('DOC10-7 the engine is named only in the adapter, change-set, limits, differences and probe sections', () => {
   const VENDOR = /claude|anthropic|hermes|sonnet|opus|haiku|openai|gpt-/i;
   const allowed = new Set([53, 56, 59, 60, 61]);
-  // Section 62 (the local-model runtime) is checked like every neutral section: it names the server, never the engine.
-  for (let n = 49; n <= 62; n++) {
+  // Sections 62 and 63 (the local-model and hosted-model runtimes) are checked like every neutral section: they name the server and the providers, never the engine.
+  for (let n = 49; n <= 63; n++) {
     if (allowed.has(n)) continue;
     assert.doesNotMatch(section(n), VENDOR, `section ${n} names no engine`);
   }
@@ -523,4 +525,143 @@ test('DOC10-18 section 62, the collect by-product rule and limits 81 to 88 are s
   assert.match(section(49), /No real model has been run/);
   assert.match(section(49), /did not complete a task/);
   assert.match(s59, /not verified with a real model/);
+});
+
+// ---------- section 63: the hosted-model runtime, and limits 89 to 96 ----------
+
+test('DOC10-19 section 63 states the hosted-model runtime as the code has it (kind, hosts, models, sentences, backoff, key rules, IPC), limits 89 to 96 exist, and providers are named only there', () => {
+  const read = (rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8').replace(/\r\n/g, '\n');
+  const s63 = section(63);
+  const hm = loadTs('src/shared/nexus/hostedModel.ts');
+  const presets = loadTs('src/runner/runtimes/hostedModel/presets.ts');
+  const { MSG } = loadTs('src/runner/runtimes/hostedModel/messages.ts');
+  const { DEFAULT_BACKOFF } = loadTs('src/runner/runtimes/hostedModel/client.ts');
+  const { HOSTED_TUNING } = loadTs('src/runner/runtimes/hostedModel/adapter.ts');
+  const proto = loadTs('src/shared/nexus/runnerProtocol.ts');
+  const { AGENT_REASON_MESSAGES } = loadTs('src/main/nexusIpc/envelope.ts');
+  const { hostedKeyRef } = loadTs('src/main/nexus/agents/hostedModelSettings.ts');
+  // The kind and its probe-level facts.
+  assert.equal(hm.HOSTED_MODEL_KIND, 'hosted-model');
+  assert.ok(s63.includes('`hosted-model`'));
+  assert.match(read('src/runner/runtimes/hostedModel/adapter.ts'), /ADAPTER_LABEL = 'Hosted free-API model'/);
+  assert.ok(s63.includes('"Hosted free-API model"'));
+  assert.equal(proto.RUNTIME_PROVIDERS_MAX, 8); assert.equal(proto.RUNTIME_PROVIDER_HOSTS_MAX, 4);
+  assert.match(s63, /at most 8 providers and 4 hosts each/);
+  // The preset table: every provider id, host and default model, and the one consent list, as the table holds them (H2).
+  assert.equal(presets.PROVIDER_PRESETS.length, 2);
+  for (const p of presets.PROVIDER_PRESETS) {
+    assert.ok(s63.includes('`' + p.id + '`'), `section 63 names provider ${p.id}`);
+    assert.ok(s63.includes('`' + p.host + '`'), `section 63 names host ${p.host}`);
+    assert.ok(s63.includes('`' + p.defaultModel + '`'), `section 63 names ${p.defaultModel}`);
+    assert.equal(p.port, 443);
+  }
+  for (const h of presets.allPresetHosts()) assert.ok(s63.includes('`' + h.host + ':' + h.port + '`'), `section 63 names ${h.host}:${h.port} as the consented list`);
+  assert.match(s63, /D-B2's rule \(one destination, the adapter's own\) is changed \*\*for this runtime only\*\*/);
+  assert.match(s63, /still holds, unchanged, for the CLI runtime/);
+  assert.match(s63, /\*\*does\*\* start the turn's host egress proxy/);
+  assert.match(s63, /`CONNECT <host>:443`/);
+  assert.match(s63, /the model provider is not one that was granted/);
+  assert.equal(MSG.notGranted, 'the model provider is not one that was granted');
+  assert.match(s63, /V10_DDL` is unchanged/);
+  // The six reasons: the runner's sentence and main's sentence, word for word, in one table; and the map between them.
+  assert.equal(hm.HOSTED_MODEL_REASONS.length, 6);
+  const table = rows(between('### 63.7 ', '### 63.8 ', s63)).filter((r) => /^`hosted_/.test(r[0]));
+  assert.deepEqual(table.map((r) => r[0].replace(/`/g, '')), [...hm.HOSTED_MODEL_REASONS], 'the table lists the six reasons in the code\'s order');
+  for (const [reason, runner, main] of table.map((r) => [r[0].replace(/`/g, ''), r[1], r[2]])) {
+    assert.ok(hm.HOSTED_MODEL_REASONS.includes(reason), reason);
+    assert.equal(hm.HOSTED_RUNNER_MESSAGE_REASON[runner], reason, `${reason}: the runner sentence maps to it`);
+    assert.equal(AGENT_REASON_MESSAGES[reason], main, `${reason}: main's sentence is quoted word for word`);
+  }
+  assert.deepEqual(Object.keys(hm.HOSTED_RUNNER_MESSAGE_REASON).sort(), [MSG.keyMissing, MSG.keyRejected, MSG.rateLimited, MSG.quotaExhausted, MSG.modelUnavailable, MSG.notChosen].sort());
+  for (const [what, m] of [['the conversation is too long', MSG.contextTooLong], ['no egress proxy is running', MSG.noProxy], ['the proxy refused the connection', MSG.proxyRefused],
+    ['the provider could not be reached', MSG.unreachable], ['the connection could not be secured', MSG.tlsFailed], ['the provider did not answer in time', MSG.timeout],
+    ['the answer was larger than allowed', MSG.tooLarge], ['the answer was a redirect', MSG.redirect], ['the answer could not be read', MSG.badJson], ['the request was refused (the model may not support tool calls)', MSG.refused]]) {
+    assert.ok(s63.includes(what), `section 63 says: ${what}`);
+    assert.ok(typeof m === 'string' && m.length > 0);
+  }
+  assert.match(s63, /`the model provider reported an error \(HTTP n\)`/);
+  assert.equal(MSG.server(500), 'the model provider reported an error (HTTP 500)');
+  // Free-tier behaviour: the backoff numbers and the tuning, as the code holds them (H4).
+  assert.deepEqual([DEFAULT_BACKOFF.baseMs, DEFAULT_BACKOFF.maxWaitMs, DEFAULT_BACKOFF.max429, DEFAULT_BACKOFF.max5xx, DEFAULT_BACKOFF.maxBadGeneration], [1000, 60_000, 4, 3, 2]);
+  assert.match(s63, /retried up to 4 times and a 5xx up to 3/);
+  assert.match(s63, /doubles from 1 s, capped at 60 s/);
+  assert.match(s63, /retried twice, then handed to the loop as an empty reply/);
+  assert.deepEqual([HOSTED_TUNING.numCtx, HOSTED_TUNING.numPredict, HOSTED_TUNING.chatTimeoutMs], [16384, 4096, 120_000]);
+  assert.match(s63, /`num_ctx` 16384 and `num_predict` 4096/);
+  assert.match(s63, /a 120 s timeout per request/);
+  assert.match(read('src/runner/runtimes/hostedModel/adapter.ts'), /temperature: 0\.2/);
+  assert.match(s63, /temperature 0\.2/);
+  assert.match(s63, /`costUsdCents` is `0` and `estimated` is `false`/);
+  // The key (H3): where it lives, its shape, the IPC, the plan field, what the audit row holds.
+  assert.equal(hostedKeyRef('groq'), 'config:hosted:groq');
+  assert.ok(s63.includes('`config:hosted:<providerId>`'));
+  assert.equal(proto.RUNTIME_API_KEY_RE.source, '^[\\x21-\\x7e]{8,512}$');
+  assert.ok(s63.includes('`^[\\x21-\\x7e]{8,512}$`'));
+  assert.match(read('src/main/nexus/agents/hostedModelSettings.ts'), /const PASTE_MAX = 4096;/);
+  assert.match(s63, /over 4096 characters is refused whole/);
+  const index = read('src/main/index.ts');
+  for (const ch of ['hostedKey:set', 'hostedKey:delete', 'hostedKey:present']) {
+    assert.ok(index.includes(`ipcMain.handle('${ch}'`), `${ch} is registered`);
+    assert.ok(s63.includes('`' + ch + '`'), `section 63 names ${ch}`);
+  }
+  assert.match(s63, /booleans and fixed sentences only/);
+  assert.ok(s63.includes('`plan.runtime.apiKey`'));
+  assert.match(read('src/main/nexus/agents/agentService.ts'), /hostedKeys\?\.resolve\(hp\.provider!\)/);
+  assert.match(s63, /resolves the key \*\*before it mints anything\*\*/);
+  assert.match(read('src/main/nexus/agents/agentService.ts'), /action: 'hosted\.key'/);
+  assert.ok(s63.includes('`hosted.key`'));
+  assert.match(read('src/main/nexus/agents/agentService.ts'), /reason: 'hosted_key_deleted'/);
+  assert.ok(s63.includes('`hosted_key_deleted`'));
+  assert.match(s63, /never plaintext/);
+  assert.match(s63, /Replacing\*\* a key does not stop a running turn/);
+  // The probe is offline and key-blind, and #51 gains `provider`.
+  assert.match(s63, /no network call and uses no key/);
+  assert.match(s63, /`signedIn` is `unknown`/);
+  assert.match(read('src/runner/runtimes/hostedModel/adapter.ts'), /signedIn: 'unknown'/);
+  assert.match(read('src/main/nexusIpc/registerNexusIpc.ts'), /\['get', 'grant', 'revoke', 'switch', 'model'\] as const/);
+  assert.match(s63, /exactly `op` plus optional `caps`, `runtime`, `model` and `provider`/);
+  // Every file the section names exists.
+  for (const m of s63.matchAll(/`((?:test|tools|src)\/[A-Za-z0-9_./*-]+)`/g)) {
+    const p = m[1];
+    if (p.includes('*')) assert.ok(fs.readdirSync(path.join(ROOT, path.dirname(p))).some((n) => n.startsWith(path.basename(p).split('*')[0])) || fs.existsSync(path.join(ROOT, p.replace(/\/\*$/, ''))), `${p} exists`);
+    else assert.ok(fs.existsSync(path.join(ROOT, p)), `${p} exists`);
+  }
+  // Limits 89 to 96, as ruled; item 96 says plainly that nothing real has been run (DOC10-11 pins the numbering).
+  const s59 = section(59);
+  const need = [
+    [/89\. \*\*Switching to or from the hosted runtime needs a revoke, then a grant/, '89'],
+    [/90\. \*\*Settings needs the probe to have run before a key can be saved/, '90'],
+    [/91\. \*\*Replacing a key does not stop a running turn/, '91'],
+    [/92\. \*\*Free-tier quotas and rate limits are the provider's/, '92'],
+    [/93\. \*\*The provider quirks in the preset table are unverified against the live APIs/, '93'],
+    [/94\. \*\*The sandbox needs Docker Desktop, which is a barrier for casual free users/, '94'],
+    [/95\. \*\*Corporate TLS interception fails closed/, '95'],
+    [/96\. \*\*No real provider call has been made, and a hosted model has not completed a task/, '96'],
+    [/is \*\*NOT verified\*\*; no number of mock passes stands in for it/, '96 says not verified']
+  ];
+  for (const [re, what] of need) assert.match(s59, re, what);
+  const nums = [...s59.matchAll(/^(\d+)\. \*\*/gm)].map((m) => Number(m[1]));
+  assert.equal(nums[nums.length - 1], 96);
+  // Section 49 and the differences table carry the qualification and the rulings (H2, H3).
+  assert.match(section(49), /No real provider call has been made with any key/);
+  assert.match(section(49), /first secret Nexus keeps/);
+  const s60 = section(60);
+  for (const w of ['A third runtime', 'Hosted-model destination (H2)', 'Provider key (H3)']) assert.ok(s60.includes(`| ${w} |`), `section 60 has ${w}`);
+  // The vendor-neutral rule for docs (the counterpart of the code's V6): a hosted provider's name or host is written in section 63 only, in Part IV.
+  const esc = (w) => w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const PROVIDER_WORDS = new RegExp(presets.PROVIDER_PRESETS.flatMap((p) => [p.id, p.host]).map(esc).join('|') + '|googleapis|generativelanguage', 'i');
+  for (let n = 49; n <= 62; n++) assert.doesNotMatch(section(n), PROVIDER_WORDS, `section ${n} names no hosted provider`);
+});
+
+test('DOC10-20 the README says Nexus works with free AI (hosted free keys, a local model, the installed CLI as an option), keeps the status caveat, the licence and the credits', () => {
+  const readme = fs.readFileSync(path.join(ROOT, 'README.md'), 'utf8').replace(/\r\n/g, '\n');
+  assert.match(readme, /^## Works with free AI$/m);
+  const para = between('## Works with free AI', '## ', readme);
+  assert.match(para, /free API key/i); assert.match(para, /Groq/); assert.match(para, /Gemini/); assert.match(para, /Ollama/); assert.match(para, /Claude/);
+  assert.match(para, /optional/i); assert.match(para, /Docker/); assert.match(para, /not yet verified|not verified/i);
+  assert.match(para, /encrypted/i);
+  assert.match(readme, /docs\/nexus\/platform-core\.md/);
+  assert.match(readme, /\[`LICENSE`\]\(\.\/LICENSE\)/);
+  assert.match(readme, /\[`ATTRIBUTION\.md`\]/);
+  assert.match(readme, /MIT-licensed open-source\s+agent harness/);
 });

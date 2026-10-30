@@ -16,6 +16,20 @@ workspace, and build with AI agents alongside your normal development tools.
 > [`docs/nexus/platform-core.md`](./docs/nexus/platform-core.md) (Part IV, section 49
 > and the known limitations). Execution and agents are off by default.
 
+## Works with free AI
+
+You do not need a paid model to use Nexus's agent. It can run on a **free API key**
+from a hosted provider (Groq or Google Gemini: create a key in the provider's
+console and paste it in Settings, where Nexus keeps it encrypted on your computer
+and never shows it again), on a **local model through Ollama** that never leaves
+your machine, or on the **Claude CLI** if you already have it installed, which is
+optional. Whichever you pick, the agent's commands run in a Docker sandbox with no
+network, so Docker Desktop is required, and free tiers have rate limits that the
+provider sets, not Nexus. The hosted-key runtime is built and tested against mock
+servers only: it is **not yet verified** with a real provider key. Details and the
+honest limits are in [`docs/nexus/platform-core.md`](./docs/nexus/platform-core.md)
+(Part IV, sections 62 and 63).
+
 ## What works today
 
 - **Launcher.** "What are you working on?" with workspaces for SDE, ML, DL,
