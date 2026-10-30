@@ -3,10 +3,18 @@
 **An AI-native development platform.** Pick the kind of work you're doing, open a
 workspace, and build with AI agents alongside your normal development tools.
 
-> **Status: Phase A (beta).** The shell, the workspace launcher, the workspace
-> and project pages and the assistant panel are built and run on real local data.
-> Artifacts, handoffs, "Turn into App" and deployments are planned and appear in
-> the app as clearly labelled placeholders. Nothing in the UI is simulated.
+> **Status: college project, beta.** The shell, the workspace launcher, the workspace
+> and project pages and the assistant panel run on real local data. On top of that
+> there is a platform core with a sandboxed **execution and agent runtime (B2b)**:
+> an agent works in an isolated copy of a repository, its change is checked by real
+> tests in a Docker sandbox, and you review, accept and merge it yourself. Agents
+> can be the Claude CLI you already have installed or a **local model through
+> Ollama** (loopback only). It was verified end to end on scratch projects with a
+> real Claude turn and a real Docker sandbox; use on your own repositories, the
+> local 7B model and the migration of an existing database are **not yet verified**.
+> The honest list of what is and is not proven is in
+> [`docs/nexus/platform-core.md`](./docs/nexus/platform-core.md) (Part IV, section 49
+> and the known limitations). Execution and agents are off by default.
 
 ## What works today
 
@@ -70,3 +78,24 @@ MIT — see [`LICENSE`](./LICENSE). Nexus is built on an MIT-licensed open-sourc
 agent harness; its copyright notice is kept in `LICENSE`. Some bundled pixel-art
 assets are licensed for non-commercial use only — see
 [`ATTRIBUTION.md`](./src/renderer/src/assets/ATTRIBUTION.md).
+
+## Credits and disclaimer
+
+- **Upstream.** This project is a fork of
+  [`chaitanyagiri/munder-difflin`](https://github.com/chaitanyagiri/munder-difflin)
+  by Chaitanya Giri (MIT). The platform core, the execution and agent runtime, the
+  local-model runtime and the Nexus UI work were added on top of it as a college
+  project by Mohammed Jaasir and contributors; AI coding tools were used to write
+  parts of it.
+- **Art.** Pixel art is by LimeZu (FREE license, **non-commercial use only**), via
+  [`shahar061/the-office`](https://github.com/shahar061/the-office) (ISC). Fonts are
+  licensed under the SIL OFL 1.1 ([`THIRD_PARTY_FONTS.md`](./THIRD_PARTY_FONTS.md)).
+  This project is not for sale; replace the art before any commercial use.
+- **Not affiliated.** This is an unofficial educational project. It is not
+  affiliated with, endorsed by or sponsored by NBCUniversal or the makers of *The
+  Office* (its sprites and the old "Munder Difflin" name are fan references), nor
+  by Anthropic or Ollama. Product names belong to their owners. Nexus does not
+  bundle or copy any agent's login: it runs the CLI you installed, or your own local
+  model, on your own machine.
+- **No warranty.** Provided "as is" under the MIT License. Agents can change files;
+  review every change before you accept or merge it.
