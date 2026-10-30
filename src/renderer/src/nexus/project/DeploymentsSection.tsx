@@ -56,7 +56,7 @@ export function DeploymentsSection({ projectId, workspaceId, versionIds }: { pro
                   {canDiagnose && ui && (
                     <Button disabled={busy !== null} onClick={() => { void run(`diag:${d.id}`, () => withIntent(`diagnose:${d.id}`, (intentId) => nexusClient.jobStart({
                       projectId, workspaceId, actionId: 'sde.diagnose', inputs: [], params: { target: 'deployment', targetId: d.id }, intentId })), 'Diagnosis started. Follow it in Runs.'); }}>
-                      {busy === `diag:${d.id}` ? 'Starting…' : 'Diagnose'}
+                      {busy === `diag:${d.id}` ? 'Starting…' : 'Find out what went wrong'}
                     </Button>
                   )}
                 </div>

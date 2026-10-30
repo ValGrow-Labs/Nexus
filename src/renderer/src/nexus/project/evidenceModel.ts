@@ -96,7 +96,7 @@ export function plainSentence(text: string | null | undefined): { text: string; 
 }
 
 /** Short names of the checks an application's headline lists. */
-const CHECK_SHORT: Readonly<Record<string, string>> = Object.freeze({ 'app.manifest_schema': 'manifest check', 'app.preview_health': 'preview check' });
+const CHECK_SHORT: Readonly<Record<string, string>> = Object.freeze({ 'app.manifest_schema': 'settings check', 'app.preview_health': 'app check' });
 const shortName = (id: string): string => CHECK_SHORT[id] ?? validatorLabel(id).replace(/^\w/, (c) => c.toLowerCase());
 const listOf = (xs: string[]): string => (xs.length <= 1 ? xs.join('') : `${xs.slice(0, -1).join(', ')} and ${xs[xs.length - 1]}`);
 const cap = (t: string): string => (t ? t[0].toUpperCase() + t.slice(1) : t);
@@ -144,7 +144,7 @@ export function evidenceView(given: readonly ValidationResultView[], version: Pi
   const have = new Set(given.filter((r) => r.blocking).map((r) => r.validatorId));
   const missing: ValidationResultView[] = (checked && ctx.kind ? blockingValidatorsFor(ctx.kind) : []).filter((d) => !have.has(d.id))
     .map((d) => ({ validatorId: d.id, blocking: true, status: null,
-      summary: runsOnUserAction(d.id) ? 'This check needs your app to be running: start a preview to run it.' : null,
+      summary: runsOnUserAction(d.id) ? 'This check needs your app to be running: start a test run of your app to run it.' : null,
       finishedAt: null, evidence: [], latestRun: null, history: 0 }));
   const results = [...given, ...missing];
   const rows: EvidenceRow[] = results.map((r) => {
@@ -181,7 +181,7 @@ export function evidenceView(given: readonly ValidationResultView[], version: Pi
       const passed = blocking.filter((r) => r.status === 'passed').map((r) => shortName(r.validatorId));
       const waiting = blocking.filter((r) => r.status === null).map((r) => shortName(r.validatorId));
       const lead = passed.length ? `${cap(listOf(passed))} passed; ${listOf(waiting)}` : cap(listOf(waiting));
-      return { headline: `${lead} not run yet — start a preview`, rows, revalidate };
+      return { headline: `${lead} not run yet — start a test run of your app`, rows, revalidate };
     }
     // A draft nothing can be said about (its deployments unread) claims no checking either.
     if (p) return { headline: p.state === 'draft' ? 'Some checks have not run' : p.word, rows, revalidate };
@@ -192,9 +192,9 @@ export function evidenceView(given: readonly ValidationResultView[], version: Pi
 // ---------- an application's dev deployment check (B2a stabilization) ----------
 
 export type PreviewState = 'draft' | 'not_checked' | 'checking' | 'healthy' | 'failed';
-export type PreviewWord = 'Draft' | 'Ready to check — start a preview' | 'Checking: the dev deployment is starting'
-  | 'Checking: waiting for the dev deployment to answer' | 'Answered its health check' | 'Failed its health check'
-  | 'The health check could not run' | 'Checks failed' | 'The dev deployment failed';
+export type PreviewWord = 'Draft' | 'Ready to check: start a test run of your app' | 'Checking: the test run of your app is starting'
+  | 'Checking: waiting for your app to answer' | 'Your app answered the app check' | 'Your app failed the app check'
+  | 'The app check could not run' | 'Checks failed' | 'The test run of your app failed';
 export interface PreviewView { state: PreviewState; word: PreviewWord }
 export interface PreviewDeployment { status: 'starting' | 'healthy' | 'unhealthy' | 'stopped' | 'failed'; startedAt: number }
 
@@ -217,18 +217,18 @@ export function applicationPreview(i: { status: VersionView['status']; validator
   const manifest = v['app.manifest_schema'] ?? null;
   const health = v['app.preview_health'] ?? null;
   if (manifest === 'failed') return { state: 'failed', word: 'Checks failed' };
-  if (health === 'failed') return { state: 'failed', word: 'Failed its health check' };
-  if (health === 'error' || manifest === 'error') return { state: 'failed', word: 'The health check could not run' };
-  if (health === 'passed') return { state: 'healthy', word: 'Answered its health check' };
+  if (health === 'failed') return { state: 'failed', word: 'Your app failed the app check' };
+  if (health === 'error' || manifest === 'error') return { state: 'failed', word: 'The app check could not run' };
+  if (health === 'passed') return { state: 'healthy', word: 'Your app answered the app check' };
   if (i.deployments) {
     const latest = [...i.deployments].sort((a, b) => b.startedAt - a.startedAt)[0] ?? null;
     const live = i.deployments.find((d) => LIVE_DEPLOYMENT.has(d.status)) ?? null;
-    if (live) return { state: 'checking', word: live.status === 'starting' ? 'Checking: the dev deployment is starting' : 'Checking: waiting for the dev deployment to answer' };
-    if (latest && latest.status === 'failed') return { state: 'failed', word: 'The dev deployment failed' };
+    if (live) return { state: 'checking', word: live.status === 'starting' ? 'Checking: the test run of your app is starting' : 'Checking: waiting for your app to answer' };
+    if (latest && latest.status === 'failed') return { state: 'failed', word: 'The test run of your app failed' };
   }
   if (i.status !== 'draft') return null;
   // The rail's words for the same state (stepState `awaiting_check`).
-  if (i.validators && i.deployments && manifest === 'passed') return { state: 'not_checked', word: 'Ready to check — start a preview' };
+  if (i.validators && i.deployments && manifest === 'passed') return { state: 'not_checked', word: 'Ready to check: start a test run of your app' };
   return { state: 'draft', word: 'Draft' };
 }
 

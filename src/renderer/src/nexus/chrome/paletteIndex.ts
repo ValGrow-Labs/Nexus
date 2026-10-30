@@ -31,7 +31,7 @@ const ACTIONS: PaletteEntry[] = [
   { id: 'act:ide', group: 'Actions', label: 'Open your project\'s files', action: 'openIde' },
   { id: 'act:settings', group: 'Actions', label: 'Open Settings', action: 'openSettings' },
   { id: 'act:settings-memory', group: 'Actions', label: 'Open settings: Memory & Knowledge', hint: 'semantic memory setup', action: 'openSettings', settingsSection: 'Memory & Knowledge' },
-  { id: 'act:semantic-memory', group: 'Actions', label: 'Agents: Semantic memory', hint: 'how the AI helpers remember things', action: 'openSemanticMemory' }
+  { id: 'act:semantic-memory', group: 'Actions', label: 'Agents: Memory', hint: 'how the AI helpers remember things', action: 'openSemanticMemory' }
 ];
 
 export function buildPaletteIndex(projects: P[]): PaletteEntry[] {

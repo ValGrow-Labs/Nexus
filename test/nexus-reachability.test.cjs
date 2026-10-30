@@ -30,7 +30,7 @@ test('semantic memory and settings stay one click away', () => {
   const palette = read('src/renderer/src/nexus/chrome/paletteIndex.ts');
   assert.match(palette, /Settings/);
   assert.match(palette, /label: 'Open settings: Memory & Knowledge'.*settingsSection: 'Memory & Knowledge'/);
-  assert.match(palette, /label: 'Agents: Semantic memory'.*action: 'openSemanticMemory'/);
+  assert.match(palette, /label: 'Agents: Memory'.*action: 'openSemanticMemory'/);
   const run = read('src/renderer/src/nexus/chrome/CommandPalette.tsx');
   assert.match(run, /actions\.openSettings\(e\.settingsSection\)/);
   assert.match(run, /openSemanticMemory/);

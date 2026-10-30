@@ -661,7 +661,7 @@ test('C7 PLACED_ACTIONS says where each lives; the diagnostic report pages and s
   assert.equal(EV.partialReportNote(65536, 200000), 'This report is too long for one page: 65536 of 200000 bytes loaded so far. Its facts show once all of it is loaded.');
   assert.equal(EV.partialReportNote(10, null), 'This report is too long for one page. Its facts show once all of it is loaded.');
   const diag = kv.slice(kv.indexOf('function DiagnosticReport'), kv.indexOf('function Repository'));
-  assert.match(diag, /if \(c\.more\) \{[\s\S]*partialReportNote\(c\.readBytes, c\.totalBytes\)[\s\S]*<Button variant="quiet" onClick=\{c\.more\}>Load more<\/Button>/);
+  assert.match(diag, /if \(c\.more\) \{[\s\S]*partialReportNote\(c\.readBytes, c\.totalBytes\)[\s\S]*<Button variant="quiet" onClick=\{c\.more\}>Show more<\/Button>/);
   assert.ok(diag.indexOf('if (c.more)') < diag.indexOf('reportFacts(c.json)'), 'never "no fact" from part of a report');
 });
 
@@ -811,13 +811,13 @@ test('S8 an application\'s health check state comes from its deployments and che
   const P = (status, validators, deployments) => EV.applicationPreview({ status, validators, deployments });
   const MANIFEST = { 'app.manifest_schema': 'passed', 'app.preview_health': null };
   const dep = (status, startedAt = 1) => ({ status, startedAt });
-  assert.deepEqual(P('draft', MANIFEST, []), { state: 'not_checked', word: 'Ready to check — start a preview' });
-  assert.deepEqual(P('draft', MANIFEST, [dep('stopped')]), { state: 'not_checked', word: 'Ready to check — start a preview' });
-  assert.deepEqual(P('draft', MANIFEST, [dep('starting')]), { state: 'checking', word: 'Checking: the dev deployment is starting' });
+  assert.deepEqual(P('draft', MANIFEST, []), { state: 'not_checked', word: 'Ready to check: start a test run of your app' });
+  assert.deepEqual(P('draft', MANIFEST, [dep('stopped')]), { state: 'not_checked', word: 'Ready to check: start a test run of your app' });
+  assert.deepEqual(P('draft', MANIFEST, [dep('starting')]), { state: 'checking', word: 'Checking: the test run of your app is starting' });
   assert.deepEqual(P('draft', MANIFEST, [dep('healthy')]).state, 'checking', 'healthy, its check not recorded yet');
-  assert.deepEqual(P('draft', { ...MANIFEST, 'app.preview_health': 'passed' }, [dep('healthy')]), { state: 'healthy', word: 'Answered its health check' });
-  assert.deepEqual(P('draft', { ...MANIFEST, 'app.preview_health': 'failed' }, []), { state: 'failed', word: 'Failed its health check' });
-  assert.deepEqual(P('draft', MANIFEST, [dep('failed', 2), dep('stopped', 1)]), { state: 'failed', word: 'The dev deployment failed' });
+  assert.deepEqual(P('draft', { ...MANIFEST, 'app.preview_health': 'passed' }, [dep('healthy')]), { state: 'healthy', word: 'Your app answered the app check' });
+  assert.deepEqual(P('draft', { ...MANIFEST, 'app.preview_health': 'failed' }, []), { state: 'failed', word: 'Your app failed the app check' });
+  assert.deepEqual(P('draft', MANIFEST, [dep('failed', 2), dep('stopped', 1)]), { state: 'failed', word: 'The test run of your app failed' });
   assert.deepEqual(P('draft', { 'app.manifest_schema': 'failed' }, []).state, 'failed');
   // Unread checks or deployments: no claim either way ("Draft"), never "Checking…".
   assert.deepEqual(P('draft', null, []), { state: 'draft', word: 'Draft' });
@@ -826,12 +826,12 @@ test('S8 an application\'s health check state comes from its deployments and che
   // The evidence headline of a draft application never reads "Checking…" before a deployment.
   const results = [val({ validatorId: 'app.manifest_schema', status: 'passed' }), val({ validatorId: 'app.preview_health', status: null })];
   assert.equal(EV.evidenceView(results, { status: 'draft' }).headline, 'Checking…', 'without the application context: unchanged');
-  assert.equal(EV.evidenceView(results, { status: 'draft' }, true, { kind: 'application', deployments: [] }).headline, 'Manifest check passed; preview check not run yet — start a preview');
-  assert.equal(EV.evidenceView(results, { status: 'draft' }, true, { kind: 'application', deployments: [dep('starting')] }).headline, 'Checking: the dev deployment is starting');
+  assert.equal(EV.evidenceView(results, { status: 'draft' }, true, { kind: 'application', deployments: [] }).headline, 'Settings check passed; app check not run yet — start a test run of your app');
+  assert.equal(EV.evidenceView(results, { status: 'draft' }, true, { kind: 'application', deployments: [dep('starting')] }).headline, 'Checking: the test run of your app is starting');
   assert.equal(EV.evidenceView(results, { status: 'draft' }, true, { kind: 'application', deployments: null }).headline, 'Some checks have not run');
   // The version row and the Spine word.
   assert.equal(EV.applicationChecksWord({ status: 'draft', validationState: 'pending', validators: null, deployments: [] }), null);
-  assert.equal(EV.applicationChecksWord({ status: 'draft', validationState: 'pending', validators: MANIFEST, deployments: [] }), 'Ready to check — start a preview');
+  assert.equal(EV.applicationChecksWord({ status: 'draft', validationState: 'pending', validators: MANIFEST, deployments: [] }), 'Ready to check: start a test run of your app');
   assert.equal(EV.applicationChecksWord({ status: 'candidate', validationState: 'passed', validators: null, deployments: null }), 'Checks passed');
   const SM = loadTs('src/renderer/src/nexus/project/spineModel.ts');
   const app = (id, status) => ({ artifact: { id, kind: 'application', status: 'active', ownerWorkspaceId: 'sde', ownerParticipationId: 'pp', name: id, createdAt: 1 },
@@ -839,8 +839,8 @@ test('S8 an application\'s health check state comes from its deployments and che
   const words = new Map([['artifact:a1', 'Checking…'], ['artifact:a2', 'Checking…'], ['artifact:a3', 'Checks passed']]);
   const out = SM.withApplicationWords(words, [app('a1', 'draft'), app('a2', 'draft'), app('a3', 'candidate')],
     new Map([['v-a1', MANIFEST], ['v-a2', MANIFEST]]), [{ subjectVersionId: 'v-a2', status: 'starting', startedAt: 1 }]);
-  assert.equal(out.get('artifact:a1'), 'Ready to check — start a preview');
-  assert.equal(out.get('artifact:a2'), 'Checking: the dev deployment is starting');
+  assert.equal(out.get('artifact:a1'), 'Ready to check: start a test run of your app');
+  assert.equal(out.get('artifact:a2'), 'Checking: the test run of your app is starting');
   assert.equal(out.get('artifact:a3'), 'Checks passed');
   assert.equal(SM.withApplicationWords(words, [app('a1', 'draft')], null, null).has('artifact:a1'), false, 'unread: no word, never "Checking…"');
   const passport = src('project/ArtifactPassport.tsx');
@@ -880,7 +880,7 @@ test('S9 before the first probe the setup sheet reads "not checked yet" (the Hea
 
 // ---------- B2a stabilization, click-through 2 (workstream B) ----------
 
-test('S10 the Assemble job\'s Runs row reads "Ready to check — start a preview" while its output waits only for a preview (the awaiting_check rule)', () => {
+test('S10 the Assemble job\'s Runs row reads "Ready to check: start a test run of your app" while its output waits only for a preview (the awaiting_check rule)', () => {
   assert.deepEqual(R.expectedChecksFor('sde.app.assemble'), ['app.manifest_schema', 'app.preview_health']);
   assert.deepEqual(R.DEPLOYMENT_ACTIONS, ['sde.preview.start', 'sde.preview.stop']);
   const row = (validatorId, status) => ({ validatorId, blocking: true, status });
@@ -925,11 +925,11 @@ test('S11 the evidence headline never says passed while a blocking check has no 
   const manifestOnly = [val({ validatorId: 'app.manifest_schema', status: 'passed', summary: 'The manifest is valid.' })];
   assert.equal(EV.evidenceView(manifestOnly, { status: 'draft' }).headline, 'Checks passed', 'without the kind nothing more is known (the old reading)');
   const v = EV.evidenceView(manifestOnly, { status: 'draft' }, true, { kind: 'application', deployments: [] });
-  assert.equal(v.headline, 'Manifest check passed; preview check not run yet — start a preview');
+  assert.equal(v.headline, 'Settings check passed; app check not run yet — start a test run of your app');
   const pending = v.rows.find((r) => r.validatorId === 'app.preview_health');
-  assert.deepEqual([pending.word, pending.status, pending.blocking, pending.summary], ['Not run yet', null, true, 'This check needs your app to be running: start a preview to run it.']);
+  assert.deepEqual([pending.word, pending.status, pending.blocking, pending.summary], ['Not run yet', null, true, 'This check needs your app to be running: start a test run of your app to run it.']);
   assert.equal(EV.evidenceView(manifestOnly, { status: 'draft' }, true, { kind: 'application', deployments: [{ status: 'starting', startedAt: 1 }] }).headline,
-    'Checking: the dev deployment is starting');
+    'Checking: the test run of your app is starting');
   assert.equal(EV.evidenceView(manifestOnly, { status: 'draft' }, true, { kind: 'application', deployments: null }).headline, 'Some checks have not run');
   // Every checked kind: with any blocking check missing, never "Checks passed".
   const { VALIDATORS } = loadTs('src/shared/nexus/validators.ts');
@@ -973,7 +973,7 @@ test('S13 the rail, the Folio and Runs use the same words for a draft waiting on
   const rail = L.railFor(views.find((x) => x.id === 'sde'), { versions: [{ kind: 'build', status: 'candidate', validators: {} },
     { kind: 'application', status: 'draft', validators: { 'app.manifest_schema': 'passed' } }], liveActions: [], participation: true, deploymentHealthy: false, liveDeployments: 0 });
   const word = rail.steps.find((s) => s.id === 'application').word;
-  assert.equal(word, 'Ready to check — start a preview');
+  assert.equal(word, 'Ready to check: start a test run of your app');
   assert.equal(EV.applicationPreview({ status: 'draft', validators: { 'app.manifest_schema': 'passed' }, deployments: [] }).word, word, 'the Spine node and version rows');
   assert.equal(R.READY_TO_CHECK, word, 'the Runs row');
   for (const f of ['project/evidenceModel.ts', 'project/spineModel.ts', 'project/ArtifactPassport.tsx', 'runs/jobRunModel.ts']) {
@@ -988,8 +988,8 @@ test('S15 no second "Start a test run of your app" while one of that version is 
   assert.deepEqual(AM.actionBar(answer, ctx(null)).buttons.map((b) => b.actionId), ['sde.preview.start']);
   const starting = AM.actionBar(answer, ctx('starting'));
   assert.equal(starting.buttons.length, 0);
-  assert.deepEqual(starting.sentences, [{ actionId: 'sde.preview.start', setup: false, text: 'Start a test run of your app: a test run of your app is starting for this saved version. Follow it under “Test runs of your app”.' }]);
-  assert.equal(AM.actionBar(answer, ctx('running')).sentences[0].text, 'Start a test run of your app: a test run of your app is already running for this saved version. Stop it to start another.');
+  assert.deepEqual(starting.sentences, [{ actionId: 'sde.preview.start', setup: false, text: 'A test run of your app is starting for this saved version. Follow it under “Test runs of your app”.' }]);
+  assert.equal(AM.actionBar(answer, ctx('running')).sentences[0].text, 'A test run of your app is already running for this saved version. Stop it to start another.');
   // Which deployment is live, from the records: a deployment row of the version, or a live job starting one before its row exists.
   const dep = (subjectVersionId, status, jobId = 'JX') => ({ jobId, subjectVersionId, status, startedAt: 1 });
   const j = (state, build, id = 'JQ') => ({ id, state, actionId: 'sde.preview.start', inputs: [{ versionId: build }], createdAt: 1 });

@@ -103,8 +103,8 @@ export function actionBar(list: readonly ActionAvailabilityView[], ctx: ActionCo
     // The step a healthy dev deployment completes: one live deployment per version is enough (no double start).
     if (fit && ctx.liveDeployment && 'record' in step.doneWhen && step.doneWhen.record === 'deployment_healthy') {
       sentences.push({ actionId: a.actionId, setup: false, text: ctx.liveDeployment === 'starting'
-        ? `${a.label}: a test run of your app is starting for this saved version. Follow it under “Test runs of your app”.`
-        : `${a.label}: a test run of your app is already running for this saved version. Stop it to start another.` });
+        ? `A test run of your app is starting for this saved version. Follow it under “Test runs of your app”.`
+        : `A test run of your app is already running for this saved version. Stop it to start another.` });
       continue;
     }
     if (fit) {
