@@ -9,6 +9,7 @@ import type {
 } from '@shared/nexus/ipc';
 import { AGENT_REASON_TEXT, ROLLBACK_OWED_TEXT, agentOffText, agentsNotice, errorCopy } from '../data/errorCopy';
 import { LOCAL_MODEL_KIND } from '@shared/nexus/localModel';
+import { HOSTED_MODEL_KIND } from '@shared/nexus/hostedModel';
 import { LOCAL_PROBLEM_TEXT, noticeFor, sizeLabel, type ExecAvailability } from '../data/executionModel';
 import { agentTurnHeadline, waitPhaseText } from '../runs/jobRunModel';
 import { kindLabel, statusLabel } from '../project/artifactModel';
@@ -121,6 +122,8 @@ function runtimeBlocker(a: AgentSetupView): string | null {
     if (a.state === 'version_unsupported') return AGENT_REASON_TEXT.local_model_no_tools;
     if (a.state === 'ready' && a.problem) return LOCAL_PROBLEM_TEXT[a.problem];
   }
+  // The hosted runtime: a provider and model not chosen, a model it does not offer, no saved key, or a key the provider did not accept.
+  if (a.kind === HOSTED_MODEL_KIND && a.state === 'ready' && a.problem) return LOCAL_PROBLEM_TEXT[a.problem];
   switch (a.state) {
     case 'ready': return null;
     case 'not_installed': return AGENT_REASON_TEXT.runtime_not_installed;
@@ -194,7 +197,7 @@ export function agentPanelModel(i: AgentPanelInput): AgentPanelView {
     lead: canAsk ? ISOLATION_NOTE : blockers[0],
     blockers, canAsk, setup: !canAsk, working, sessions: rows,
     usageToday: a && a.consent.live ? usageTodayLine(a.usageToday) : null,
-    note: canAsk && staleButAskable ? RECHECK_ON_SEND_TEXT : canAsk && a !== null && a.state === 'ready' && a.signedIn !== 'yes' ? SIGNIN_UNCONFIRMED_TEXT : null, readError, failure
+    note: canAsk && staleButAskable ? RECHECK_ON_SEND_TEXT : canAsk && a !== null && a.state === 'ready' && a.signedIn !== 'yes' && a.kind !== HOSTED_MODEL_KIND ? SIGNIN_UNCONFIRMED_TEXT : null, readError, failure
   };
 }
 

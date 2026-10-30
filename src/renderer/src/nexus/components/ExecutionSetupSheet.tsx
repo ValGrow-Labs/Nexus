@@ -5,6 +5,7 @@ import { execFailText } from '../data/errorCopy';
 import { checkedLine, consentHostsOf, noticeFor, pickerPermissionRows, runtimeChoices, runtimeInUse, runtimeMemory, setupLead, setupSheet, type RuntimeChoice } from '../data/executionModel';
 import { CHECK_AGAIN_REREAD_MS, useApprovals, useHealth, useHealthPoll, withIntent } from '../data/useExecution';
 import { useAgentConsent } from '../data/useAgents';
+import { useOptionalShellActions } from '../shellActions';
 import { agentFailText } from '../agent/agentModel';
 import { ApprovalList } from '../project/ApprovalsSection';
 import { Sheet } from '../ui/Sheet';
@@ -45,9 +46,13 @@ function SetupBody({ onClose }: { onClose: () => void }) {
   // The runtime picker (shown only when the probe reported more than one runtime): the model picked per runtime in this open sheet.
   // Remembered for the session: a revoke, or closing and opening the sheet again, keeps the runtime and model that were picked.
   const [picked, setPicked] = useState<Record<string, string>>(() => runtimeMemory.models());
+  // The provider picked per runtime that offers providers (the hosted runtime), remembered the same way.
+  const [pickedProviders, setPickedProviders] = useState<Record<string, string>>(() => runtimeMemory.providers());
+  const shell = useOptionalShellActions();
   const inUse = runtimeInUse(consent.view);
   useEffect(() => { if (inUse) runtimeMemory.rememberInUse(inUse.kind, inUse.model); }, [inUse?.kind, inUse?.model]);
-  const choices = runtimeChoices(consent.view, picked, runtimeMemory.kind());
+  useEffect(() => { if (inUse && inUse.provider) runtimeMemory.rememberProvider(inUse.kind, inUse.provider); }, [inUse?.kind, inUse?.provider]);
+  const choices = runtimeChoices(consent.view, picked, runtimeMemory.kind(), pickedProviders);
   const rows = pickerPermissionRows(baseRows, { picker: choices.length > 0, live: !!consent.view?.consent.live });
   const [note, setNote] = useState<{ text: string; alert: boolean } | null>(null);
   const notice = noticeFor(availability);
@@ -77,8 +82,10 @@ function SetupBody({ onClose }: { onClose: () => void }) {
     if (busy || !c.action || c.action.disabled) return;
     setBusy(`runtime:${c.kind}`); setNote(null);
     const model = c.model !== null ? { model: c.model } : {};
+    const provider = c.providers && c.provider ? { provider: c.provider } : {};
     runtimeMemory.rememberInUse(c.kind, c.model);
-    const r = await consent.send(c.action.op === 'switch' ? { op: 'switch', runtime: c.kind, ...model } : { op: 'grant', runtime: c.kind, ...model });
+    if (c.providers && c.provider) runtimeMemory.rememberProvider(c.kind, c.provider);
+    const r = await consent.send(c.action.op === 'switch' ? { op: 'switch', runtime: c.kind, ...model, ...provider } : { op: 'grant', runtime: c.kind, ...model, ...provider });
     setBusy(null);
     setNote(r.ok ? { text: c.action.op === 'switch' ? 'The agent runtime was changed.' : 'The network permission was granted for that runtime.', alert: false } : { text: agentFailText(r), alert: true });
     checkAgain();
@@ -90,9 +97,26 @@ function SetupBody({ onClose }: { onClose: () => void }) {
     runtimeMemory.rememberModel(c.kind, model);
     if (!c.selected || busy) return;
     setBusy(`model:${c.kind}`); setNote(null);
-    const r = await consent.send({ op: 'model', model });
+    const r = await consent.send({ op: 'model', model, ...(c.providers && c.provider ? { provider: c.provider } : {}) });
     setBusy(null);
     setNote(r.ok ? { text: 'The model was changed.', alert: false } : { text: agentFailText(r), alert: true });
+    checkAgain();
+  };
+
+  // A provider picked for a runtime that offers providers: its first model that can use tools is picked with it. For the runtime in use the
+  // change is made at once (no new permission); for another runtime it only readies the button.
+  const pickProvider = async (c: RuntimeChoice, providerId: string) => {
+    const p = c.providers?.find((x) => x.id === providerId);
+    if (!p) return;
+    const model = p.models.find((m) => !m.disabled)?.name ?? null;
+    setPickedProviders((s) => ({ ...s, [c.kind]: providerId }));
+    runtimeMemory.rememberProvider(c.kind, providerId);
+    if (model !== null) { setPicked((s) => ({ ...s, [c.kind]: model })); runtimeMemory.rememberModel(c.kind, model); }
+    if (!c.selected || busy || model === null) return;
+    setBusy(`model:${c.kind}`); setNote(null);
+    const r = await consent.send({ op: 'model', model, provider: providerId });
+    setBusy(null);
+    setNote(r.ok ? { text: 'The provider was changed.', alert: false } : { text: agentFailText(r), alert: true });
     checkAgain();
   };
 
@@ -136,6 +160,34 @@ function SetupBody({ onClose }: { onClose: () => void }) {
                 <span className="nx-xs__label">{c.label}</span>
                 <span className="nx-xs__word">{c.word}</span>
                 <span className="nx-xs__text">{c.text}{!c.selected && c.destination ? ` Using it lets Nexus reach only ${c.destination}.` : ''}</span>
+                {c.providers && c.providers.length > 0 && (
+                  <>
+                    <span className="nx-xs__action">
+                      <label>Provider
+                        <select className="nx-xs__select" aria-label={`Provider for ${c.label}`} disabled={busy !== null}
+                          value={c.provider ?? ''} onChange={(e) => { void pickProvider(c, e.target.value); }}>
+                          {c.provider === null && <option value="" disabled>Choose a provider</option>}
+                          {c.providers.map((p) => <option key={p.id} value={p.id}>{p.keyPresent ? p.label : `${p.label} (no key saved)`}</option>)}
+                        </select>
+                      </label>
+                    </span>
+                    <span className="nx-xs__action">
+                      <label>Model
+                        <select className="nx-xs__select" aria-label={`Model for ${c.label}`} disabled={busy !== null}
+                          value={c.model ?? ''} onChange={(e) => { void pickModel(c, e.target.value); }}>
+                          {c.model === null && <option value="" disabled>Choose a model</option>}
+                          {(c.providers.find((p) => p.id === c.provider)?.models ?? []).map((m) => <option key={m.name} value={m.name} disabled={m.disabled}>{m.label}</option>)}
+                        </select>
+                      </label>
+                    </span>
+                    {c.keyHelp && (
+                      <span className="nx-xs__action" role="note">
+                        {c.keyHelp.text}{' '}
+                        {c.keyHelp.settings && shell && <Button onClick={() => { onClose(); shell.openSettings('Agents & Models'); }}>Open Settings</Button>}
+                      </span>
+                    )}
+                  </>
+                )}
                 {c.models && (
                   <span className="nx-xs__action">
                     <label>Model

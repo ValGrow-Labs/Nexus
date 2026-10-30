@@ -239,7 +239,8 @@ test('LS7 the sheet and the model add no vendor word, no host and no code to the
     assert.deepEqual(hits, [], f);
   }
   const sheet = read('src/renderer/src/nexus/components/ExecutionSetupSheet.tsx');
-  assert.match(sheet, /runtimeChoices\(consent\.view, picked, runtimeMemory\.kind\(\)\)/);
+  // The hosted runtime added the provider picked per runtime as the 4th argument (deliberate pin change).
+  assert.match(sheet, /runtimeChoices\(consent\.view, picked, runtimeMemory\.kind\(\), pickedProviders\)/);
   assert.match(sheet, /consent\.send\(/);
   assert.doesNotMatch(sheet, /127\.0\.0\.1|localhost|:11434/);
 });
