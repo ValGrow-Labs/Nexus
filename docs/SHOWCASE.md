@@ -10,7 +10,7 @@ real tests in a sandbox, and you review, accept and merge it. It takes about 10 
 | Docker Desktop running (Linux containers) | the launcher starts it if needed |
 | The three sandbox images present | `docker images` lists `nexus-local/sde-node`, `sde-python`, `nexus-fwd` (built once with `node tools/nexus-prepare-images.cjs --build`, needs network) |
 | About 30 GiB free on `C:` | the launcher warns when it is lower |
-| An agent: the **Claude CLI** signed in (`claude auth status` in your own terminal) **or** a local **Ollama** with `qwen2.5-coder:7b` | Claude: fast (about 30 s to 2 min, a few cents of your own plan). Ollama: free but slow and less reliable |
+| A way for Nexus to build, **any one** of these (nobody needs a paid plan): a **free hosted-model API key** (a few minutes to create in the provider's console; free, fast), a local **Ollama** with `qwen2.5-coder:7b` (free, private, slow and less reliable), or the **Claude CLI** signed in (`claude auth status` in your own terminal; optional, uses your own plan) | Free key: the guide's first option. Ollama: the second. Claude: the third, only if you already have it |
 | Node.js and `npm install` done | `npm run typecheck` |
 
 ## Start it
@@ -25,14 +25,17 @@ database are never touched. Close and delete everything afterwards with `tools\s
 
 ## The demo (what to click and say)
 
-1. **Welcome / onboarding.** Click through. *Skip* any "lead agent" step: that is the older feature.
+1. **Welcome / onboarding.** Click through. In the lead-agent engine step leave **Not now** selected (it is the default): finishing setup starts no program on your computer. The lead agent is the older feature; the demo does not use it.
 2. **Create the project.** "Create or import a project", choose the folder the launcher printed
    (`...\nexus-showcase-live\demo-project`). It opens in the **SDE** workspace.
    *Say:* Nexus analyses the project and files it under the right workspace.
 3. **Take a repository snapshot** (the repository step in the rail). *Say:* Nexus records exactly which commit the agent starts from.
-4. **Give the agent permission.** Open **Execution setup**. Under *Agent runtime* pick **Claude** (or the **local model** and its
-   model) and click **Use this runtime**. *Say:* the permission is once, revocable, and allows only one destination
-   (`api.anthropic.com:443`, or `127.0.0.1:11434` for the local model); caps are $2 per turn and $10 per day.
+4. **Choose how Nexus builds for you.** Open **Execution setup** (or press the one button in the agent panel). The guide *Choose how Nexus
+   builds for you* lists three options, free first. **Free online AI**: press *Add my key*, paste the free key under *AI provider keys* in
+   Settings, save it, come back, pick the provider and a model and press **Use this runtime**. Or **On this computer**: start the local model
+   server, pick the model and press **Use this runtime**. Or, only if you already have it, **a plan you already have** (the Claude CLI) when
+   it reads *Ready*. *Say:* the permission is once, revocable, and allows only the destinations it names (the provider's host for a free
+   key, `127.0.0.1:11434` for the local model, the CLI's own host for the third); caps are $2 per turn and $10 per day.
 5. **Ask the agent.** In the agent panel paste:
 
    > Build a tiny weather-prediction model in pure Python (standard library only) in `src/pytest_app/weather.py`:
@@ -57,7 +60,7 @@ database are never touched. Close and delete everything afterwards with `tools\s
 - **What it is:** a workbench where agents work in isolated, recorded, revocable ways, and a human reviews every change.
 - **Safety:** capability tokens per turn; sandbox with no network, one bind mount, dropped capabilities; secret scan on every
   change; accept never touches your branch; merge is a confirmed fast-forward; egress limited to one host.
-- **Runtimes:** the Claude CLI or a local Ollama model, one at a time, chosen in the setup sheet.
+- **Runtimes:** free hosted-model APIs (your own free key), a local Ollama model, or the Claude CLI if you have it; one at a time, chosen in the guide in the setup sheet. Nexus works without any Claude plan.
 - **Honest limits** (also in `docs/nexus/platform-core.md`, Part IV): verified end to end on scratch projects with real Claude
   and real Docker; use on your own repositories, the local 7B model and migrating an existing database are not yet verified.
 
@@ -68,8 +71,9 @@ database are never touched. Close and delete everything afterwards with `tools\s
 | "The agent's turn failed" right after sending | take the repository snapshot first (step 3), then send again |
 | Turn sits on "Waiting" | open the strip above the panel and approve the repository write |
 | The setup row says Docker/disk problem | start Docker Desktop; free space on `C:` |
-| Claude row says not signed in | run `claude` once in a terminal and sign in |
-| Local model row says no model | start Ollama and `ollama pull qwen2.5-coder:7b` |
+| The Claude option says not installed or not signed in | it is optional: use a free key or the local model instead, or run `claude` once in a terminal and sign in |
+| Free online AI says it needs a key, or the key is rejected | press *Add my key*, paste the key exactly as the provider shows it, save, then check again |
+| The local model option says the server is not running or has no model | start Ollama and `ollama pull qwen2.5-coder:7b`, then press *Check again* |
 | Anything else | `tools\showcase.ps1 -Clean`, then start again (a fresh scratch folder every time) |
 
-Keep a recorded run to fall back on: the merged result folder of one good run (the project folder after step 10) and a few screenshots of steps 4, 7, 8 and 9.
+Keep a recorded run to fall back on: the merged result folder of one good run (the project folder after step 10) and a few screenshots of steps 4, 7, 8 and 9. (Step 4's screenshot is the guide.)
