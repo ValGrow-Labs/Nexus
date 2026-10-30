@@ -10,7 +10,7 @@ export function MobileRuns({ projectId }: { projectId: string }) {
   const setDraft = useNexusUi((s) => s.setDraft);
   const focusIntent = useNexusUi((s) => s.focusIntent);
   const entries = useRuns().filter((e) => e.request.projectId === projectId).reverse().slice(0, 2);
-  if (entries.length === 0) return <p className="nx-mruns nx-muted">No runs for this project yet.</p>;
+  if (entries.length === 0) return <p className="nx-mruns nx-muted">No tasks have run for this project yet.</p>;
   return (
     <section className="nx-mruns" aria-label="Latest runs">
       <ul className="nx-runs">

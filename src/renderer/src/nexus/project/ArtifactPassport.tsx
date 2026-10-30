@@ -10,7 +10,7 @@ import { navigate } from '../router/useRoute';
 import { PASSPORT_HANDOFF_READS, canHandOff, hasReceiver, type HandoffStart } from '../handoffs/handoffModel';
 import { Button } from '../ui/Button';
 import { Popover } from '../ui/Sheet';
-import { plainPreviewWord, projectOwned, type ArtifactNode, type ArtifactSummary } from './spineModel';
+import { projectOwned, type ArtifactNode, type ArtifactSummary } from './spineModel';
 import { ActionBar } from './ActionBar';
 import { DeploymentsSection } from './DeploymentsSection';
 import { EvidenceSection } from './EvidenceSection';
@@ -198,7 +198,7 @@ export function ArtifactPassport({ project, node, artifacts, onSpine = true, onH
     return m;
   };
   const wordOf = (v: VersionView): string | null => (isApp
-    ? plainPreviewWord(applicationChecksWord({ status: v.status, validationState: v.validationState, validators: validatorsOf(v.id), deployments: deploymentsOf(v.id) }))
+    ? applicationChecksWord({ status: v.status, validationState: v.validationState, validators: validatorsOf(v.id), deployments: deploymentsOf(v.id) })
     : checksWord(v.validationState, v.status));
   const ownerRow = artifact && artifact.ownerParticipationId
     ? (idx.byProject.get(project.id) ?? []).find((r) => r.id === artifact.ownerParticipationId) ?? null

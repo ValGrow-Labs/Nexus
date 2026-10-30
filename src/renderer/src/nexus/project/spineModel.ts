@@ -164,23 +164,6 @@ export function versionsToRead<T extends { versionId: string; status: VersionSta
   return wanted.filter((w) => w.status === 'draft' || readAt.get(w.versionId) !== w.status);
 }
 
-/**
- * The one set of words for an app's test run and its checks, as people read them on the timeline, the steps and the details of a
- * saved item. The words come from evidenceModel's applicationPreview (Track D's file), which still says "dev deployment",
- * "health check" and "preview"; this table is the plain wording until that file says the same, and passes any other word through.
- * "test run of your app" is what Nexus starts on this computer; "app check" is the question it asks the running app.
- */
-export const PREVIEW_PLAIN: Readonly<Record<string, string>> = Object.freeze({
-  'Ready to check — start a preview': 'Ready to check: start a test run of your app',
-  'Checking: the dev deployment is starting': 'Checking: the test run of your app is starting',
-  'Checking: waiting for the dev deployment to answer': 'Checking: waiting for your app to answer',
-  'Answered its health check': 'Your app answered the app check',
-  'Failed its health check': 'Your app failed the app check',
-  'The health check could not run': 'The app check could not run',
-  'The dev deployment failed': 'The test run of your app failed'
-});
-export const plainPreviewWord = (w: string | null): string | null => (w === null ? null : PREVIEW_PLAIN[w] ?? w);
-
 /** Node id -> its checks word, from the versions read (validation state and status); a node without one is left out. */
 export function spineChecks(reads: readonly { nodeId: string; validationState: 'pending' | 'passed' | 'failed' | 'error'; status: VersionStatus }[]): Map<string, string> {
   const m = new Map<string, string>();
@@ -211,7 +194,7 @@ export function withApplicationWords(words: ReadonlyMap<string, string>, artifac
         .filter((x) => !own.some((o) => o.status === x.status && o.startedAt === x.startedAt))
       : [];
     const p = applicationPreview({ status: v.status, validators: validators?.get(v.id) ?? null, deployments: own ? [...own, ...notLeased] : null });
-    if (p && p.state !== 'draft') out.set(nodeId, plainPreviewWord(p.word) ?? p.word);
+    if (p && p.state !== 'draft') out.set(nodeId, p.word);
     else if (out.get(nodeId) === 'Checking…') out.delete(nodeId);
   }
   return out;

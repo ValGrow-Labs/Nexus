@@ -17,7 +17,7 @@ import { availabilityFrom } from '../data/executionModel';
 import { useExecStore, withIntent } from '../data/useExecution';
 import { agentFailText, agentPanelModel, continuableSession, intentRoute, intentWords, messageKey, startArgs } from '../agent/agentModel';
 
-const TOOL_PAGE: Record<ProjectTool, string> = { bench: 'Bench', changes: 'Changes', completion: 'Completion', runs: 'Runs' };
+const TOOL_PAGE: Record<ProjectTool, string> = { bench: 'Work area', changes: 'Suggested changes', completion: 'Checklist', runs: 'Tasks' };
 
 let requestSeq = 0;
 function newRequestId(): string { requestSeq += 1; return `r-${Date.now()}-${requestSeq}`; }

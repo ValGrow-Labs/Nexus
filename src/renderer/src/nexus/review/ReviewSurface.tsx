@@ -53,7 +53,7 @@ export function ReviewSurface({ root, git, refresh }: { root: string; git: GitSt
 
   const frame = (body: ReactNode) => (
     <section className="nx-surface nx-review" aria-labelledby="nx-surface-title">
-      <h1 id="nx-surface-title" className="nx-surface__title" tabIndex={-1}>Changes</h1>
+      <h1 id="nx-surface-title" className="nx-surface__title" tabIndex={-1}>Suggested changes</h1>
       {/* The AI helper's suggested changes (Looks good, Keep these changes, Add to my project) come first; your own unsaved changes follow. */}
       <ChangeSets />
       {body}

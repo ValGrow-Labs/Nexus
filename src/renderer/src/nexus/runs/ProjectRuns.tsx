@@ -148,7 +148,7 @@ export function ProjectRuns({ projectId }: { projectId: string }) {
   const entries = useRuns().filter((e) => e.request.projectId === projectId).reverse();
   return (
     <section className="nx-surface" aria-labelledby="nx-surface-title">
-      <h1 id="nx-surface-title" className="nx-surface__title" tabIndex={-1}>Runs</h1>
+      <h1 id="nx-surface-title" className="nx-surface__title" tabIndex={-1}>Tasks</h1>
       <JobsSection projectId={projectId} />
       <h2 className="nx-xj__title">Requests to the lead AI helper</h2>
       {entries.length === 0 ? (
