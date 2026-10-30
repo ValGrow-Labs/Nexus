@@ -1,15 +1,21 @@
 # Nexus
 
 **An AI-native development platform.** Pick the kind of work you're doing, open a
-workspace, and build with AI agents alongside your normal development tools.
+workspace, and build with AI helpers alongside your normal development tools.
+
+## How it works in 5 steps
+
+1. Pick a project, then choose your AI helper (a free one is fine).
+2. Ask for what you want, in plain words.
+3. Look over the suggested changes, then add them to your project.
 
 > **Status: college project, beta.** The shell, the workspace launcher, the workspace
 > and project pages and the assistant panel run on real local data. On top of that
 > there is a platform core with a sandboxed **execution and agent runtime (B2b)**:
-> an agent works in an isolated copy of a repository, its change is checked by real
-> tests in a Docker sandbox, and you review, accept and merge it yourself. Agents
-> can be the Claude CLI you already have installed, a **local model through
-> Ollama** (loopback only) or a **hosted free-tier model** with your own API key.
+> an AI helper works in a safe copy of a project, its suggested changes are checked by real
+> tests in a Docker safe space, and you look them over, keep them and add them to your project yourself.
+> AI helpers can run on the Claude CLI you already have installed (your own plan), a **local model through
+> Ollama** (loopback only) or a **hosted free-tier model** with your own access key (an API key).
 > It was verified end to end on scratch projects with a real Claude turn and a
 > real Docker sandbox; use on your own repositories, the local 7B model, the
 > hosted free-key runtime (tested against mock servers only) and the migration of
@@ -20,13 +26,13 @@ workspace, and build with AI agents alongside your normal development tools.
 
 ## Works with free AI
 
-You do not need a paid model to use Nexus's agent. It can run on a **free API key**
+You do not need a paid model to use Nexus's AI helper. It can run on a **free API key** (an access key, in the app's words)
 from a hosted provider (Groq or Google Gemini: create a key in the provider's
 console and paste it in Settings, where Nexus keeps it encrypted on your computer
 and never shows it again), on a **local model through Ollama** that never leaves
 your machine, or on the **Claude CLI** if you already have it installed, which is
-optional. Whichever you pick, the agent's commands run in a Docker sandbox with no
-network, so Docker Desktop is required, and free tiers have rate limits that the
+optional. Whichever you pick, the AI helper's commands run in a Docker safe space with no
+internet, so Docker Desktop is required, and free tiers have rate limits that the
 provider sets, not Nexus. The hosted-key runtime is built and tested against mock
 servers only: it is **not yet verified** with a real provider key. Details and the
 honest limits are in [`docs/nexus/platform-core.md`](./docs/nexus/platform-core.md)
@@ -49,7 +55,7 @@ honest limits are in [`docs/nexus/platform-core.md`](./docs/nexus/platform-core.
 
 ## Planned
 
-Artifacts with versions and lineage, cross-workspace handoffs, "Turn into App",
+Saved items with versions and lineage, cross-workspace handoffs, "Turn into App",
 builds and deployments, and a sandboxed agent runtime. See
 [`docs/superpowers/specs/`](./docs/superpowers/specs/) for the design and the
 open follow-ups.
@@ -113,5 +119,5 @@ assets are licensed for non-commercial use only — see
   by Anthropic or Ollama. Product names belong to their owners. Nexus does not
   bundle or copy any agent's login: it runs the CLI you installed, or your own local
   model, on your own machine.
-- **No warranty.** Provided "as is" under the MIT License. Agents can change files;
-  review every change before you accept or merge it.
+- **No warranty.** Provided "as is" under the MIT License. AI helpers can change files;
+  look over every suggested change before you keep it or add it to your project.
