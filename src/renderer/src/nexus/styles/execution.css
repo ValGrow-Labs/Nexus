@@ -1,6 +1,6 @@
 /* B2a execution in the Spine + Folio: the notice strip, approvals, the setup sheet, the log reader, jobs, evidence,
    kind viewers, dev deployments, the writing sheet. Tokens only. Status is always words; a rule tells rows apart. */
-.nx-xstrip { display: grid; gap: var(--nx-s2); padding: var(--nx-s2) var(--nx-s4); border-bottom: 1px solid var(--nx-line); background: var(--nx-surface); }
+.nx-xstrip { display: grid; gap: var(--nx-s2); padding: var(--nx-s2) var(--nx-s4); border-bottom: 1px solid var(--nx-divider); background: var(--nx-surface); }
 .nx-xstrip:empty { display: none; }
 /* The notices and the open agent panel may take about 30% of the window and scroll inside it, so the bench below keeps a usable height
    (the panel grows with the conversation log; the bench never has to give up all its room). */
@@ -213,14 +213,17 @@
 }
 
 /* The project page's top: the header, then ONE box that says what is happening and what to do next. Normal flow only: nothing overlaps. */
-.nx-phead { padding: var(--nx-s3) var(--nx-s4) var(--nx-s2); background: var(--nx-surface); border-bottom: 1px solid var(--nx-line); }
+.nx-phead { padding: var(--nx-s3) var(--nx-s4) var(--nx-s2); background: var(--nx-surface); border-bottom: 1px solid var(--nx-divider); }
 .nx-phead__name { margin: 0; font: 700 20px/1.2 var(--nx-font-display); }
 .nx-phead__meta { margin: 4px 0 0; display: flex; flex-wrap: wrap; gap: 4px var(--nx-s4); color: var(--nx-text-2); font-size: 12.5px; }
 .nx-ag__next { display: grid; gap: var(--nx-s1); padding: var(--nx-s3) var(--nx-s4); border: 1px solid var(--nx-line-strong); border-left: 4px solid var(--nx-ink); border-radius: var(--nx-r-obj); background: var(--nx-surface); }
 .nx-ag__next[data-tone="working"], .nx-ag__next[data-tone="waiting"] { border-left-style: double; }
 .nx-ag__next-title { margin: 0; font: 700 15px/1.3 var(--nx-font); }
 .nx-ag__next-text { margin: 0; color: var(--nx-text-2); font-size: 13px; }
-.nx-prog { padding: 0 var(--nx-s4); border-bottom: 1px solid var(--nx-line); background: var(--nx-surface); flex: none; }
+.nx-prog { padding: 0 var(--nx-s4); border-bottom: 1px solid var(--nx-divider); background: var(--nx-surface); flex: none; }
 .nx-prog__toggle { display: flex; align-items: center; gap: var(--nx-s2); width: 100%; padding: var(--nx-s2) 0; border: 0; background: none; color: var(--nx-ink); font: 600 13px var(--nx-font); cursor: pointer; text-align: left; }
 .nx-prog__body[hidden] { display: none; }
 .nx-prog__body .nx-spine { padding-left: 0; padding-right: 0; border-bottom: 0; }
+/* A visible rule above the AI helper line, so the next-step box, the helper line and the progress row read as separate parts. */
+.nx-ag__head { border-top: 1px solid var(--nx-divider); padding-top: var(--nx-s2); }
+.nx-ag__next { border-color: var(--nx-border); border-left-color: var(--nx-ink); }

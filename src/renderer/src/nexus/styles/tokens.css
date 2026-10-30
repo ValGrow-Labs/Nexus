@@ -12,8 +12,12 @@
   --nx-ink: oklch(0.23 0.014 225);
   --nx-text-2: oklch(0.40 0.014 225);
   --nx-text-3: oklch(0.49 0.012 225);
-  --nx-line: oklch(0.885 0.006 210);
-  --nx-line-strong: oklch(0.64 0.010 215);
+  /* One border scale (WCAG 1.4.11; a test pins the ratios): rules 2:1, cards and panels 2.5:1, controls 3.5:1 or more. */
+  --nx-divider: oklch(0.74 0.009 213);
+  --nx-border: oklch(0.68 0.009 213);
+  --nx-border-strong: oklch(0.58 0.010 215);
+  --nx-line: var(--nx-border);
+  --nx-line-strong: var(--nx-border-strong);
   --nx-on-ink: oklch(0.985 0.002 205);
   --nx-ok: oklch(0.50 0.11 158);
   --nx-warn: oklch(0.54 0.12 68);
@@ -38,8 +42,11 @@
   --nx-ink: oklch(0.94 0.006 210);
   --nx-text-2: oklch(0.80 0.008 210);
   --nx-text-3: oklch(0.71 0.008 210);
-  --nx-line: oklch(0.31 0.010 225);
-  --nx-line-strong: oklch(0.54 0.012 225);
+  --nx-divider: oklch(0.42 0.010 225);
+  --nx-border: oklch(0.47 0.011 225);
+  --nx-border-strong: oklch(0.60 0.012 225);
+  --nx-line: var(--nx-border);
+  --nx-line-strong: var(--nx-border-strong);
   --nx-on-ink: oklch(0.18 0.008 225);
   --nx-ok: oklch(0.76 0.12 158);
   --nx-warn: oklch(0.80 0.12 75);

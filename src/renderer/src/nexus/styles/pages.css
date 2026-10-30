@@ -15,7 +15,7 @@
 .nx-toolbar .nx-input[type='search'] { flex: 1 1 240px; }
 
 /* Workspace tabs: Projects is the only real tab; vocabulary tabs are planned spans. */
-.nx-wstabs { display: flex; align-items: flex-end; gap: var(--nx-s4); flex-wrap: wrap; border-bottom: 1px solid var(--nx-line); }
+.nx-wstabs { display: flex; align-items: flex-end; gap: var(--nx-s4); flex-wrap: wrap; border-bottom: 1px solid var(--nx-divider); }
 .nx-wstabs__list, .nx-wstabs__planned { display: flex; gap: var(--nx-s4); flex-wrap: wrap; }
 .nx-wstab { display: inline-flex; align-items: center; gap: var(--nx-s2); height: 36px; padding: 0 2px; margin-bottom: -1px; border: 0; border-bottom: 2px solid transparent; background: none; color: var(--nx-ink); font: 600 14px/1 var(--nx-font); }
 button.nx-wstab { cursor: pointer; }
@@ -73,10 +73,10 @@ button.nx-wstab { cursor: pointer; }
 .nx-wsx__new { height: 38px; padding: 0 16px; border: 0; border-radius: var(--nx-r-obj); background: var(--nx-ink); color: var(--nx-on-ink); font: 600 14px/1 var(--nx-font); cursor: pointer; }
 .nx-wsx__new:hover { opacity: 0.9; }
 
-.nx-wsx__list { list-style: none; margin: 0; padding: 0; border-top: 1px solid var(--nx-line); }
+.nx-wsx__list { list-style: none; margin: 0; padding: 0; border-top: 1px solid var(--nx-divider); }
 .nx-wsx__row {
   --e: oklch(var(--nx-ws-l) var(--nx-ws-c) var(--ws-h, 250));
-  position: relative; display: grid; grid-template-columns: minmax(0, 1fr) 44px; align-items: stretch; border-bottom: 1px solid var(--nx-line);
+  position: relative; display: grid; grid-template-columns: minmax(0, 1fr) 44px; align-items: stretch; border-bottom: 1px solid var(--nx-divider);
 }
 .nx-wsx__row::before { content: ''; position: absolute; left: 0; top: -1px; bottom: -1px; width: 2px; background: var(--e); transform: scaleY(0); transition: transform var(--nx-t-base) var(--nx-ease-in); }
 .nx-wsx__row:hover::before, .nx-wsx__row:focus-within::before { transform: scaleY(1); }

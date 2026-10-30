@@ -1,6 +1,6 @@
 /* Agents page: list + the selected agent's terminal. Borders, no shadows. */
 .nxa { flex: 1; min-width: 0; min-height: 0; display: flex; flex-direction: column; }
-.nxa__bar { display: flex; align-items: center; flex-wrap: wrap; gap: var(--nx-s3); padding: var(--nx-s3) var(--nx-s4); border-bottom: 1px solid var(--nx-line); }
+.nxa__bar { display: flex; align-items: center; flex-wrap: wrap; gap: var(--nx-s3); padding: var(--nx-s3) var(--nx-s4); border-bottom: 1px solid var(--nx-divider); }
 .nxa__title { margin: 0; font: 700 18px/1.2 var(--nx-font-display); color: var(--nx-ink); }
 .nxa__auto { font: 400 13px var(--nx-font); color: var(--nx-text-2); }
 .nxa__actions { margin-left: auto; display: flex; gap: var(--nx-s2); flex-wrap: wrap; }
@@ -10,7 +10,7 @@
 .nxa__side > .nxa__list { overflow-y: visible; flex: 0 0 auto; }
 .nxa__mem { border: 1px solid var(--nx-line); border-radius: var(--nx-r-obj); background: var(--nx-surface); flex: 0 0 auto; }
 .nxa__mem-sum { padding: var(--nx-s2) var(--nx-s3); font: 650 14px var(--nx-font); color: var(--nx-ink); cursor: pointer; border-radius: var(--nx-r-obj); }
-.nxa__mem-body { padding: var(--nx-s2) var(--nx-s3) var(--nx-s3); border-top: 1px solid var(--nx-line); }
+.nxa__mem-body { padding: var(--nx-s2) var(--nx-s3) var(--nx-s3); border-top: 1px solid var(--nx-divider); }
 .nxa__row { width: 100%; display: grid; gap: 2px; text-align: left; padding: var(--nx-s2) var(--nx-s3); border: 1px solid var(--nx-line); border-radius: var(--nx-r-ctl); background: var(--nx-surface); color: var(--nx-ink); font: 400 13px var(--nx-font); cursor: pointer; }
 .nxa__row:hover { background: var(--nx-sunken); }
 .nxa__row[aria-current="true"] { border-color: var(--nx-ink); background: var(--nx-sunken); }

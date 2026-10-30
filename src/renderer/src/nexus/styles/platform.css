@@ -39,7 +39,7 @@ li.nx-svx-commit { grid-template-columns: 64px minmax(0, 1fr) auto; align-items:
 .nx-svx__sha { font-size: 11.5px; color: var(--nx-text-2); overflow-wrap: anywhere; }
 .nx-svx__path { margin: 0; color: var(--nx-text-2); overflow-wrap: anywhere; }
 .nx-svx__list { list-style: none; margin: 0; padding: 0; display: grid; max-height: 260px; overflow: auto; border: 1px solid var(--nx-line); border-radius: var(--nx-r-obj); }
-.nx-svx__entry { display: flex; width: 100%; gap: var(--nx-s2); padding: 6px var(--nx-s3); border: 0; border-bottom: 1px solid var(--nx-line); background: var(--nx-surface); color: var(--nx-ink); font: inherit; text-align: left; cursor: pointer; }
+.nx-svx__entry { display: flex; width: 100%; gap: var(--nx-s2); padding: 6px var(--nx-s3); border: 0; border-bottom: 1px solid var(--nx-divider); background: var(--nx-surface); color: var(--nx-ink); font: inherit; text-align: left; cursor: pointer; }
 .nx-svx__entry[aria-pressed="true"] { font-weight: 650; box-shadow: inset 2px 0 0 var(--nx-ink); }
 .nx-svx__entry:disabled { cursor: default; color: var(--nx-text-3); }
 .nx-svx__chosen { margin: 0; color: var(--nx-text-2); overflow-wrap: anywhere; }
@@ -147,7 +147,7 @@ li.nx-svx-commit { grid-template-columns: 64px minmax(0, 1fr) auto; align-items:
 .nx-shx__control { width: 100%; }
 .nx-shx__note { resize: vertical; }
 .nx-shx__list { list-style: none; margin: 0; padding: 0; display: grid; max-height: 300px; overflow: auto; border: 1px solid var(--nx-line); border-radius: var(--nx-r-obj); }
-.nx-shx__choice { display: flex; align-items: flex-start; gap: var(--nx-s2); padding: 6px var(--nx-s3); border-bottom: 1px solid var(--nx-line); background: var(--nx-surface); cursor: pointer; }
+.nx-shx__choice { display: flex; align-items: flex-start; gap: var(--nx-s2); padding: 6px var(--nx-s3); border-bottom: 1px solid var(--nx-divider); background: var(--nx-surface); cursor: pointer; }
 .nx-shx__subject { display: grid; gap: 2px; min-width: 0; overflow-wrap: anywhere; }
 .nx-shx__why { margin: 0; }
 .nx-shx__status { margin: 0; color: var(--nx-text-2); outline: none; }

@@ -19,7 +19,7 @@
 /* Popover: menus and path switchers (ui/Sheet.tsx Popover). */
 .nx-popover { display: inline-flex; min-width: 0; }
 .nx-popover__panel { position: fixed; z-index: 350; min-width: 220px; max-width: min(360px, calc(100vw - 32px)); max-height: min(60vh, 480px); overflow-y: auto; padding: var(--nx-s1); display: grid; gap: 1px; }
-.nx-menu__group + .nx-menu__group { margin-top: var(--nx-s1); padding-top: var(--nx-s1); border-top: 1px solid var(--nx-line); }
+.nx-menu__group + .nx-menu__group { margin-top: var(--nx-s1); padding-top: var(--nx-s1); border-top: 1px solid var(--nx-divider); }
 .nx-menu__label { padding: 6px 8px 4px; font: 550 11px/1 var(--nx-font); color: var(--nx-text-3); }
 .nx-menu__item { width: 100%; display: flex; align-items: center; gap: var(--nx-s2); min-height: 30px; padding: 0 8px; border: 0; border-radius: var(--nx-r-ctl); background: none; color: var(--nx-ink); font: 450 13px/1.2 var(--nx-font); text-align: left; cursor: pointer; }
 .nx-menu__item:hover, .nx-menu__item:focus-visible { background: var(--nx-sunken); }

@@ -1,6 +1,6 @@
 /* shell.css */
 .nx-shell { display: grid; grid-template-columns: minmax(0, 1fr); grid-template-rows: var(--nx-bar-h) minmax(0, 1fr) auto auto; height: 100%; background: var(--nx-ground); color: var(--nx-ink); font: 400 14px/1.5 var(--nx-font); }
-.nx-bar { display: flex; align-items: center; gap: var(--nx-s2); padding: 0 var(--nx-s3); border-bottom: 1px solid var(--nx-line); background: var(--nx-surface); min-width: 0; }
+.nx-bar { display: flex; align-items: center; gap: var(--nx-s2); padding: 0 var(--nx-s3); border-bottom: 1px solid var(--nx-divider); background: var(--nx-surface); min-width: 0; }
 .nx-bar__brand { font: 700 15px/1 var(--nx-font-display); }
 /* Boot splash wordmark (main.tsx); colour follows the splash in index.html. */
 .nx-boot-mark { font: 700 28px/1 var(--nx-font-display); color: inherit; }
@@ -12,7 +12,7 @@
 .nx-main--flush { overflow: hidden; display: flex; flex-direction: column; }
 .nx-tabs { display: none; }
 @media (max-width: 767px) {
-  .nx-tabs { display: grid; grid-template-columns: repeat(4, 1fr); border-top: 1px solid var(--nx-line); background: var(--nx-surface); padding-bottom: env(safe-area-inset-bottom); }
+  .nx-tabs { display: grid; grid-template-columns: repeat(4, 1fr); border-top: 1px solid var(--nx-divider); background: var(--nx-surface); padding-bottom: env(safe-area-inset-bottom); }
   /* Each segment button sits in its popover wrapper (followed by the open
      panel), so "not the last segment" is the wrapper, not the button. */
   .nx-path > .nx-popover:not(:last-child), .nx-path__sep { display: none; }
@@ -49,7 +49,7 @@
 /* Command palette */
 .nx-palette-layer { position: fixed; inset: 0; z-index: 400; background: color-mix(in oklab, var(--nx-ink) 28%, transparent); display: grid; justify-items: center; align-items: start; padding-top: 12vh; }
 .nx-palette { width: min(640px, calc(100vw - 32px)); color: var(--nx-ink); overflow: hidden; }
-.nx-palette__input { display: flex; align-items: center; gap: var(--nx-s2); padding: 0 var(--nx-s3); border-bottom: 1px solid var(--nx-line); color: var(--nx-text-3); }
+.nx-palette__input { display: flex; align-items: center; gap: var(--nx-s2); padding: 0 var(--nx-s3); border-bottom: 1px solid var(--nx-divider); color: var(--nx-text-3); }
 .nx-palette__input input { flex: 1; height: 48px; border: 0; background: transparent; color: var(--nx-ink); font: 400 15px/1 var(--nx-font); outline: none; }
 .nx-palette__input kbd { font: 500 11px/1 var(--nx-font-id); padding: 3px 5px; border: 1px solid var(--nx-line); border-radius: var(--nx-r-ctl); color: var(--nx-text-3); }
 .nx-palette__list { list-style: none; margin: 0; padding: var(--nx-s1); max-height: 50vh; overflow-y: auto; }
