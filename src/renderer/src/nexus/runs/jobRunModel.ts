@@ -212,8 +212,14 @@ const AGENT_FAIL_TEXT: Readonly<Record<string, string>> = Object.freeze({
   // The same sentence the envelope gives a refused start with this reason (the user's next step is in it).
   consent_mismatch: AGENT_REASON_TEXT.consent_mismatch.replace(/\.$/, ''),
   proxy_failed: 'The agent’s network proxy could not start; check again in Setup',
-  runtime_unknown: AGENT_REASON_TEXT.runtime_unknown.replace(/\.$/, '')
+  runtime_unknown: AGENT_REASON_TEXT.runtime_unknown.replace(/\.$/, ''),
+  // The turn ended before it could start: the answer to its approval request, in the renderer's own words.
+  denied: 'The agent’s turn ended: you denied the approval it asked for',
+  expired: 'The agent’s turn ended: the approval it asked for was not answered in time'
 });
+/** A failed turn's sentence: its own wording, else the fixed sentence for the reason it failed with (never the runtime's text). */
+const failText = (outcome: string | null): string | null =>
+  outcome === null ? null : AGENT_FAIL_TEXT[outcome] ?? (Object.prototype.hasOwnProperty.call(AGENT_REASON_TEXT, outcome) ? AGENT_REASON_TEXT[outcome] : null);
 export function agentTurnHeadline(j: Pick<JobView, 'state' | 'outcome' | 'phase' | 'headline' | 'cancelRequested'>): string {
   switch (j.state) {
     case 'queued': case 'retry_scheduled': return waitPhaseText(j.phase) ?? (j.headline === 'queued' ? 'Queued; it starts when a slot is free' : WAITING[j.headline] ?? 'Waiting to start');
@@ -223,7 +229,7 @@ export function agentTurnHeadline(j: Pick<JobView, 'state' | 'outcome' | 'phase'
     case 'completed': return j.outcome === 'no_change' ? AGENT_NO_CHANGE : 'The agent ended its turn and registered its work';
     // Only the recorded outcome `no_change` says the agent changed nothing; a partial turn without it says only that it ended in part.
     case 'partial': return j.outcome === 'no_change' ? AGENT_NO_CHANGE : 'The agent’s turn ended in part; what it changed is not recorded';
-    case 'failed': return (j.outcome && AGENT_FAIL_TEXT[j.outcome]) || 'The agent’s turn failed';
+    case 'failed': return failText(j.outcome) ?? 'The agent’s turn failed';
     case 'cancelled': return 'The agent’s turn was cancelled';
     case 'timed_out': return 'The agent ran past its time limit';
     case 'interrupted': return 'The agent was stopped before it ended its turn';

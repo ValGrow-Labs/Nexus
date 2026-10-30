@@ -1417,6 +1417,7 @@ test('B4 an attempt that never reached the runtime costs nothing and does not co
   w.runner.report({ op: 'attempt.refused', attemptId: a3.attempt.id, reason: 'docker_stopped', detail: 'x' });
   assert.equal(w.attemptOf(a3.attempt.id).state, 'abandoned');
   assert.equal(w.nx.budget.usageToday().usdCents, 0);
+  assert.equal(w.nx.budget.usageToday().turns, 0, 'a turn that never started is not a turn started today (V9d)');
   const g = w.nx.budget.startGuard(PROJECT);
   assert.ok(g.ok || g.reason === 'busy', 'only the requeued turn itself (busy) is in the way: no budget, no rate');
   // An attempt that started, ran and reported no cost is charged the cap, as an estimate.
@@ -1425,6 +1426,7 @@ test('B4 an attempt that never reached the runtime costs nothing and does not co
   w.exit(run.attempt.id, 1);
   const u = w.nx.budget.usageToday();
   assert.equal(u.usdCents, 200); assert.equal(u.estimated, true);
+  assert.equal(u.turns, 1, 'only the attempt that started counts');
 });
 
 test('A2 one limit bounds everything a turn creates: its child jobs of every kind (the system collects too) and its requirement drafts', async () => {

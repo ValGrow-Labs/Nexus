@@ -10,7 +10,7 @@
  * - The hosts' record is the rule the runner's allow-list proxy binds to (hostEgressProxy canonicalHostsJson /
  *   hostsSha256): `hosts_json` is the JSON array of `host:port` strings, lowercased, de-duplicated and sorted, and
  *   `hosts_sha256` the sha256 hex of that UTF-8 text. Any other rule makes every turn fail `consent_mismatch`.
- * - Usage. `usageToday()` sums `job_attempts.usage_json` of `agent.run` attempts created since local midnight. Cost is
+ * - Usage. `usageToday()` counts the attempts that started and sums `job_attempts.usage_json` of `agent.run` attempts created since local midnight. Cost is
  *   what the runtime reported (US cents); an attempt that REACHED THE RUNTIME (it started) and ended without a reported cost is
  *   charged at the turn cap and flagged `estimated` (a live attempt counts what it reported so far); an attempt that never
  *   started (failed or refused before its container ran) costs nothing and does not count toward the hourly rate. Nothing
@@ -184,7 +184,7 @@ export class BudgetService {
     const rows = this.db.prepare(`SELECT a.state, a.usage_json, a.started_at, a.runtime_ref FROM job_attempts a JOIN jobs j ON j.id = a.job_id
       WHERE j.kind = 'agent.run' AND a.created_at >= ? AND a.created_at <= ?`).all(localMidnight(now), now) as
       { state: string; usage_json: string | null; started_at: number | null; runtime_ref: string | null }[];
-    let usdCents = 0; let estimated = false;
+    let usdCents = 0; let estimated = false; let turns = 0;
     for (const r of rows) {
       const u = parseUsage(r.usage_json);
       const live = r.state === 'starting' || r.state === 'running';
@@ -192,10 +192,12 @@ export class BudgetService {
       // plan that could not be built, a preflight, an unsent start) spent nothing: it is charged only when it has a reported
       // cost. One that did start and reported none is charged the turn cap (an estimate, flagged).
       const reachedRuntime = r.started_at !== null || r.runtime_ref !== null;
+      // "Turns started" counts the attempts that did start (live or reached the runtime), as the hourly rate does.
+      if (live || reachedRuntime || u.cost !== null) turns++;
       if (u.cost !== null) { usdCents += u.cost; if (u.estimated) estimated = true; }
       else if (!live && reachedRuntime) { usdCents += turnCap; estimated = true; }
     }
-    return { usdCents, turns: rows.length, estimated };
+    return { usdCents, turns, estimated };
   }
 
   dayRemainingCents(): number {

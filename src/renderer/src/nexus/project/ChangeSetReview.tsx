@@ -11,7 +11,7 @@ import { Button } from '../ui/Button';
 import { EvidenceSection } from './EvidenceSection';
 import { useExecutionUi } from './execContext';
 import {
-  BUTTON_LABEL, DIFF_REDACTED_NOTE, acceptedText, changeSetModel, changeSetRows, classifyDiff, diffHasRedaction, headTitle, mergeModel, mergedText, mergedTitle, reviewOf, type ChangeSetButton, type ChangeSetRow, type MergeModel
+  BUTTON_LABEL, DIFF_REDACTED_NOTE, acceptedText, changeSetModel, changeSetRows, classifyDiff, diffHasRedaction, headTitle, mergeModel, mergedOnBranch, mergedText, mergedTitle, reviewOf, type ChangeSetButton, type ChangeSetRow, type MergeModel
 } from './changeSetModel';
 
 const PAGE_BYTES = 64 * 1024;
@@ -235,13 +235,15 @@ function ChangeSetList({ projectId, rows }: { projectId: string; rows: ChangeSet
   const firstWaiting = rows.find((r) => r.reviewable)?.versionId ?? null;
   const [open, setOpen] = useState<Record<string, boolean>>({});
   const merge = mergeModel(repo.data);
+  // An accepted change reads "Merged" once the accepted work is on the branch.
+  const shown = useMemo(() => rows.map((r) => (r.status === 'active' && mergedOnBranch(repo.data) ? { ...r, word: 'Merged' } : r)), [rows, repo.data]);
   return (
     <section className="nx-cs__list" aria-labelledby="nx-cs-title">
       <h2 id="nx-cs-title" className="nx-cs__title">Changes made by the agent</h2>
       <p className="nx-review__note">Each change was made in a separate copy of your repository. Nothing here touches your files until you merge accepted work.</p>
       {merge && <MergeBlock projectId={projectId} model={merge} onDone={repo.reload} />}
       <ul className="nx-cs__rows">
-        {rows.map((r) => {
+        {shown.map((r) => {
           const expanded = open[r.versionId] ?? r.versionId === firstWaiting;
           return (
             <li key={r.versionId} className="nx-cs__row">

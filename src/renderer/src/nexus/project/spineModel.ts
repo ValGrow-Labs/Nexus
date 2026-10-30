@@ -16,6 +16,15 @@ export type GitState =
       /** Set when a branch or log read failed, so null means "unknown", not "none". */
       unknown?: { branch?: boolean; head?: boolean } };
 
+/**
+ * The commit the repository's checked-out branch is at. The log is read across every ref (`--all`), so its newest commit can be
+ * one on a hidden Nexus ref (an agent's change not merged yet); the head is the commit the log marks as HEAD. Without such a mark in
+ * the page (a very long page of newer commits), the newest commit is used, as before.
+ */
+export function checkedOutHead<T extends { refs?: readonly string[] }>(log: readonly T[]): T | null {
+  return log.find((c) => (c.refs ?? []).some((r) => r === 'HEAD' || r.startsWith('HEAD -> '))) ?? log[0] ?? null;
+}
+
 export type SourceNode = { kind: 'source'; id: 'source'; vcs: 'git' | 'none' | 'unknown' | 'error'; branch: string | null; head: { shortSha: string; subject: string } | null };
 export type ChangesNode = { kind: 'changes'; id: 'changes'; fileCount: number };
 export type ArtifactNode = {

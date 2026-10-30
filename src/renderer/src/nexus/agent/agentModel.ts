@@ -76,6 +76,12 @@ export interface SessionRowView {
   canEnd: boolean;
 }
 
+/** Said in the panel while a turn waits for the approval to write hidden refs in the repository (the approval itself is answered right there). */
+export const REPO_APPROVAL_WAIT_TEXT = 'Waiting for your approval to let Nexus write hidden refs in this repository. It reaches only hidden refs, a worktree entry and new objects, never your branch, index or files.';
+
+/** The newest turn when it failed: its sentence, and whether a repository snapshot is the way forward. */
+export interface PanelFailure { text: string; snapshot: boolean }
+
 export interface AgentPanelView {
   /** off: agent work is not available at all; setup: something must be done first; ready: a message can be sent. */
   kind: 'off' | 'setup' | 'ready';
@@ -91,6 +97,8 @@ export interface AgentPanelView {
   note: string | null;
   /** The sentence for a failed read of the conversations that is not "agent work is off" (a busy database, an unexpected failure). */
   readError: string | null;
+  /** The newest turn, when it failed (shown with its reason; a failed turn that is not the newest is history). */
+  failure: PanelFailure | null;
   sessions: SessionRowView[];
   usageToday: string | null;
 }
@@ -103,7 +111,7 @@ export interface AgentPanelInput {
   /** The failure of the sessions read, if it failed. */
   sessionsFail: { code: string; reason?: string; subReason?: string } | null;
   /** The live turn jobs by id (for the waiting reason). */
-  jobs?: ReadonlyMap<string, Pick<JobView, 'state' | 'phase' | 'headline' | 'outcome' | 'cancelRequested'>>;
+  jobs?: ReadonlyMap<string, Pick<JobView, 'state' | 'phase' | 'headline' | 'outcome' | 'cancelRequested'> & Partial<Pick<JobView, 'createdAt' | 'error'>>>;
 }
 
 function runtimeBlocker(a: AgentSetupView): string | null {
@@ -133,7 +141,7 @@ export function continuableSession(sessions: readonly SessionView[] | null | und
 }
 
 export function agentPanelModel(i: AgentPanelInput): AgentPanelView {
-  const empty: Omit<AgentPanelView, 'kind' | 'lead' | 'blockers' | 'canAsk' | 'setup'> = { working: null, sessions: [], usageToday: null, note: null, readError: null };
+  const empty: Omit<AgentPanelView, 'kind' | 'lead' | 'blockers' | 'canAsk' | 'setup'> = { working: null, sessions: [], usageToday: null, note: null, readError: null, failure: null };
   // Agent work off (the part is not in place): one sentence, no setup to offer.
   if (i.sessionsFail) {
     const c = errorCopy(i.sessionsFail.code, i.sessionsFail.reason, i.sessionsFail.subReason);
@@ -178,12 +186,15 @@ export function agentPanelModel(i: AgentPanelInput): AgentPanelView {
   const working = rows.some((r) => r.live && r.word === 'Working') ? 'Working'
     : ss.some((s) => s.status === 'awaiting_approval') ? 'Waiting for you' : null;
   const canAsk = blockers.length === 0;
+  const newest = i.jobs ? [...i.jobs.values()].filter((j) => typeof j.createdAt === 'number').sort((x, y) => (y.createdAt ?? 0) - (x.createdAt ?? 0))[0] : undefined;
+  const failure: PanelFailure | null = newest && newest.state === 'failed'
+    ? { text: agentTurnHeadline(newest), snapshot: newest.outcome === 'branch_unknown' || newest.error?.code === 'branch_unknown' } : null;
   return {
     kind: canAsk ? 'ready' : 'setup',
     lead: canAsk ? ISOLATION_NOTE : blockers[0],
     blockers, canAsk, setup: !canAsk, working, sessions: rows,
     usageToday: a && a.consent.live ? usageTodayLine(a.usageToday) : null,
-    note: canAsk && staleButAskable ? RECHECK_ON_SEND_TEXT : canAsk && a !== null && a.state === 'ready' && a.signedIn !== 'yes' ? SIGNIN_UNCONFIRMED_TEXT : null, readError
+    note: canAsk && staleButAskable ? RECHECK_ON_SEND_TEXT : canAsk && a !== null && a.state === 'ready' && a.signedIn !== 'yes' ? SIGNIN_UNCONFIRMED_TEXT : null, readError, failure
   };
 }
 

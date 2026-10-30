@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { kindOf } from './spineModel';
+import { checkedOutHead, kindOf } from './spineModel';
 import type { ChangeKind, GitState } from './spineModel';
 
 export function useProjectGit(rootPath: string | null): { git: GitState; refresh: () => void } {
@@ -13,10 +13,11 @@ export function useProjectGit(rootPath: string | null): { git: GitState; refresh
       const isRepo = await window.cth.gitIsRepo(rootPath);
       if (!live()) return;
       if (!isRepo) { setGit({ status: 'ready', isRepo: false, branch: null, head: null, changed: [] }); return; }
-      const [b, log, st] = await Promise.all([window.cth.gitBranch(rootPath), window.cth.gitLog(rootPath, 1), window.cth.gitStatus(rootPath)]);
+      const [b, log, st] = await Promise.all([window.cth.gitBranch(rootPath), window.cth.gitLog(rootPath, 40), window.cth.gitStatus(rootPath)]);
       if (!live()) return;
       const branch = 'error' in b ? null : b.current;
-      const head = Array.isArray(log) && log[0] ? { sha: log[0].sha, shortSha: log[0].shortSha, subject: log[0].subject, time: log[0].time } : null;
+      const tip = Array.isArray(log) ? checkedOutHead(log) : null;
+      const head = tip ? { sha: tip.sha, shortSha: tip.shortSha, subject: tip.subject, time: tip.time } : null;
       if ('error' in st) { setGit({ status: 'error', message: st.error }); return; }
       const seen = new Map<string, ChangeKind>();
       for (const e of [...st.staged, ...st.unstaged]) seen.set(e.path, kindOf(e.index, e.worktree));

@@ -156,7 +156,7 @@ test('UA3 Accept appears only on a candidate whose newest review approves (and o
   }
   assert.ok(accepts > 0, 'Accept does appear when it should');
   const ok = csm({ version: cset('candidate'), validations: allPass(), review: 'approve', repo: repo() });
-  assert.deepEqual(ok.buttons, ['approve', 'request_changes', 'reject', 'accept']);
+  assert.deepEqual(ok.buttons, ['accept', 'request_changes', 'reject'], 'after approving, Approve is gone and Accept is the next step (V9d)');
   const none = csm({ version: cset('candidate'), validations: allPass(), review: null, repo: repo() });
   assert.deepEqual(none.buttons, ['approve', 'request_changes', 'reject']);
   assert.equal(none.headline, 'Waiting for your decision');
@@ -605,7 +605,7 @@ test('R4-C1 a session main keeps `running` with no live turn reads "Ready for yo
   assert.match(src('intent/IntentLine.tsx'), /continuableSession\(list\.data\)/);
   assert.match(src('intent/IntentLine.tsx'), /nexusClient\.sessionsList\(\{ projectId \}\)/);
   // The panel opens itself only for a live turn.
-  assert.match(src('agent/AgentPanel.tsx'), /if \(panel\.working\) setOpen\(true\)/);
+  assert.match(src('agent/AgentPanel.tsx'), /if \(panel\.working \|\| repoWaiting\.length > 0\) setOpen\(true\)/);
 });
 
 test('R4-I1 the program is "signed in" only when the view says so; an unreadable sign-in is said so', () => {
@@ -982,4 +982,71 @@ test('V9-7 an answer that lists fewer runtimes than the sheet showed (a revoke a
   const hooks = src('data/useAgents.ts');
   assert.ok(hooks.includes('shrunkRereadDelay(viewRef.current, r.data, tries)'));
   assert.ok(hooks.includes('shrunk ?? consentRereadDelay(r.data, tries)'));
+});
+
+// ---------- V9d: the rough edges of the live demo ----------
+
+const J = loadTs('src/renderer/src/nexus/runs/jobRunModel.ts');
+const SPINE = loadTs('src/renderer/src/nexus/project/spineModel.ts');
+
+test('V9d-1 a failed turn says why, with the fixed sentence for its reason (never the runtime text), and the panel offers the snapshot when that is the way forward', () => {
+  const failed = (outcome, createdAt = 2, extra = {}) => ({ state: 'failed', phase: null, headline: 'failed', outcome, cancelRequested: false, createdAt, error: { code: outcome, message: 'RAW internal text' }, ...extra });
+  assert.equal(J.agentTurnHeadline(failed('branch_unknown')), "Nexus has not recorded the repository's branch yet. Take a repository snapshot first.");
+  assert.equal(J.agentTurnHeadline(failed('git_missing')), 'Git is not installed on this computer.');
+  assert.match(J.agentTurnHeadline(failed('denied')), /you denied the approval/);
+  assert.match(J.agentTurnHeadline(failed('expired')), /not answered in time/);
+  assert.equal(J.agentTurnHeadline(failed('some_unknown_code')), 'The agent’s turn failed', 'a reason without copy stays the plain sentence');
+  assert.equal(J.agentTurnHeadline(failed('runtime_auth')), 'The agent could not sign in. Open Setup to check it', 'the earlier wording is unchanged');
+  const panel = (jobs) => A.agentPanelModel({ health: health(), availability: READY, sessions: [], sessionsFail: null, jobs: new Map(jobs.map((j, n) => [`J${n}`, j])) });
+  const p = panel([failed('branch_unknown')]);
+  assert.deepEqual(p.failure, { text: "Nexus has not recorded the repository's branch yet. Take a repository snapshot first.", snapshot: true });
+  assert.doesNotMatch(JSON.stringify(p.failure), /RAW internal text/);
+  assert.deepEqual(panel([failed('git_missing')]).failure, { text: 'Git is not installed on this computer.', snapshot: false });
+  assert.equal(panel([failed('branch_unknown', 1), { ...failed('branch_unknown'), state: 'completed', outcome: 'completed', createdAt: 5 }]).failure, null, 'only the newest turn is shown, and only when it failed');
+  assert.equal(panel([]).failure, null);
+  const panelSrc = src('agent/AgentPanel.tsx');
+  assert.ok(panelSrc.includes("actionId: 'sde.repository.snapshot'"));
+  assert.ok(panelSrc.includes('Take a repository snapshot'));
+});
+
+test('V9d-2 a turn waiting for the repository-write approval says so in the panel and the approval is answered there; the strip leaves it out; the second step of the confirm is labelled', () => {
+  assert.ok(A.REPO_APPROVAL_WAIT_TEXT.startsWith('Waiting for your approval to let Nexus write hidden refs in this repository.'));
+  const panelSrc = src('agent/AgentPanel.tsx');
+  assert.ok(panelSrc.includes('REPO_APPROVAL_WAIT_TEXT'));
+  assert.ok(panelSrc.includes("a.reason === 'repo.write_refs'"));
+  assert.ok(panelSrc.includes('<ApprovalList approvals={repoWaiting}'));
+  const ap = src('project/ApprovalsSection.tsx');
+  assert.ok(ap.includes('except?: readonly string[]'));
+  assert.ok(ap.includes("'Yes, approve once'"));
+  assert.ok(ap.includes('<span>Approve once</span>'), 'the first step keeps its label');
+});
+
+test('V9d-3 a merged change reads "Merged" (the repository status holds no accepted work waiting), a change not yet merged reads "Accepted" with its next step, and the repository head is the checked-out commit, not a hidden ref', () => {
+  const merged = { acceptedNotMerged: 0, acceptedHead: 'a'.repeat(40) };
+  const waiting = { acceptedNotMerged: 1, acceptedHead: 'a'.repeat(40) };
+  assert.equal(CS.mergedOnBranch(merged), true);
+  assert.equal(CS.mergedOnBranch(waiting), false);
+  assert.equal(CS.mergedOnBranch({ acceptedNotMerged: 0, acceptedHead: null }), false, 'no accepted branch read: not known');
+  assert.equal(CS.mergedOnBranch(null), false);
+  const active = (o) => csm({ version: cset('active'), validations: allPass(), review: 'approve', repo: repo(o) });
+  assert.equal(active(merged).headline, 'Merged: your branch holds this change');
+  assert.equal(active(merged).merge, null);
+  const acc = active({ ...waiting, canFastForward: true, reason: null });
+  assert.equal(acc.headline, 'Accepted: it is on the Nexus branch');
+  assert.ok(acc.sentences[0].startsWith('Next step: use “Merge accepted work”'));
+  const summaries = [{ artifact: { kind: 'change_set', status: 'active', id: 'A', name: 'n', createdAt: 1 }, latest: { id: 'V', versionNo: 1, status: 'active' } }];
+  assert.equal(CS.changeSetRows(summaries, merged)[0].word, 'Merged');
+  assert.equal(CS.changeSetRows(summaries, waiting)[0].word, 'Accepted');
+  assert.equal(CS.changeSetRows(summaries)[0].word, 'Accepted');
+  // Approve is gone once approved; Accept comes first.
+  const ap = csm({ version: cset('candidate'), validations: allPass(), review: 'approve', repo: repo() });
+  assert.ok(!ap.buttons.includes('approve'));
+  assert.equal(ap.buttons[0], 'accept');
+  // The head: HEAD's commit, not the newest commit of any ref.
+  const log = [{ sha: 'jobhead', refs: ['refs/nexus/job/x'] }, { sha: 'tip', refs: ['HEAD -> main', 'refs/nexus/accepted/main'] }, { sha: 'old', refs: [] }];
+  assert.equal(SPINE.checkedOutHead(log).sha, 'tip');
+  assert.equal(SPINE.checkedOutHead([{ sha: 'det', refs: ['HEAD'] }, { sha: 'x' }]).sha, 'det');
+  assert.equal(SPINE.checkedOutHead([{ sha: 'only' }]).sha, 'only', 'no HEAD mark in the page: the newest, as before');
+  assert.equal(SPINE.checkedOutHead([]), null);
+  assert.ok(src('project/useProjectGit.ts').includes('checkedOutHead(log)'));
 });

@@ -1,12 +1,13 @@
-import { useEffect, useId, useState } from 'react';
+import { useEffect, useId, useMemo, useState } from 'react';
 import { nexusClient } from '../data/nexusClient';
-import { useHealth, useExecStore, withIntent } from '../data/useExecution';
+import { useApprovals, useHealth, useExecStore, withIntent } from '../data/useExecution';
 import { useSessions, useTurnJobs } from '../data/useAgents';
 import { usePlatform } from '../data/platformStore';
 import { useExecutionUi } from '../project/execContext';
 import { Button } from '../ui/Button';
+import { ApprovalList } from '../project/ApprovalsSection';
 import { SessionLog } from './SessionLog';
-import { agentFailText, agentPanelModel, messageKey, startArgs } from './agentModel';
+import { REPO_APPROVAL_WAIT_TEXT, agentFailText, agentPanelModel, messageKey, startArgs } from './agentModel';
 
 /** The agent in the bench: where it stands (set up, working, waiting for you), a message box when it can take one, and the
  *  project's conversations with their logs. A prerequisite that is not met is a sentence with the way forward, never a dead button. */
@@ -16,6 +17,9 @@ export function AgentPanel({ projectId, workspaceId }: { projectId: string; work
   const sessions = useSessions(projectId);
   const jobs = useTurnJobs(projectId);
   const panel = agentPanelModel({ health, availability, sessions: sessions.data, sessionsFail: sessions.fail, jobs });
+  // The repository-write approval a turn waits on is answered here, in the panel (the project's strip leaves it out).
+  const approvals = useApprovals(projectId);
+  const repoWaiting = useMemo(() => (approvals.data ?? []).filter((a) => a.status === 'pending' && a.reason === 'repo.write_refs'), [approvals.data]);
   const [open, setOpen] = useState(false);
   const [message, setMessage] = useState('');
   const [target, setTarget] = useState<string>('new');
@@ -24,7 +28,7 @@ export function AgentPanel({ projectId, workspaceId }: { projectId: string; work
   const [logOf, setLogOf] = useState<string | null>(null);
   const ids = { field: useId(), target: useId(), body: useId() };
   // A turn that starts working opens the panel so it is seen; the person can close it again.
-  useEffect(() => { if (panel.working) setOpen(true); }, [panel.working]);
+  useEffect(() => { if (panel.working || repoWaiting.length > 0) setOpen(true); }, [panel.working, repoWaiting.length]);
   const openRows = panel.sessions.filter((s) => s.canSend);
   const chosen = target !== 'new' && openRows.some((s) => s.id === target) ? target : 'new';
 
@@ -42,6 +46,15 @@ export function AgentPanel({ projectId, workspaceId }: { projectId: string; work
     else setNote({ text: agentFailText(r), alert: true });
     refresh();
   };
+  // A turn that failed for want of a repository snapshot: the snapshot is started from here (the same action as the Passport's).
+  const snapshot = async () => {
+    if (busy) return;
+    setBusy('snapshot'); setNote(null);
+    const r = await withIntent(`agent:snapshot:${projectId}`, (intentId) => nexusClient.jobStart({ projectId, workspaceId, actionId: 'sde.repository.snapshot', inputs: [], params: {}, intentId }));
+    setBusy(null);
+    setNote(r.ok ? { text: 'The repository snapshot was started. When it has finished (see Runs), send your message again.', alert: false } : { text: agentFailText(r), alert: true });
+    refresh();
+  };
   const stop = async (id: string, kind: 'cancel' | 'end') => {
     if (busy) return;
     setBusy(id); setNote(null);
@@ -51,7 +64,7 @@ export function AgentPanel({ projectId, workspaceId }: { projectId: string; work
     refresh();
   };
 
-  const status = panel.working ?? (panel.kind === 'ready' ? 'Ready' : panel.kind === 'off' ? 'Not available' : 'Needs setup');
+  const status = panel.working ?? (repoWaiting.length > 0 ? 'Waiting for you' : panel.kind === 'ready' ? 'Ready' : panel.kind === 'off' ? 'Not available' : 'Needs setup');
   return (
     <section className="nx-ag" aria-labelledby={ids.body}>
       <div className="nx-ag__head">
@@ -87,6 +100,18 @@ export function AgentPanel({ projectId, workspaceId }: { projectId: string; work
                 <Button variant="primary" type="submit" disabled={busy !== null || message.trim() === ''}>{busy === 'send' ? 'Sending…' : 'Ask the agent'}</Button>
               </div>
             </form>
+          )}
+          {repoWaiting.length > 0 && (
+            <div role="status">
+              <p>{REPO_APPROVAL_WAIT_TEXT}</p>
+              <ApprovalList approvals={repoWaiting} label="Approval the agent is waiting for" />
+            </div>
+          )}
+          {panel.failure && repoWaiting.length === 0 && (
+            <p className="nx-passport__note" role="status">
+              {panel.failure.text}{' '}
+              {panel.failure.snapshot && <Button variant="primary" disabled={busy !== null} onClick={() => { void snapshot(); }}>{busy === 'snapshot' ? 'Starting…' : 'Take a repository snapshot'}</Button>}
+            </p>
           )}
           {panel.note && <p className="nx-muted" role="status">{panel.note}</p>}
           {panel.readError && <p className="nx-muted" role="status">The conversations could not be read. {panel.readError} <Button variant="quiet" onClick={sessions.reload}>Try again</Button></p>}

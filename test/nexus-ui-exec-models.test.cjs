@@ -501,7 +501,7 @@ test('pin: the bench lends the Folio its sheets and mounts the notice and the ap
   const bench = src('project/ProjectBench.tsx');
   assert.match(bench, /<ExecutionUiContext\.Provider value=\{execUi\}>/);
   assert.match(bench, /<ExecutionNotice availability=\{availability\} onSetup=\{execUi\.openSetup\} \/>/);
-  assert.match(bench, /<ApprovalsSection projectId=\{project\.id\} \/>/);
+  assert.match(bench, /<ApprovalsSection projectId=\{project\.id\} except=\{hasSde \? \['repo\.write_refs'\] : \[\]\} \/>/);
   const passport = src('project/ArtifactPassport.tsx');
   for (const c of ['<KindViewer', '<EvidenceSection', '<ActionBar', '<DeploymentsSection']) assert.ok(passport.includes(c), c);
 });

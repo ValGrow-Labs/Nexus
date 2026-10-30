@@ -325,7 +325,7 @@ function Workbench({ project, tool }: { project: Project; tool: ProjectTool }) {
         line={line} onRetryLine={reloadArtifacts} truncated={artifactsTruncated} focusRequest={focusRequest} onFocused={focused} checks={checks} rails={rails} />
       <div className="nx-xstrip">
         <ExecutionNotice availability={availability} onSetup={execUi.openSetup} />
-        <ApprovalsSection projectId={project.id} />
+        <ApprovalsSection projectId={project.id} except={hasSde ? ['repo.write_refs'] : []} />
         {/* B2b: the agent is offered only where SDE takes part: no other domain claims to work yet. */}
         {hasSde && <AgentPanel projectId={project.id} workspaceId="sde" />}
       </div>

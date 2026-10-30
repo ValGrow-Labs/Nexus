@@ -51,6 +51,13 @@ export const BUTTON_LABEL: Readonly<Record<ChangeSetButton, string>> = Object.fr
   approve: 'Approve', request_changes: 'Request changes', reject: 'Reject', accept: 'Accept the change'
 });
 
+/**
+ * An accepted change is merged once the accepted work is on the user's branch: the repository status knows an accepted branch
+ * (`acceptedHead`) and no accepted commit is waiting to be merged (`acceptedNotMerged` 0). Unread status: not known, so not merged.
+ */
+export const mergedOnBranch = (repo: Pick<RepoStatusView, 'acceptedNotMerged' | 'acceptedHead'> | null | undefined): boolean =>
+  !!repo && repo.acceptedHead !== null && repo.acceptedNotMerged === 0;
+
 export interface BlockingCheck { id: string; label: string; word: string }
 export interface ChangeSetInput {
   version: Pick<VersionView, 'status'> & { content?: VersionContent;
@@ -116,7 +123,9 @@ export function changeSetModel(i: ChangeSetInput): ChangeSetView {
   }
   if (status === 'deprecated') return { ...base, headline: 'This change was replaced or discarded', sentences: ['It can no longer be reviewed or accepted.'] };
   if (status === 'active') {
-    return { ...base, headline: 'Accepted: it is on the Nexus branch', sentences: ['Your own branch changes only when you merge accepted work.'] };
+    if (mergedOnBranch(i.repo)) return { ...base, headline: 'Merged: your branch holds this change', sentences: [] };
+    const next = merge && merge.button ? 'Next step: use “Merge accepted work” to move your own branch to the accepted work.' : 'Your own branch changes only when you merge accepted work.';
+    return { ...base, headline: 'Accepted: it is on the Nexus branch', sentences: [next] };
   }
   if (status === 'draft') {
     if (i.validations === null) return { ...base, headline: 'Its checks cannot be read right now', sentences: ['It can be reviewed once its checks are in.'] };
@@ -134,7 +143,8 @@ export function changeSetModel(i: ChangeSetInput): ChangeSetView {
   // ... and only after the whole patch has been loaded here: the person approves what they could read.
   const d = i.diffRead;
   const whole = complete && d !== undefined && d.whole === true && d.failed !== true;
-  const buttons: ChangeSetButton[] = whole ? ['approve', 'request_changes', 'reject'] : ['request_changes', 'reject'];
+  // Once approved, Approve is gone (the decision is made); Accept, when it can be offered, comes first as the next step.
+  const buttons: ChangeSetButton[] = whole && i.review !== 'approve' ? ['approve', 'request_changes', 'reject'] : ['request_changes', 'reject'];
   const sentences: string[] = complete ? [] : [previewIncompleteText(i.version.previewReason)];
   if (complete && !whole) sentences.push(loadWholeText(d));
   let headline: string;
@@ -145,7 +155,7 @@ export function changeSetModel(i: ChangeSetInput): ChangeSetView {
     default: headline = 'Waiting for your decision';
   }
   if (i.review === 'approve') {
-    if (i.repo && i.repo.acceptedHead) buttons.push('accept');
+    if (i.repo && i.repo.acceptedHead) buttons.unshift('accept');
     else if (i.repo && i.repo.reason && ['git_missing', 'branch_unknown', 'runner_unavailable'].includes(i.repo.reason)) sentences.push(AGENT_REASON_TEXT[i.repo.reason]);
     else sentences.push('The accepted branch has not been read yet, so the change cannot be accepted. Look again in a moment.');
   } else {
@@ -205,11 +215,11 @@ const ROW_WORD: Record<VersionView['status'], string> = {
 };
 
 /** The project's changes made by the agent, newest first: the latest version of each active change-set artifact. */
-export function changeSetRows(summaries: readonly ArtifactSummaryView[]): ChangeSetRow[] {
+export function changeSetRows(summaries: readonly ArtifactSummaryView[], repo?: Pick<RepoStatusView, 'acceptedNotMerged' | 'acceptedHead'> | null): ChangeSetRow[] {
   return summaries.filter((s) => s.artifact.kind === 'change_set' && s.artifact.status === 'active' && s.latest)
     .sort((x, y) => y.artifact.createdAt - x.artifact.createdAt)
     .map((s) => ({ artifactId: s.artifact.id, name: s.artifact.name, versionId: s.latest!.id, versionNo: s.latest!.versionNo, status: s.latest!.status,
-      word: ROW_WORD[s.latest!.status] ?? s.latest!.status, reviewable: s.latest!.status === 'candidate' }));
+      word: s.latest!.status === 'active' && mergedOnBranch(repo) ? 'Merged' : ROW_WORD[s.latest!.status] ?? s.latest!.status, reviewable: s.latest!.status === 'candidate' }));
 }
 
 // ---------- the read-only diff ----------

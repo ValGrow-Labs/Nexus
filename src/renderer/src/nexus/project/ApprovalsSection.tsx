@@ -59,7 +59,7 @@ export function ApprovalList({ approvals, label }: { approvals: ApprovalView[]; 
               <div className="nx-xq__confirm" role="group" aria-label={`Approve ${v.title} once`} onKeyDown={onConfirmKey(a.id)}>
                 <p>Allow this once? It reaches only what is listed above, for this request only.</p>
                 <div className="nx-xq__acts">
-                  <Button variant="primary" disabled={pending !== null} onClick={() => { void answer(a.id, 'once'); }}>{pending === a.id ? 'Answering…' : 'Approve once'}</Button>
+                  <Button variant="primary" disabled={pending !== null} onClick={() => { void answer(a.id, 'once'); }}>{pending === a.id ? 'Answering…' : 'Yes, approve once'}</Button>
                   <button ref={cancelRef} type="button" className="nx-btn" disabled={pending !== null} onClick={() => cancelConfirm(a.id)}><span>Cancel</span></button>
                 </div>
               </div>
@@ -73,9 +73,9 @@ export function ApprovalList({ approvals, label }: { approvals: ApprovalView[]; 
 }
 
 /** "Waiting for your approval" in the project: pending requests only; nothing at all while there are none. */
-export function ApprovalsSection({ projectId }: { projectId: string }) {
+export function ApprovalsSection({ projectId, except = [] }: { projectId: string; except?: readonly string[] }) {
   const a = useApprovals(projectId);
-  const waiting = (a.data ?? []).filter((x) => x.status === 'pending');
+  const waiting = (a.data ?? []).filter((x) => x.status === 'pending' && !except.includes(x.reason));
   if (waiting.length === 0) return null;
   return (
     <section className="nx-xq" aria-labelledby="nx-xq-title">
