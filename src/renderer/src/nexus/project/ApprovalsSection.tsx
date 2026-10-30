@@ -6,8 +6,8 @@ import { useApprovals, useExecStore } from '../data/useExecution';
 import { Button } from '../ui/Button';
 import { approvalRow } from './actionModel';
 
-/** Approval rows: what is asked, exactly what it reaches or downloads, when it expires, and only "Approve once" or
- *  "Deny". Approving asks once more inline; the wording is the DTO's own. */
+/** Approval rows: what is asked in plain words, what it reaches or downloads, when it expires, and only "Allow once" or
+ *  "Do not allow". Allowing asks once more inline. The exact fingerprints and the sentence as Nexus recorded it sit behind "More details". */
 export function ApprovalList({ approvals, label }: { approvals: ApprovalView[]; label: string }) {
   const [confirming, setConfirming] = useState<string | null>(null);
   const [pending, setPending] = useState<string | null>(null);
@@ -15,7 +15,7 @@ export function ApprovalList({ approvals, label }: { approvals: ApprovalView[]; 
   const alive = useRef(true);
   useEffect(() => { alive.current = true; return () => { alive.current = false; }; }, []);
   // Focus moves into the confirmation (onto Cancel, never the approving button) and back to the row's
-  // "Approve once" when it closes without an answer, as the Passport's confirmations do.
+  // "Allow once" when it closes without an answer, as the Passport's confirmations do.
   const cancelRef = useRef<HTMLButtonElement | null>(null);
   const approveRefs = useRef(new Map<string, HTMLButtonElement>());
   const [returnTo, setReturnTo] = useState<string | null>(null);
@@ -33,7 +33,7 @@ export function ApprovalList({ approvals, label }: { approvals: ApprovalView[]; 
     useExecStore.getState().bump(['approvals', 'jobs', 'health']);
     if (!alive.current) return;
     setPending(null); setConfirming(null);
-    setNote(r.ok ? { id, text: decision === 'once' ? 'Approved once.' : 'Denied.', alert: false }
+    setNote(r.ok ? { id, text: decision === 'once' ? 'Allowed once.' : 'Not allowed.', alert: false }
       : { id, text: execFailText(r), alert: true });
   };
   return (
@@ -48,18 +48,23 @@ export function ApprovalList({ approvals, label }: { approvals: ApprovalView[]; 
               <dl className="nx-xq__facts">{v.facts.map((f) => <div key={f.label}><dt>{f.label}</dt><dd>{f.value}</dd></div>)}</dl>
             )}
             <p className="nx-muted nx-xq__meta">{v.expires}</p>
+            <details className="nx-xq__more">
+              <summary>More details</summary>
+              {v.details.length > 0 && <dl className="nx-xq__facts">{v.details.map((f) => <div key={f.label}><dt>{f.label}</dt><dd>{f.value}</dd></div>)}</dl>}
+              <p className="nx-muted nx-xq__meta">As Nexus recorded it: {v.recorded}</p>
+            </details>
             {v.answers.length > 0 && confirming !== a.id && (
               <div className="nx-xq__acts">
                 <button ref={(el) => { if (el) approveRefs.current.set(a.id, el); else approveRefs.current.delete(a.id); }} type="button"
-                  className="nx-btn nx-btn--primary" disabled={pending !== null} onClick={() => setConfirming(a.id)}><span>Approve once</span></button>
-                <Button disabled={pending !== null} onClick={() => { void answer(a.id, 'deny'); }}>{pending === a.id ? 'Answering…' : 'Deny'}</Button>
+                  className="nx-btn nx-btn--primary" disabled={pending !== null} onClick={() => setConfirming(a.id)}><span>Allow once</span></button>
+                <Button disabled={pending !== null} onClick={() => { void answer(a.id, 'deny'); }}>{pending === a.id ? 'Answering…' : 'Do not allow'}</Button>
               </div>
             )}
             {v.answers.length > 0 && confirming === a.id && (
-              <div className="nx-xq__confirm" role="group" aria-label={`Approve ${v.title} once`} onKeyDown={onConfirmKey(a.id)}>
-                <p>Allow this once? It reaches only what is listed above, for this request only.</p>
+              <div className="nx-xq__confirm" role="group" aria-label={`Allow once: ${v.title}`} onKeyDown={onConfirmKey(a.id)}>
+                <p>Allow this one time? It covers only what is listed above.</p>
                 <div className="nx-xq__acts">
-                  <Button variant="primary" disabled={pending !== null} onClick={() => { void answer(a.id, 'once'); }}>{pending === a.id ? 'Answering…' : 'Yes, approve once'}</Button>
+                  <Button variant="primary" disabled={pending !== null} onClick={() => { void answer(a.id, 'once'); }}>{pending === a.id ? 'Answering…' : 'Yes, allow once'}</Button>
                   <button ref={cancelRef} type="button" className="nx-btn" disabled={pending !== null} onClick={() => cancelConfirm(a.id)}><span>Cancel</span></button>
                 </div>
               </div>

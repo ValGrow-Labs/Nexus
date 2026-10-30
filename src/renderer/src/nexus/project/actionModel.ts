@@ -1,15 +1,16 @@
 // Pure: what a person may start, answer or stop, from what main says (#24 action
-// availability, #38 approvals, #36 dev deployments) and from what this computer
+// availability, #38 approvals, #36 test runs of your app) and from what this computer
 // can do now. An available action is a button; an unavailable one is a sentence
-// that says why (with "How to set up" when the fix is on this computer); an action
-// whose step is not in this release is not shown at all.
+// that says why (with "Get this computer ready" when the fix is on this computer); an
+// action whose step is not in this release is not shown at all.
 import type { ActionAvailabilityView, ApprovalView, DeploymentView } from '@shared/nexus/ipc';
 import type { DeploymentStatus } from '@shared/nexus/platform';
 import { USER_ACTIONS, getUserAction } from '@shared/nexus/actions';
 import { getDomain } from '@shared/nexus/domains';
 import { isAtOrBefore } from '@shared/nexus/domainSpec';
 import { AGENT_ACTION_OFF_TEXT, setupText } from '../data/errorCopy';
-import { gb, type ExecAvailability } from '../data/executionModel';
+import { gb, kitTitle, type ExecAvailability } from '../data/executionModel';
+import { termName } from '../data/glossary';
 import { livePreviewsOf, type PreviewSubject } from '../runs/jobRunModel';
 
 /** Actions with their own place: Stop and Diagnose live on the dev deployment row. A run row does not offer
@@ -53,7 +54,7 @@ export function reasonSentence(a: Pick<ActionAvailabilityView, 'label' | 'reason
   const r = a.reason ?? '';
   if (r === 'future' || r === 'planned') return null;
   if (r.startsWith('setup:')) return `${a.label}: ${setupText(r)}`;
-  if (r.startsWith('blocked_by_step:')) return `${a.label}: needs a ready version from the ${stepLabel(workspaceId, r.slice(16))} step first.`;
+  if (r.startsWith('blocked_by_step:')) return `${a.label}: finish the “${stepLabel(workspaceId, r.slice(16))}” step first.`;
   // B2b: an agent flow while agent work is off says why in the one agent-off sentence (not "not available right now").
   if (r === 'agents_unavailable') return `${a.label}: ${AGENT_ACTION_OFF_TEXT}`;
   if (r === 'permission') return `${a.label}: you do not have permission to do that here.`;
@@ -102,15 +103,15 @@ export function actionBar(list: readonly ActionAvailabilityView[], ctx: ActionCo
     // The step a healthy dev deployment completes: one live deployment per version is enough (no double start).
     if (fit && ctx.liveDeployment && 'record' in step.doneWhen && step.doneWhen.record === 'deployment_healthy') {
       sentences.push({ actionId: a.actionId, setup: false, text: ctx.liveDeployment === 'starting'
-        ? `${a.label}: one is starting for this version. Follow it under Dev deployments.`
-        : `${a.label}: one is running for this version. Stop it to start another.` });
+        ? `${a.label}: a test run of your app is starting for this saved version. Follow it under “Test runs of your app”.`
+        : `${a.label}: a test run of your app is already running for this saved version. Stop it to start another.` });
       continue;
     }
     if (fit) {
       const preview = a.actionId === 'sde.preview.start';
       const st = ctx.version!.status;
       if (!(st === 'candidate' || st === 'active' || (preview && st === 'draft'))) {
-        sentences.push({ actionId: a.actionId, text: `${a.label}: this version is not ready to be used yet.`, setup: false });
+        sentences.push({ actionId: a.actionId, text: `${a.label}: this saved version is not ready to use yet.`, setup: false });
         continue;
       }
     }
@@ -119,7 +120,7 @@ export function actionBar(list: readonly ActionAvailabilityView[], ctx: ActionCo
   return { buttons, sentences };
 }
 
-/** The line after a start: the job is followed in Runs (main answered an existing job for a repeated intent). */
+/** The line after a start: the task is followed in Runs (main answered an existing task for a repeated intent). */
 export function startedNote(label: string, created: boolean): string {
   return created ? `${label}: started. Follow it in Runs.` : `${label}: already started. Follow it in Runs.`;
 }
@@ -153,45 +154,71 @@ export function liveDeploymentOf(subject: PreviewSubject, deployments: Parameter
 
 export interface ApprovalRow {
   id: string;
+  /** Plain words: what Nexus asks to do ("Prepare the safe-space kit for Python projects"). Never an id. */
   title: string;
-  /** The DTO's own sentence, as main wrote it. */
+  /** Plain words: what it means and what it reaches. */
   summary: string;
-  /** Exactly what is reached or downloaded: registries, size, the hashes it is bound to. */
+  /** What is reached or downloaded, in plain words: the internet address, the size, the free space. */
   facts: { label: string; value: string }[];
+  /** Technical facts (the exact fingerprints the request is bound to), shown only behind "More details". */
+  details: { label: string; value: string }[];
+  /** The sentence exactly as Nexus recorded it, shown behind "More details" so nothing is hidden. */
+  recorded: string;
   expires: string;
   word: string;
-  /** Only "Approve once" and "Deny", and only while it waits. */
-  answers: ('Approve once' | 'Deny')[];
+  /** Only "Allow once" and "Do not allow", and only while it waits. */
+  answers: ('Allow once' | 'Do not allow')[];
 }
 
 const APPROVAL_WORD: Record<ApprovalView['status'], string> = {
-  pending: 'Waiting for your answer', approved: 'Approved once', denied: 'Denied', expired: 'Expired', withdrawn: 'Withdrawn'
+  pending: 'Waiting for your answer', approved: 'Allowed once', denied: 'Not allowed', expired: 'Expired', withdrawn: 'Withdrawn'
 };
 
 const clock = (t: number): string => new Date(t).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 
+/** The plain title of an approval, by what it asks (never an id). */
+export function approvalTitle(a: Pick<ApprovalView, 'reason' | 'request'>): string {
+  return a.reason === 'egress.deps' ? 'Download the add-ons your project needs'
+    : a.reason === 'image.prepare' ? kitTitle(a.request.profile)
+      : a.reason === 'repo.write_refs' ? `Let Nexus keep ${termName('hiddenNotes')} in your project` : 'Something needs your OK';
+}
+
+/** The plain sentence of an approval, by what it asks. It keeps every limit the request really has (nothing is made to sound safer). */
+function approvalSummary(a: ApprovalView): string {
+  const r = a.request;
+  if (a.reason === 'image.prepare') {
+    const size = typeof r.estimatedBytes === 'number' ? ` (about ${gb(r.estimatedBytes)})` : '';
+    return `Nexus will download and build this safe-space kit once${size}. Docker uses the internet for this, and in this version Nexus cannot limit which websites it visits during the download.`;
+  }
+  if (a.reason === 'egress.deps') {
+    const where = r.registries && r.registries.length > 0 ? `only ${r.registries.join(', ')}` : 'only the address listed below';
+    return `Nexus needs to download the add-ons your project lists. It may connect to ${where}, for this one request.`;
+  }
+  if (a.reason === 'repo.write_refs') return `Nexus needs your OK to keep its own notes in a small hidden area of your project. Your files and your ${termName('mainVersion')} are never changed.`;
+  return a.summary;
+}
+
 export function approvalRow(a: ApprovalView, now: number, fmt: (t: number) => string = clock): ApprovalRow {
   const r = a.request;
   const facts: { label: string; value: string }[] = [];
-  if (r.registries && r.registries.length > 0) facts.push({ label: 'Reaches', value: r.registries.join(', ') });
+  if (r.registries && r.registries.length > 0) facts.push({ label: 'Connects to', value: r.registries.join(', ') });
   if (typeof r.estimatedBytes === 'number') facts.push({ label: 'Download size', value: `about ${gb(r.estimatedBytes)}` });
-  if (typeof r.freeBytesNow === 'number') facts.push({ label: 'Free disk now', value: gb(r.freeBytesNow) });
-  if (r.lockfileSha256) facts.push({ label: 'Lockfile', value: `sha256:${r.lockfileSha256.slice(0, 12)}` });
-  if (r.contextSha256) facts.push({ label: 'Image recipe', value: `sha256:${r.contextSha256.slice(0, 12)}` });
-  if (r.baseDigest) facts.push({ label: 'Pinned base', value: `sha256:${r.baseDigest.replace(/^sha256:/, '').slice(0, 12)}` });
-  if (r.profile) facts.push({ label: 'Sandbox', value: r.profile });
-  const title = a.reason === 'egress.deps' ? 'Download dependencies'
-    : a.reason === 'image.prepare' ? `Prepare the ${r.profile ?? 'sandbox'} image`
-      : a.reason === 'repo.write_refs' ? 'Let Nexus write hidden refs in this repository' : 'Approval';
+  if (typeof r.freeBytesNow === 'number') facts.push({ label: 'Free space now', value: gb(r.freeBytesNow) });
+  const details: { label: string; value: string }[] = [];
+  if (r.lockfileSha256) details.push({ label: 'Fingerprint of the add-on list', value: `sha256:${r.lockfileSha256.slice(0, 12)}` });
+  if (r.contextSha256) details.push({ label: 'Fingerprint of the kit recipe', value: `sha256:${r.contextSha256.slice(0, 12)}` });
+  if (r.baseDigest) details.push({ label: 'Fingerprint of the starting image', value: `sha256:${r.baseDigest.replace(/^sha256:/, '').slice(0, 12)}` });
+  const title = approvalTitle(a);
   const pending = a.status === 'pending' && a.expiresAt > now;
   const mins = Math.max(0, Math.ceil((a.expiresAt - now) / 60_000));
   const expires = a.status !== 'pending' ? (a.decidedAt ? `Answered at ${fmt(a.decidedAt)}` : `Requested at ${fmt(a.requestedAt)}`)
     : pending ? `Expires at ${fmt(a.expiresAt)} (in ${mins} min)` : `Expired at ${fmt(a.expiresAt)}`;
-  return { id: a.id, title, summary: a.summary, facts, expires, word: pending || a.status !== 'pending' ? APPROVAL_WORD[a.status] : 'Expired',
-    answers: pending ? ['Approve once', 'Deny'] : [] };
+  return { id: a.id, title, summary: approvalSummary(a), facts, details, recorded: a.summary, expires,
+    word: pending || a.status !== 'pending' ? APPROVAL_WORD[a.status] : 'Expired',
+    answers: pending ? ['Allow once', 'Do not allow'] : [] };
 }
 
-// ---------- dev deployments ----------
+// ---------- test runs of your app (dev deployments) ----------
 
 export interface DeploymentRow {
   id: string;
@@ -204,9 +231,17 @@ export interface DeploymentRow {
 }
 
 const DEPLOYMENT_WORD: Record<DeploymentStatus, string> = {
-  starting: 'Starting', healthy: 'Healthy', unhealthy: 'Not answering its health check', stopped: 'Stopped', failed: 'Failed'
+  starting: 'Starting', healthy: 'Working', unhealthy: 'Not answering', stopped: 'Stopped', failed: 'Failed'
 };
 const LIVE: readonly DeploymentStatus[] = ['starting', 'healthy', 'unhealthy'];
+
+/** Why a test run ended, in plain words (the recorded reasons are a fixed list). */
+const STOP_WORD: Readonly<Record<string, string>> = Object.freeze({
+  user: 'you stopped it', idle: 'it was not used for a while', cancel: 'the task was cancelled', app_quit: 'Nexus was closed',
+  recovery: 'Nexus restarted', exited: 'your app stopped by itself', probe_failed: 'it stopped answering', start_timeout: 'it took too long to start',
+  refused: 'Nexus could not start it', preflight_failed: 'this computer was not ready', runner_lost: 'the part of Nexus that runs tasks was lost',
+  exit_not_reported: 'it ended and Nexus did not see why'
+});
 
 export function deploymentRow(d: DeploymentView, fmt: (t: number) => string = clock): DeploymentRow {
   const port = d.hostPort;
@@ -214,13 +249,15 @@ export function deploymentRow(d: DeploymentView, fmt: (t: number) => string = cl
     ? `http://127.0.0.1:${port}` : null;
   const facts: { label: string; value: string }[] = [];
   if (d.lastProbe) {
-    facts.push({ label: 'Last health check', value: `${d.lastProbe.status === null ? 'no answer' : `answered ${d.lastProbe.status}`}`
-      + `${d.lastProbe.ms !== null ? ` in ${d.lastProbe.ms} ms` : ''} at ${fmt(d.lastProbe.at)}${d.healthPath ? ` (${d.healthPath})` : ''}` });
+    const p = d.lastProbe;
+    const ok = typeof p.status === 'number' && p.status >= 200 && p.status < 300;
+    const how = p.status === null ? 'no answer' : ok ? 'your app answered' : `your app answered with an error (code ${p.status})`;
+    facts.push({ label: 'Last check', value: `${how}${p.ms !== null ? `, in ${p.ms} ms` : ''}, at ${fmt(p.at)}` });
   }
-  facts.push({ label: 'Health checks', value: String(d.probes) });
+  facts.push({ label: 'Checks so far', value: String(d.probes) });
   facts.push({ label: 'Started', value: fmt(d.startedAt) });
-  if (LIVE.includes(d.status)) facts.push({ label: 'Stops by itself', value: fmt(d.endsAt) });
-  if (d.stoppedAt) facts.push({ label: 'Stopped', value: `${fmt(d.stoppedAt)}${d.stopReason ? ` (${d.stopReason.replace(/_/g, ' ')})` : ''}` });
+  if (LIVE.includes(d.status)) facts.push({ label: 'Stops on its own at', value: fmt(d.endsAt) });
+  if (d.stoppedAt) facts.push({ label: 'Stopped', value: `${fmt(d.stoppedAt)}${d.stopReason ? ` (${STOP_WORD[d.stopReason] ?? 'Nexus did not record why'})` : ''}` });
   return { id: d.id, word: DEPLOYMENT_WORD[d.status] ?? d.status, url, facts, canStop: LIVE.includes(d.status), live: LIVE.includes(d.status) };
 }
 

@@ -216,7 +216,7 @@ test('U-A1 available actions are buttons; unavailable ones are sentences with th
   assert.deepEqual(v.buttons.map((b) => [b.actionId, b.inline]), [['sde.requirement.write', true]]);
   assert.deepEqual(v.sentences.map((s) => [s.actionId, s.setup]), [['sde.repository.snapshot', true], ['sde.build.run', false]]);
   assert.equal(v.sentences[0].text, 'Take a repository snapshot: Git, a free program, is not installed, so this cannot run on this computer yet. Install it, then try again.');
-  assert.equal(v.sentences[1].text, 'Build: needs a ready version from the Repository step first.');
+  assert.equal(v.sentences[1].text, 'Build: finish the “Repository” step first.');
   const all = JSON.stringify(v);
   assert.doesNotMatch(all, /Later|sde\.future/, 'a FUTURE action is not present at all');
 });
@@ -262,20 +262,31 @@ const approval = (o = {}) => ({
   requestedAt: NOW - 60_000, expiresAt: NOW + 14 * 60_000, decidedAt: null, decision: null, consumedAt: null, imageBuild: null, ...o
 });
 
-test('U-AP1 approval rows show what is reached or downloaded, the size and the expiry, and only "Approve once" / "Deny"', () => {
+test('U-AP1 approval rows say in plain words what is reached or downloaded, the size and the expiry, and only "Allow once" / "Do not allow"', () => {
   const fmt = () => '14:32';
   const v = AM.approvalRow(approval(), NOW, fmt);
-  assert.equal(v.title, 'Download dependencies');
-  assert.equal(v.summary, 'Download the npm packages named in package-lock.json once.', 'the DTO wording, unchanged');
-  assert.deepEqual(v.facts.find((f) => f.label === 'Reaches'), { label: 'Reaches', value: 'registry.npmjs.org' });
+  assert.equal(v.title, 'Download the add-ons your project needs');
+  assert.equal(v.summary, 'Nexus needs to download the add-ons your project lists. It may connect to only registry.npmjs.org, for this one request.', 'plain words, from what the request really holds');
+  assert.equal(v.recorded, 'Download the npm packages named in package-lock.json once.', 'the sentence as Nexus recorded it is kept, behind More details');
+  assert.deepEqual(v.facts.find((f) => f.label === 'Connects to'), { label: 'Connects to', value: 'registry.npmjs.org' });
   assert.equal(v.facts.find((f) => f.label === 'Download size').value, 'about 0.2 GB');
-  assert.equal(v.facts.find((f) => f.label === 'Lockfile').value, `sha256:${'d'.repeat(12)}`);
+  assert.equal(v.facts.some((f) => /sha256|lockfile/i.test(`${f.label} ${f.value}`)), false, 'no fingerprint in the plain facts');
+  assert.equal(v.details.find((f) => f.label === 'Fingerprint of the add-on list').value, `sha256:${'d'.repeat(12)}`, 'the fingerprints sit behind More details');
   assert.equal(v.expires, 'Expires at 14:32 (in 14 min)');
-  assert.deepEqual(v.answers, ['Approve once', 'Deny']);
+  assert.deepEqual(v.answers, ['Allow once', 'Do not allow']);
   for (const s of ['approved', 'denied', 'expired', 'withdrawn']) assert.deepEqual(AM.approvalRow(approval({ status: s, decidedAt: NOW }), NOW, fmt).answers, [], s);
   assert.deepEqual(AM.approvalRow(approval({ expiresAt: NOW - 1 }), NOW, fmt).answers, [], 'a lapsed request offers nothing');
   const img = AM.approvalRow(approval({ reason: 'image.prepare', request: { profile: 'sde-python', estimatedBytes: 600 * 2 ** 20, contextSha256: 'e'.repeat(64) } }), NOW, fmt);
-  assert.equal(img.title, 'Prepare the sde-python image');
+  assert.equal(img.title, 'Prepare the safe-space kit for Python projects');
+  assert.equal(AM.approvalRow(approval({ reason: 'image.prepare', request: { profile: 'sde-node' } }), NOW, fmt).title, 'Prepare the safe-space kit for JavaScript (Node) projects');
+  assert.equal(AM.approvalRow(approval({ reason: 'image.prepare', request: { profile: 'nexus-fwd' } }), NOW, fmt).title, 'Prepare the safe-space kit for trying your app');
+  for (const profile of ['sde-node', 'sde-python', 'nexus-fwd', 'something-new']) {
+    const t = AM.approvalRow(approval({ reason: 'image.prepare', request: { profile } }), NOW, fmt);
+    assert.doesNotMatch(`${t.title} ${t.summary} ${t.facts.map((f) => `${f.label} ${f.value}`).join(' ')}`, /sde-|nexus-fwd|something-new|sha256|image/i, 'no id, fingerprint or "image" in what a person reads first');
+  }
+  assert.match(img.summary, /Docker uses the internet for this, and in this version Nexus cannot limit which websites it visits/, 'the honest limit of the kit download is kept');
+  assert.equal(AM.approvalRow(approval({ reason: 'repo.write_refs', request: {} }), NOW, fmt).title, 'Let Nexus keep hidden Nexus notes in your project');
+  assert.doesNotMatch(AM.approvalRow(approval({ reason: 'repo.write_refs', request: {} }), NOW, fmt).summary, /refs|worktree|index|objects|branch/i);
   // No "always", no "for this session" anywhere in the approval UI.
   const ui = src('project/ApprovalsSection.tsx');
   assert.doesNotMatch(ui, /always|for (the|this) session/i);
@@ -296,25 +307,25 @@ const health = (o = {}) => ({
 });
 const rowOf = (h, id, ctx) => X.setupSheet(h, ctx).find((r) => r.id === id);
 
-test('U-H1 disk below the gate (ruled, final review C2): an advisory with the exact numbers; jobs run, only Prepare image waits', () => {
+test('U-H1 disk below the gate (ruled, final review C2): an advisory with the exact numbers; tasks run, only preparing a kit waits', () => {
   const h = health({ images: [{ profile: 'sde-node', present: true, matches: true }, { profile: 'sde-python', present: false, matches: false }],
     disk: { dataHomeFreeBytes: 18 * GIB, requiredBytes: 30 * GIB, recommendedBytes: 40 * GIB, leaseFloorBytes: 5 * GIB, gate: 'below_required' }, problems: ['disk_low', 'image_missing:sde-python'] });
   const r = rowOf(h, 'disk');
-  assert.equal(r.text, 'Free disk is 18 GB; preparing images and the execution checks need 30 GB (40 GB recommended)');
+  assert.equal(r.text, 'You have 18 GB free. Getting the safe-space kits ready and running checks needs 30 GB (40 GB is better).');
   assert.equal(r.state, 'advisory', 'below 30 GB is an advisory, not a blocker');
-  assert.equal(r.word, 'Jobs run; images cannot be prepared');
-  assert.match(r.action, /^Jobs can run while there is room for their output\. Free up space .* to prepare images\.$/);
-  // Only "Prepare image" is unavailable, with the reason in numbers.
+  assert.equal(r.word, 'Tasks run; kits cannot be prepared');
+  assert.match(r.action, /^Tasks can still run while there is room for their results\. Free up space .* Then you can prepare the safe-space kits\.$/);
+  // Only preparing a kit is unavailable, with the reason in numbers.
   const img = rowOf(h, 'image:sde-python');
   assert.equal(img.prepare, null);
-  assert.equal(img.action, 'It can be prepared once the disk has 30 GB free.');
+  assert.equal(img.action, 'You can prepare it once you have 30 GB free.');
   // Availability is not `setup` for this reason: main's `disk_low` gate id alone blocks nothing.
   const ready = health({ disk: h.disk, problems: ['disk_low'] });
   const a = X.availabilityFrom({ unavailable: null }, { ok: true, data: ready });
   assert.equal(a.kind, 'ready');
-  assert.deepEqual(a.advisories, ['Free disk is 18 GB; preparing images and the execution checks need 30 GB (40 GB recommended).']);
+  assert.deepEqual(a.advisories, ['You have 18 GB free. Getting the safe-space kits ready and running checks needs 30 GB (40 GB is better).']);
   assert.deepEqual(X.noticeFor(a), { text: a.advisories[0], setup: true });
-  assert.equal(X.setupLead(a, X.setupSheet(ready)), 'Jobs can run on this computer.');
+  assert.equal(X.setupLead(a, X.setupSheet(ready)), 'Tasks can run on this computer.');
   // Heavy actions are not disabled for it: with main's answer "available", the run buttons stay.
   const bar = AM.actionBar([{ actionId: 'sde.build.run', label: 'Build', stepId: 'build', available: true, reason: null, needsApproval: false,
     inputs: [{ slot: 'repository', kinds: ['repository'], min: 1, max: 1 }] }], { workspaceId: 'sde', availability: a, version: { kind: 'repository', status: 'active' } });
@@ -324,46 +335,49 @@ test('U-H1 disk below the gate (ruled, final review C2): an advisory with the ex
   const f = X.availabilityFrom({ unavailable: null }, { ok: true, data: floor });
   assert.deepEqual([f.kind, f.problems], ['setup', ['disk_low']]);
   const fr = rowOf(floor, 'disk');
-  assert.deepEqual([fr.state, fr.text], ['problem', 'Free disk is 3 GB; preparing images and the execution checks need 30 GB (40 GB recommended); below 5 GB no job starts']);
+  assert.deepEqual([fr.state, fr.text], ['problem', 'You have 3 GB free. Getting the safe-space kits ready and running checks needs 30 GB (40 GB is better). Below 5 GB, no task can start.']);
   // 35 GB: it runs, below the recommendation (never stated as a problem).
   const mid = rowOf(health({ disk: { ...h.disk, dataHomeFreeBytes: 35 * GIB, gate: 'below_recommended' } }), 'disk');
-  assert.deepEqual([mid.state, mid.text], ['advisory', 'Free disk is 35 GB; preparing images and the execution checks need 30 GB (40 GB recommended)']);
+  assert.deepEqual([mid.state, mid.text], ['advisory', 'You have 35 GB free. Getting the safe-space kits ready and running checks needs 30 GB (40 GB is better).']);
   // Not measured: never ready.
   const unk = X.availabilityFrom({ unavailable: null }, { ok: true, data: health({ disk: { ...h.disk, dataHomeFreeBytes: null, gate: 'unknown' }, problems: ['disk_low'] }) });
   assert.equal(unk.kind, 'unknown');
   assert.equal(X.gb(18.96 * GIB), '18.9 GB', 'free space is never rounded up');
 });
 
-test('U-H2 Docker stopped: a problem with the action, and no image can be prepared', () => {
+test('U-H2 Docker stopped: a problem with the action, and no kit can be prepared', () => {
   const h = health({ docker: { state: 'stopped' }, images: [{ profile: 'sde-node', present: false, matches: false }], problems: ['docker_stopped'] });
   const d = rowOf(h, 'docker');
-  assert.deepEqual([d.state, d.text, d.action], ['problem', 'Docker is not running.', 'Start Docker Desktop, then check again.']);
+  assert.deepEqual([d.state, d.text, d.action], ['problem', 'Docker is not running.', 'Open Docker Desktop and wait until it says it is running. Then press Check again.']);
   assert.equal(rowOf(h, 'image:sde-node').prepare, null);
   assert.equal(X.availabilityFrom({ unavailable: null }, { ok: true, data: h }).kind, 'setup');
-  assert.equal(rowOf(health({ docker: { state: 'missing' } }), 'docker').text, 'Docker is not installed.');
+  assert.equal(rowOf(health({ docker: { state: 'missing' } }), 'docker').text, 'Docker is not installed. It is a free program.');
 });
 
 test('U-H3 Docker memory low: the numbers and where to change it', () => {
   const r = rowOf(health({ docker: { state: 'running', cpus: 4, memoryBytes: 2 * GIB }, problems: ['docker_memory_low'] }), 'memory');
-  assert.deepEqual([r.state, r.text], ['problem', 'Docker has 2 GB of memory; execution needs 4 GB.']);
-  assert.match(r.action, /Docker Desktop settings/);
+  assert.deepEqual([r.state, r.text], ['problem', 'Docker has 2 GB of memory. Nexus needs 4 GB.']);
+  assert.match(r.action, /^Open Docker Desktop and go to Settings > Resources\. Set memory to 4 GB, then press Check again\.$/, 'the path in the other app is stated');
+  assert.equal(r.label, 'Memory for Docker');
 });
 
-test('U-H4 image missing: "Prepare image (≈ <size>)" only with a stated size, and only when it can be asked', () => {
+test('U-H4 kit missing: "Prepare this kit (about <size>)" only with a stated size, and only when it can be asked', () => {
   const h = health({ images: [{ profile: 'sde-python', present: false, matches: false }], problems: ['image_missing:sde-python'] });
-  assert.deepEqual(rowOf(h, 'image:sde-python').prepare, { profile: 'sde-python', label: 'Prepare image' }, 'no size without a source');
+  assert.deepEqual(rowOf(h, 'image:sde-python').prepare, { profile: 'sde-python', label: 'Prepare this kit' }, 'no size without a source');
+  assert.equal(rowOf(h, 'image:sde-python').label, 'Safe-space kit for Python projects', 'a kit is named for what it is for, never by its id');
   const sized = rowOf(h, 'image:sde-python', { estimates: new Map([['sde-python', 0.6 * GIB]]) });
-  assert.equal(sized.prepare.label, 'Prepare image (≈ 0.6 GB)');
+  assert.equal(sized.prepare.label, 'Prepare this kit (about 0.6 GB)');
   assert.equal(rowOf(h, 'image:sde-python', { pending: new Set(['sde-python']) }).prepare, null, 'an open request is answered instead');
   const a = X.availabilityFrom({ unavailable: null }, { ok: true, data: h });
   assert.deepEqual([a.kind, a.problems, a.profiles], ['setup', ['image_missing'], ['sde-python']]);
-  assert.equal(X.prepareLabel(GIB, true), 'Prepare image again (≈ 1 GB)');
+  assert.equal(X.prepareLabel(GIB, true), 'Prepare this kit again (about 1 GB)');
+  assert.equal(X.PREPARE_ALL_LABEL, 'Prepare the safe-space kits');
 });
 
 test('U-H5 the GPU line, exactly', () => {
-  assert.equal(X.gpuLine({ detected: true, model: 'RTX 3050 Laptop', supported: false }), 'GPU detected (RTX 3050 Laptop), not supported in this release');
-  assert.equal(X.gpuLine({ detected: false, supported: false }), 'No GPU detected');
-  assert.equal(rowOf(health({ gpu: { detected: true, model: 'RTX 3050 Laptop', supported: false } }), 'gpu').text, 'GPU detected (RTX 3050 Laptop), not supported in this release');
+  assert.equal(X.gpuLine({ detected: true, model: 'RTX 3050 Laptop', supported: false }), 'GPU (graphics chip) found: RTX 3050 Laptop. Nexus does not use it yet.');
+  assert.equal(X.gpuLine({ detected: false, supported: false }), 'No GPU (graphics chip) found. Nexus does not need one.');
+  assert.equal(rowOf(health({ gpu: { detected: true, model: 'RTX 3050 Laptop', supported: false } }), 'gpu').text, 'GPU (graphics chip) found: RTX 3050 Laptop. Nexus does not use it yet.');
   assert.equal(rowOf(health(), 'gpu').prepare, null);
 });
 
@@ -412,7 +426,7 @@ const dep = (o = {}) => ({ id: 'D1', projectId: 'p', subjectVersionId: 'V1', job
 
 test('U-D1 deployment rows: a URL only while healthy or unhealthy, always http://127.0.0.1:<port>; status words', () => {
   const fmt = () => '10:00';
-  for (const [status, word] of [['starting', 'Starting'], ['healthy', 'Healthy'], ['unhealthy', 'Not answering its health check'], ['stopped', 'Stopped'], ['failed', 'Failed']]) {
+  for (const [status, word] of [['starting', 'Starting'], ['healthy', 'Working'], ['unhealthy', 'Not answering'], ['stopped', 'Stopped'], ['failed', 'Failed']]) {
     const v = AM.deploymentRow(dep({ status }), fmt);
     assert.equal(v.word, word, status);
     assert.equal(v.url, status === 'healthy' || status === 'unhealthy' ? 'http://127.0.0.1:49152' : null, status);
@@ -422,7 +436,10 @@ test('U-D1 deployment rows: a URL only while healthy or unhealthy, always http:/
   assert.equal(AM.deploymentRow(dep({ url: 'http://0.0.0.0:80/', hostPort: 80 })).url, 'http://127.0.0.1:80');
   assert.equal(AM.deploymentRow(dep({ hostPort: null })).url, null);
   assert.equal(AM.deploymentRow(dep({ hostPort: 70000 })).url, null);
-  assert.match(AM.deploymentRow(dep(), fmt).facts[0].value, /answered 200 in 12 ms at 10:00 \(\/health\)/);
+  assert.equal(AM.deploymentRow(dep(), fmt).facts[0].value, 'your app answered, in 12 ms, at 10:00');
+  assert.equal(AM.deploymentRow(dep({ lastProbe: { at: NOW, status: 500, ms: 3 } }), fmt).facts[0].value, 'your app answered with an error (code 500), in 3 ms, at 10:00');
+  assert.equal(AM.deploymentRow(dep({ lastProbe: { at: NOW, status: null, ms: null } }), fmt).facts[0].value, 'no answer, at 10:00');
+  assert.match(AM.deploymentRow(dep({ status: 'stopped', stopReason: 'idle', stoppedAt: NOW }), fmt).facts.find((f) => f.label === 'Stopped').value, /\(it was not used for a while\)/, 'a stop reason is words, never a code');
 });
 
 // ---------- hints: coalesced, only the affected lists ----------
@@ -508,23 +525,25 @@ test('pin: the bench lends the Folio its sheets and mounts the notice and the ap
 
 // ---------- fix round 1 ----------
 
-test('(fix round 1, item 1) before the first probe nothing reads as ready, and the sheet never says jobs can run', () => {
+test('(fix round 1, item 1) before the first probe nothing reads as ready, and the sheet never says tasks can run', () => {
   const unprobed = health({ checkedAt: null, docker: { state: 'unknown' }, disk: { dataHomeFreeBytes: null, requiredBytes: 30 * GIB, recommendedBytes: 40 * GIB, leaseFloorBytes: 5 * GIB, gate: 'unknown' }, problems: [] });
   const a = X.availabilityFrom({ unavailable: null }, { ok: true, data: unprobed });
   assert.deepEqual([a.kind, a.checking], ['unknown', true]);
-  assert.match(a.text, /This computer has not been checked yet/);
-  assert.deepEqual(X.noticeFor(a), { text: a.text, setup: true }, 'the notice shows, with How to set up');
-  assert.notEqual(X.setupLead(a, X.setupSheet(unprobed)), 'Jobs can run on this computer.');
+  assert.match(a.text, /Nexus has not checked this computer yet/);
+  assert.deepEqual(X.noticeFor(a), { text: a.text, setup: true }, 'the notice shows, with "Get this computer ready"');
+  assert.notEqual(X.setupLead(a, X.setupSheet(unprobed)), 'Tasks can run on this computer.');
   // Checked, but Docker or the disk still unknown: still not ready.
   for (const h of [health({ docker: { state: 'unknown' } }), health({ disk: { dataHomeFreeBytes: null, requiredBytes: 30 * GIB, recommendedBytes: 40 * GIB, leaseFloorBytes: 5 * GIB, gate: 'unknown' } })]) {
     assert.equal(X.availabilityFrom({ unavailable: null }, { ok: true, data: h }).kind, 'unknown');
   }
-  // The lead says jobs can run only when ready and every row is fine.
+  // The lead says tasks can run only when ready and every row is fine.
   const ready = X.availabilityFrom({ unavailable: null }, { ok: true, data: health() });
-  assert.equal(X.setupLead(ready, X.setupSheet(health())), 'Jobs can run on this computer.');
+  assert.equal(X.setupLead(ready, X.setupSheet(health())), 'Tasks can run on this computer.');
   assert.equal(X.setupLead(ready, X.setupSheet(health({ runner: { state: 'x', attached: false, restarts: 0 } }))), null);
   assert.match(src('components/ExecutionSetupSheet.tsx'), /const lead = setupLead\(availability, rows\);/);
   assert.doesNotMatch(src('components/ExecutionSetupSheet.tsx'), /availability\.kind === 'ready' && <p/);
+  // "Tasks can run" sits behind More details (the steps above it say it first); the notice shows on top only when there are no steps to read.
+  assert.match(src('components/ExecutionSetupSheet.tsx'), /availability\.kind !== 'setup' && availability\.kind !== 'ready' && notice && <p className="nx-xs__lead">\{notice\.text\}<\/p>/);
 });
 
 test('(fix round 1) git_missing is a problem and a row of the sheet, never ready', () => {
@@ -532,7 +551,8 @@ test('(fix round 1) git_missing is a problem and a row of the sheet, never ready
   const a = X.availabilityFrom({ unavailable: null }, { ok: true, data: h });
   assert.deepEqual([a.kind, a.problems], ['setup', ['git_missing']]);
   const r = X.setupSheet(h).find((x) => x.id === 'git');
-  assert.deepEqual([r.state, r.text], ['problem', 'Git is not installed.']);
+  assert.deepEqual([r.state, r.text], ['problem', 'Git is not installed. It is a free program that keeps the history of your project.']);
+  assert.equal(r.action, 'Install Git, then restart Nexus.');
   assert.equal(X.setupSheet(health()).some((x) => x.id === 'git'), false, 'no claim about git when main says nothing');
 });
 
@@ -606,8 +626,8 @@ test('(fix round 1, item 13) the loopback address opens through a guarded helper
   const dep = src('project/DeploymentsSection.tsx');
   assert.doesNotMatch(dep, /window\.cth/);
   assert.match(dep, /const r = await openLoopbackUrl\(url\);/);
-  assert.match(dep, /The dev deployments could not be read\./);
-  assert.match(src('project/ActionBar.tsx'), /The actions could not be read\./);
+  assert.match(dep, /Nexus could not load the test runs\./);
+  assert.match(src('project/ActionBar.tsx'), /Nexus could not load the actions here\./);
 });
 
 test('(fix round 1, item 14) the hint pull stops when the cursor does not move', () => {
@@ -641,7 +661,7 @@ test('C7 PLACED_ACTIONS says where each lives; the diagnostic report pages and s
 test('C3 "Check again" asks main for a fresh probe (#23 { probe: true }) and keeps the "Checked at" line', async () => {
   const sheet = src('components/ExecutionSetupSheet.tsx');
   assert.match(sheet, /<Button variant="primary" icon="refresh" onClick=\{checkAgain\}>Check again<\/Button>/);
-  assert.match(sheet, /\{health && <p className="nx-muted">\{checkedLine\(health\.checkedAt\)\}<\/p>\}/);
+  assert.match(sheet, /<p className="nx-muted">\{checkedLine\(health\.checkedAt\)\}<\/p>/, 'the "Checked at" line sits behind More details');
   const hook = src('data/useExecution.ts');
   assert.match(hook, /function checkAgain\(\): void \{\n  void nexusClient\.platformHealthProbe\(\)\.then\(\(r\) => \{\n    useExecStore\.getState\(\)\.setHealth\(r\);\n    setTimeout\(\(\) => loadHealth\(true\), CHECK_AGAIN_REREAD_MS\);/);
   const preload = fs.readFileSync(path.join(ROOT, 'src', 'preload', 'index.ts'), 'utf8');
@@ -657,6 +677,7 @@ test('C3 "Check again" asks main for a fresh probe (#23 { probe: true }) and kee
   } finally { global.window = prev; }
   assert.deepEqual(calls, [[{ probe: true }], []]);
   assert.equal(X.checkedLine(NOW, () => '14:05'), 'Checked at 14:05.');
+  assert.equal(X.checkedLine(null), 'Nexus has not checked this computer yet.');
 });
 
 test('final fix: the new labels read as words (unreadable_output_entry, start_window_unobserved); Check again re-reads after 1.5 s', () => {
@@ -741,9 +762,9 @@ test('S5 image sizes read in KB, MB or GB (never "0 GB" for 71.5 MB); an unknown
   const h = health({ images: [{ profile: 'sde-node', present: true, matches: true, sizeBytes: 71.5 * MIB, imageIdShort: 'sha256:abcdef012345' },
     { profile: 'sde-python', present: true, matches: true, sizeBytes: 60 * MIB }, { profile: 'nexus-fwd', present: true, matches: true, sizeBytes: 4 * MIB }] });
   const rows = X.setupSheet(h);
-  assert.equal(rows.find((r) => r.id === 'image:sde-node').text, 'Prepared (sha256:abcdef012345, 71.5 MB).');
-  assert.equal(rows.find((r) => r.id === 'image:sde-python').text, 'Prepared (60 MB).');
-  assert.equal(rows.find((r) => r.id === 'image:nexus-fwd').text, 'Prepared (4 MB).');
+  assert.equal(rows.find((r) => r.id === 'image:sde-node').text, 'Ready (71.5 MB on your disk).', 'no image fingerprint is shown');
+  assert.equal(rows.find((r) => r.id === 'image:sde-python').text, 'Ready (60 MB on your disk).');
+  assert.equal(rows.find((r) => r.id === 'image:nexus-fwd').text, 'Ready (4 MB on your disk).');
   assert.ok(rows.every((r) => !/\b0 GB\b/.test(r.text)), 'no "0 GB" anywhere');
   // The gate's own numbers keep their GB wording (free disk is never overstated).
   assert.equal(X.gb(18.96 * GIB), '18.9 GB');
@@ -832,8 +853,8 @@ test('S9 before the first probe the setup sheet reads "not checked yet" (the Hea
   const s = sheetOf(unprobed);
   assert.deepEqual([s.a.kind, s.a.checking], ['unknown', true]);
   assert.equal(s.lead, X.NOT_CHECKED);
-  assert.match(s.lead, /has not been checked yet/);
-  assert.equal(s.checked, 'This computer has not been checked yet.');
+  assert.match(s.lead, /has not checked this computer yet/);
+  assert.equal(s.checked, 'Nexus has not checked this computer yet.');
   assert.deepEqual([s.rows.find((r) => r.id === 'docker').word, s.rows.find((r) => r.id === 'disk').word], ['Not checked', 'Not checked']);
   assert.ok(!s.rows.some((r) => r.id.startsWith('image:')), 'no image is claimed either way');
   // Main's own health() before any probe (no runner attached, nothing cached), through the real DTO mapping.
@@ -846,7 +867,7 @@ test('S9 before the first probe the setup sheet reads "not checked yet" (the Hea
   const view = healthView(snap, { handoffs: true, execution: true, registry: { valid: true, problems: 0 }, subReason: null });
   assert.deepEqual([view.checkedAt, view.docker.state, view.disk.gate, view.disk.dataHomeFreeBytes], [null, 'unknown', 'unknown', null]);
   const m = sheetOf(view);
-  assert.deepEqual([m.a.kind, m.lead, m.checked], ['unknown', X.NOT_CHECKED, 'This computer has not been checked yet.']);
+  assert.deepEqual([m.a.kind, m.lead, m.checked], ['unknown', X.NOT_CHECKED, 'Nexus has not checked this computer yet.']);
   assert.notEqual(m.lead, 'Jobs can run on this computer.');
 });
 
@@ -960,8 +981,8 @@ test('S15 no second "Start a dev deployment" while one of that version is starti
   assert.deepEqual(AM.actionBar(answer, ctx(null)).buttons.map((b) => b.actionId), ['sde.preview.start']);
   const starting = AM.actionBar(answer, ctx('starting'));
   assert.equal(starting.buttons.length, 0);
-  assert.deepEqual(starting.sentences, [{ actionId: 'sde.preview.start', setup: false, text: 'Start a dev deployment: one is starting for this version. Follow it under Dev deployments.' }]);
-  assert.equal(AM.actionBar(answer, ctx('running')).sentences[0].text, 'Start a dev deployment: one is running for this version. Stop it to start another.');
+  assert.deepEqual(starting.sentences, [{ actionId: 'sde.preview.start', setup: false, text: 'Start a dev deployment: a test run of your app is starting for this saved version. Follow it under “Test runs of your app”.' }]);
+  assert.equal(AM.actionBar(answer, ctx('running')).sentences[0].text, 'Start a dev deployment: a test run of your app is already running for this saved version. Stop it to start another.');
   // Which deployment is live, from the records: a deployment row of the version, or a live job starting one before its row exists.
   const dep = (subjectVersionId, status, jobId = 'JX') => ({ jobId, subjectVersionId, status, startedAt: 1 });
   const j = (state, build, id = 'JQ') => ({ id, state, actionId: 'sde.preview.start', inputs: [{ versionId: build }], createdAt: 1 });

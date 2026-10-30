@@ -6,11 +6,12 @@ import { useActions, useDeployments, useExecStore, useHealth, useJobs, withInten
 import { useParticipationIndex } from '../data/useParticipations';
 import { viewOf } from '../workspaces/participation';
 import { Button } from '../ui/Button';
+import { termName } from '../data/glossary';
 import { useExecutionUi } from './execContext';
 import { actionBar, liveDeploymentOf, startedNote } from './actionModel';
 
-/** The actions of one workspace here: available ones as buttons, the others as sentences that say why (with "How to
- *  set up" when the fix is on this computer). With a version, only actions that take it as an input. Actions of
+/** The actions of one workspace here: available ones as buttons, the others as sentences that say why (with "Get this
+ *  computer ready" when the fix is on this computer). With a version, only actions that take it as an input. Actions of
  *  steps not in this release are not listed. */
 export function ActionBar({ projectId, workspaceId, version, title }: {
   projectId: string; workspaceId: string; title: string;
@@ -37,7 +38,7 @@ export function ActionBar({ projectId, workspaceId, version, title }: {
     return (
       <section aria-label={title}>
         <h2>{title}</h2>
-        <p className="nx-muted nx-xa__line" role="status"><span>The actions could not be read. {c.text}</span> <Button variant="quiet" onClick={list.reload}>Try again</Button></p>
+        <p className="nx-muted nx-xa__line" role="status"><span>Nexus could not load the actions here. {c.text}</span> <Button variant="quiet" onClick={list.reload}>Try again</Button></p>
       </section>
     );
   }
@@ -83,13 +84,13 @@ export function ActionBar({ projectId, workspaceId, version, title }: {
           ))}
         </div>
       )}
-      {view.buttons.some((b) => b.needsApproval) && <p className="nx-muted">Installing dependencies asks for your approval before anything is downloaded.</p>}
+      {view.buttons.some((b) => b.needsApproval) && <p className="nx-muted">Installing add-ons asks for your OK before anything is downloaded.</p>}
       {view.sentences.length > 0 && (
         <ul className="nx-xa__why">
           {view.sentences.map((s) => (
             <li key={s.actionId}>
               <span>{s.text}</span>
-              {s.setup && <Button variant="quiet" onClick={ui.openSetup}>How to set up</Button>}
+              {s.setup && <Button variant="quiet" onClick={ui.openSetup}>{termName('getReady')}</Button>}
             </li>
           ))}
         </ul>
