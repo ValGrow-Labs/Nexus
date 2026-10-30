@@ -23,6 +23,19 @@
 //   carries the model and the loopback endpoint, and the adapter's own destination rule applies unchanged (no test seam in the runner).
 //   Everything else (main, the real runner core, the MCP server, the fake or real Docker) is as above. `w.bearers` collects every
 //   bearer the adapter sent to the MCP server (an observer on its fetch), for the no-leak scans.
+// - the HOSTED-MODEL variant (`flowWorld({ runtime: 'hosted-model', provider, model, modelUrl })`): the model is the REAL hosted-model adapter
+//   (src/runner/runtimes/hostedModel/, built by runtimeFor as in production: no scriptFor) with the runner's TEST SEAM (`hostedTestSeam`,
+//   RunnerDeps.agentRuntime): the allowed target is connected as plain HTTP to `modelUrl`, a loopback mock of the chat-completions API
+//   (test/helpers/mockOpenAiServer.cjs; no real provider, no real key, no network beyond loopback). The Host header and the path are still the
+//   chosen provider's. The runner's probe is the production hosted adapter (offline preset data); the consent is granted through #51 with the
+//   provider and model; the key is stored through the REAL key store (createHostedKeys, src/main/nexus/agents/hostedModelSettings.ts) over a
+//   FAKE safeStorage (`w.keyStore`: its "disk" holds only scrambled text) and resolved by main at the lease into the plan's in-memory field.
+//   `w.keys` is that store's API (set, delete, present, list), `w.setKey(key, provider?)` stores one once the probe has listed the providers.
+//   `o.hostedSeam` replaces the seam (`null`: none, the production path through the host egress proxy) and `o.startProxy` replaces the proxy
+//   starter (a test's fake CONNECT proxy). `w.bearers` is as in the local-model variant. With `real: true`, no `modelUrl` and `hostedSeam: null`
+//   `o.alsoLocal: { modelUrl, model }` adds the production local-model adapter to the probe (and main's local-server setting) so a test can switch between the two
+//   runtimes (revoke, then grant); `w.consentLocal()` grants that one. With `real: true`, no `modelUrl` and `hostedSeam: null`
+//   there is no seam at all: the REAL provider through the REAL host egress proxy (the controller-only showcase, tools/nexus-demo-hosted-model.cjs).
 // - the REAL-CLI variant (`flowWorld({ runtime: 'cli-agent', real: true })`, controller-only: tools/nexus-demo-cli-agent.cjs; never part of
 //   a test run, since it needs the user's installed vendor CLI and login): the runner's probe adapters are the production ones
 //   (registry.probeAdapters(): the probe reports the real CLI's health and its host list), the consent is granted through #51 for kind
@@ -56,6 +69,8 @@ const { resolveDataHome } = loadTs('src/main/nexusExec/dataHome.ts');
 const { loadImageProfiles } = loadTs('src/main/nexusExec/profiles.ts');
 const { RunnerCore } = loadTs('src/runner/core.ts');
 const { createLocalModelAdapter } = loadTs('src/runner/runtimes/localModel/adapter.ts');
+const { createHostedModelAdapter } = loadTs('src/runner/runtimes/hostedModel/adapter.ts');
+const { createHostedKeys } = loadTs('src/main/nexus/agents/hostedModelSettings.ts');
 const { repositoryCheck, resolveCommit } = loadTs('src/main/git.ts');
 const { confirmMergeWith } = loadTs('src/main/nexusExec/mergeDialog.ts');
 const { STEP_SEPARATOR } = loadTs('src/main/nexus/exec/planBuilder.ts');
@@ -246,6 +261,20 @@ async function playExec(w, driver, id, argv) {
 
 // ---------------------------------------------------------------- the world
 
+/** A fake safeStorage-backed secret store (the hosted keys' store in the hosted-model variant): the "disk" holds only scrambled text. */
+function fakeKeyStore(o = {}) {
+  const st = { available: o.available ?? true, blob: {} };
+  const enc = (v) => Buffer.from(v, 'utf8').map((b) => b ^ 0x5a).toString('base64');
+  const dec = (v) => Buffer.from(Buffer.from(v, 'base64').map((b) => b ^ 0x5a)).toString('utf8');
+  return Object.assign(st, {
+    encryptionAvailable: () => st.available,
+    set(ref, v) { if (!st.available) return { ok: false, error: 'unavailable' }; st.blob[ref] = enc(v); return { ok: true }; },
+    get(ref) { return st.blob[ref] === undefined ? undefined : dec(st.blob[ref]); },
+    has(ref) { return st.blob[ref] !== undefined; },
+    delete(ref) { delete st.blob[ref]; }
+  });
+}
+
 /**
  * `o.fixture`: 'node-test-app' or 'pytest-app'. `o.noConsent`: leave the consent ungranted. `o.reopen`: `{ file, userData, repo, roots }`
  * to continue an earlier world's database, data home and repository (a main restart) on a NEW platform, runner and bridge.
@@ -262,9 +291,17 @@ async function flowWorld(o = {}) {
   const ca = o.runtime === 'cli-agent';
   if (ca && real !== true) throw new Error("flowWorld({ runtime: 'cli-agent' }) needs real: true (the real CLI runs its commands in real Docker)");
   if (ca && (o.driver || o.modelUrl || o.model)) throw new Error("flowWorld({ runtime: 'cli-agent' }) takes no driver, modelUrl or model");
+  // `o.runtime: 'hosted-model'` (see the header): `o.provider` / `o.model` are the user's choice at consent, `o.modelUrl` the loopback mock (none for the real provider).
+  const hm = o.runtime === 'hosted-model';
+  if (hm && (typeof o.provider !== 'string' || typeof o.model !== 'string')) throw new Error("flowWorld({ runtime: 'hosted-model' }) needs provider and model");
+  if (hm && typeof o.modelUrl !== 'string' && o.hostedSeam === undefined) throw new Error("flowWorld({ runtime: 'hosted-model' }) needs modelUrl (or hostedSeam: null for the real provider)");
+  const hostedSeam = !hm ? undefined : o.hostedSeam !== undefined ? o.hostedSeam : { plain: { host: '127.0.0.1', port: Number(new URL(o.modelUrl).port) } };
+  const keyStore = hm ? (o.keyStore ?? fakeKeyStore()) : null;
+  const al = hm && o.alsoLocal ? o.alsoLocal : null;
+  const alPort = al ? Number(new URL(al.modelUrl).port) : 0;
   const lmPort = lm ? Number(new URL(o.modelUrl).port) : 0;
   /** The user's local-server address setting as main reads it; a test may change `lmCfg.baseUrl` (the settings a user could have). */
-  const lmCfg = o.lmCfg ?? { baseUrl: lm ? `${o.modelUrl.replace(/\/+$/, '')}/v1` : null };
+  const lmCfg = o.lmCfg ?? { baseUrl: lm ? `${o.modelUrl.replace(/\/+$/, '')}/v1` : al ? `${al.modelUrl.replace(/\/+$/, '')}/v1` : null };
   const clock = o.clock ?? (real ? { get now() { return Date.now(); }, advance() {} } : new FakeClock(h.NOW + 1000));
   const file = o.reopen?.file ?? h.v6Fixture().file;
   const s = track(new PersistStore(file));
@@ -279,15 +316,19 @@ async function flowWorld(o = {}) {
   const roots = o.reopen?.roots ?? new Set();
   const acceptFsRoot = (r) => (typeof r === 'string' && roots.has(path.resolve(r)) ? path.resolve(r) : null);
   const logs = [];
+  // The hosted keys as main composes them (src/main/index.ts): the real key store over the fake safeStorage; the providers are the runner's probe data.
+  const hostedKeys = hm ? createHostedKeys({ store: keyStore, providers: () => nx.agentProbe?.cache.fresh('hosted-model')?.setup?.providers ?? null,
+    onChange: (op, provider) => nx.agents.recordKeyChange(nx.principals.localUser(), op, provider) }) : null;
   const nx = createNexusPlatform(db, { now: () => clock.now, log: (l) => logs.push(l), execution: true, agents: true, dataHome, profiles: images.profiles,
     imageContexts: images.imageContexts, acceptFsRoot, isRepository: repositoryCheck, resolveCommit, appVersion: '0.0.0-test',
     skillsResourcesDir: path.join(ROOT, 'resources'), runtimeHealthTtlMs: 365 * 24 * 3600_000, bootId: o.bootId,
     // The user's existing local-server setting (main's reader: localModelSettings.ts): the address of the model server a turn is sent to.
-    ...(lm ? { localModelConfig: () => ({ providerBaseUrls: { opencode: lmCfg.baseUrl } }) } : {}) });
+    ...(lm || al ? { localModelConfig: () => ({ providerBaseUrls: { opencode: lmCfg.baseUrl } }) } : {}), ...(hm ? { hostedKeys } : {}) });
   const startup = nx.startup();
   const p = { store: s, file, db, nx, logs, userData, dataHome, roots, images };
   const w = { kind: real ? 'agent-flow-real' : 'agent-flow', real, clock, runnerLogs: [], played: [], execs: [], startup, scripts: [], scriptsSeen: [], holdGate: Promise.resolve(),
-    runtime: lm ? 'local-model' : ca ? 'cli-agent' : 'scripted', model: lm ? o.model : null, modelUrl: lm ? o.modelUrl : null, bearers: o.bearers ?? [], lmCfg };
+    runtime: lm ? 'local-model' : hm ? 'hosted-model' : ca ? 'cli-agent' : 'scripted', model: lm || hm ? o.model : null, modelUrl: lm || hm ? o.modelUrl ?? null : null, bearers: o.bearers ?? [], lmCfg,
+    ...(hm ? { provider: o.provider, keyStore, keys: hostedKeys } : {}) };
   addCommon(w, p);
   w.userData = userData; w.file = file; w.store = s;
   if (o.reopen) { w.current = o.reopen.current; w.repoDir = o.reopen.repo; }
@@ -332,9 +373,12 @@ async function flowWorld(o = {}) {
       docker: cli, imagesDir: path.join(ROOT, 'infra', 'images'), ...fakeOnly,
       // The local-model world: the REAL adapter is what the probe reports (its destination is the model server's own loopback address)
       // and what runtimeFor builds for the turn (consent hosts from the plan); the only observer is a fetch that notes the MCP bearer.
-      runtimeProbe: { adapters: () => (ca ? caAdapters : lm ? [createLocalModelAdapter({ consentedHosts: [{ host: '127.0.0.1', port: lmPort }], model: o.model })] : [scriptedAdapter]) },
+      runtimeProbe: { adapters: () => (ca ? caAdapters : hm ? [createHostedModelAdapter(), ...(al ? [createLocalModelAdapter({ consentedHosts: [{ host: '127.0.0.1', port: alPort }], model: al.model })] : [])] : lm ? [createLocalModelAdapter({ consentedHosts: [{ host: '127.0.0.1', port: lmPort }], model: o.model })] : [scriptedAdapter]) },
       // The real-CLI world sets nothing: no scriptFor, no agentBin / agentEnv, no startProxy (the runner's default, real proxy).
-      agentRuntime: ca ? {} : lm
+      agentRuntime: ca ? {} : hm
+        ? { fetchImpl: (url, init) => { const a = init && init.headers && init.headers.authorization; if (typeof a === 'string' && a.startsWith('Bearer ')) w.bearers.push(a.slice(7)); return fetch(url, init); },
+          ...(hostedSeam ? { hostedTestSeam: hostedSeam } : {}), ...(o.startProxy ? { startProxy: o.startProxy } : {}) }
+        : lm
         ? { fetchImpl: (url, init) => { const a = init && init.headers && init.headers.authorization; if (typeof a === 'string' && a.startsWith('Bearer ')) w.bearers.push(a.slice(7)); return fetch(url, init); } }
         : { scriptFor: (plan) => w.nextScript(plan), ...(real ? {} : { startProxy }) } });
     let gitRunner = core.git ?? null;
@@ -463,8 +507,25 @@ async function flowWorld(o = {}) {
     }
     nx.agentProbe.refresh();
     await w.until(() => !nx.agentProbe.cache.isStale(), 'the runtime check');
-    return w.x.ok('nexus:agent:consent', { op: 'grant', ...(lm ? { runtime: 'local-model', model: o.model } : {}), ...(caps ? { caps } : {}) });
+    return w.x.ok('nexus:agent:consent', { op: 'grant', ...(lm ? { runtime: 'local-model', model: o.model } : hm ? { runtime: 'hosted-model', provider: o.provider, model: o.model } : {}), ...(caps ? { caps } : {}) });
   };
+  if (hm) {
+    /** Waits until the probe has listed the providers (the key store only stores a key for a listed provider). */
+    w.providersKnown = async () => {
+      if (hostedKeys.list().ok) return;
+      nx.agentProbe.refresh();
+      await w.until(() => hostedKeys.list().ok, 'the provider list of the runtime check');
+    };
+    /** Grants the local-model runtime (the world was made with `alsoLocal`); the hosted permission must have been revoked first. */
+    w.consentLocal = async () => {
+      if (!al) throw new Error('the world has no alsoLocal runtime');
+      nx.agentProbe.refresh();
+      await w.until(() => !nx.agentProbe.cache.isStale(), 'the runtime check');
+      return w.x.ok('nexus:agent:consent', { op: 'grant', runtime: 'local-model', model: al.model });
+    };
+    /** Stores the user's key for a provider (default: the chosen one) through the real key store; returns the store's answer. */
+    w.setKey = async (key, provider = o.provider) => { await w.providersKnown(); return hostedKeys.set(provider, key); };
+  }
   /**
    * The real-CLI world: asks the runner for a fresh probe and waits for it (the real adapter runs the CLI's `--version`, `--help` and
    * `auth status`). Returns the cache entry of kind `cli-agent` ({ kind, health, setup }; setup.signedIn is yes|no|unknown, never the
@@ -601,7 +662,7 @@ async function flowWorld(o = {}) {
     const old = { core: w.core, bridge: w.bridge };
     w.bridge.close();
     try { s.close(); } catch { /* closed */ }
-    const w2 = await flowWorld({ clock, driver, real, runtime: o.runtime, modelUrl: o.modelUrl, model: o.model, bearers: w.bearers, lmCfg, reopen: { file, userData, roots, repo: w.repoDir, current: w.current }, ...o2 });
+    const w2 = await flowWorld({ clock, driver, real, runtime: o.runtime, modelUrl: o.modelUrl, model: o.model, provider: o.provider, keyStore, alsoLocal: o.alsoLocal, hostedSeam: o.hostedSeam, startProxy: o.startProxy, bearers: w.bearers, lmCfg, reopen: { file, userData, roots, repo: w.repoDir, current: w.current }, ...o2 });
     w2.old = old;
     w2.extraCores.push(old);
     w2.played = w.played; w2.execs = w.execs;
@@ -727,5 +788,5 @@ function implementing(w, files, args, o = {}) {
   });
 }
 
-module.exports = { sound, implementing, makeChange, approveAndAccept, flowWorld, useFixture, tarFiles, dirFiles, git, API_HOST, RUNTIME_KIND, TERMINAL, scriptedAdapter,
+module.exports = { fakeKeyStore, sound, implementing, makeChange, approveAndAccept, flowWorld, useFixture, tarFiles, dirFiles, git, API_HOST, RUNTIME_KIND, TERMINAL, scriptedAdapter,
   MIN, startArgs, jobEnds, outputOf, discoverTests, runBuild, deployAndDiagnose, stopDeployment };
