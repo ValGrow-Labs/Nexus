@@ -8,10 +8,12 @@ workspace, and build with AI agents alongside your normal development tools.
 > there is a platform core with a sandboxed **execution and agent runtime (B2b)**:
 > an agent works in an isolated copy of a repository, its change is checked by real
 > tests in a Docker sandbox, and you review, accept and merge it yourself. Agents
-> can be the Claude CLI you already have installed or a **local model through
-> Ollama** (loopback only). It was verified end to end on scratch projects with a
-> real Claude turn and a real Docker sandbox; use on your own repositories, the
-> local 7B model and the migration of an existing database are **not yet verified**.
+> can be the Claude CLI you already have installed, a **local model through
+> Ollama** (loopback only) or a **hosted free-tier model** with your own API key.
+> It was verified end to end on scratch projects with a real Claude turn and a
+> real Docker sandbox; use on your own repositories, the local 7B model, the
+> hosted free-key runtime (tested against mock servers only) and the migration of
+> an existing database are **not yet verified**.
 > The honest list of what is and is not proven is in
 > [`docs/nexus/platform-core.md`](./docs/nexus/platform-core.md) (Part IV, section 49
 > and the known limitations). Execution and agents are off by default.
