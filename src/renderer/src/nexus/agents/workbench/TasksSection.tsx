@@ -10,7 +10,7 @@ import { TASK_COLUMNS, columnsFor } from './teamModel';
 
 const POLL_MS = 3000;
 
-/** Tasks: the lead agent's task ledger, by status. The lead agent writes the
+/** Tasks: the lead AI helper's tasks, by status. The lead AI helper writes the
  *  cards; here a person can open one in full or delete one they no longer want
  *  tracked. New work goes in through Requests. */
 export function TasksSection({ onRequests }: { onRequests: () => void }) {
@@ -22,7 +22,7 @@ export function TasksSection({ onRequests }: { onRequests: () => void }) {
   // Main removes the named id from its latest on-disk ledger, so a card added
   // since this renderer's last poll cannot be lost.
   const remove = async (t: HiveTask): Promise<void> => {
-    if (!window.confirm('Delete this task card? Agents will no longer see it.')) return;
+    if (!window.confirm('Delete this task? AI helpers will no longer see it.')) return;
     setTasks((prev) => prev.filter((x) => x.id !== t.id)); // optimistic
     try {
       const result = await window.cth.hiveDeleteTask(t.id);
@@ -36,18 +36,18 @@ export function TasksSection({ onRequests }: { onRequests: () => void }) {
         <header className="nxs__head">
           <h3 className="nxs__title">Tasks</h3>
           <p className="nxs__lede">
-            {error ? 'The task ledger could not be read.' : loaded ? `${tasks.length} task${tasks.length === 1 ? '' : 's'} on the ledger.` : 'Reading the task ledger…'}
+            {error ? 'Nexus could not read the tasks.' : loaded ? `${tasks.length} task${tasks.length === 1 ? '' : 's'} in total.` : 'Reading the tasks…'}
           </p>
           <Button variant="quiet" icon="send" onClick={onRequests}>New request</Button>
         </header>
 
-        {error && <p className="nxs__error" role="alert">Could not read tasks: {error}</p>}
+        {error && <p className="nxs__error" role="alert">Nexus could not read the tasks: {error}</p>}
         {error && tasks.length === 0 ? null : loaded && tasks.length === 0 ? (
           <EmptyState
             level={4}
             icon="completion"
             title="No tasks"
-            body="No tasks yet. Send a request to the lead agent to start one."
+            body="No tasks yet. Send a request to the lead AI helper to start one."
             actions={<Button onClick={onRequests}>Open Requests</Button>}
           />
         ) : loaded && (

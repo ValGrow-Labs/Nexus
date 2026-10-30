@@ -18,7 +18,7 @@ function dependentsTree(id: string, all: HiveTask[], seen = new Set<string>()): 
   return direct.flatMap((d) => [d, ...dependentsTree(d.id, all, seen)]);
 }
 
-/** Needs you: tasks an agent has blocked on the human, through the task system.
+/** Needs you: tasks an AI helper has blocked on the human, through the task system.
  *  An entry can be a question or a to-do only the human can do. Sending an
  *  answer (1) records it on the task card's humanQA, so the decision stays on
  *  the card, and (2) tells the lead agent, so it unblocks the card and work
@@ -56,7 +56,7 @@ export function NeedsYouSection() {
       });
       const rawQA = mergeHumanQA(rawOf(task.id)?.humanQA ?? task.humanQA, open.q, change);
       const result = await window.cth.hivePatchTask(task.id, { humanQA: rawQA as HiveTask['humanQA'] });
-      if (!result.ok) throw new Error('task changed before answer could be saved');
+      if (!result.ok) throw new Error('The task changed before your answer could be saved. Try again.');
       setTasks(next);
       // 2) Tell the lead agent, so the card gets unblocked and work continues.
       await window.cth.hiveSend({
@@ -97,7 +97,7 @@ export function NeedsYouSection() {
     try {
       const rawQA = mergeHumanQA(rawOf(task.id)?.humanQA ?? task.humanQA, open.q, change, true);
       const result = await window.cth.hivePatchTask(task.id, { humanQA: rawQA as HiveTask['humanQA'] });
-      if (!result.ok) throw new Error('task changed before ask could be dismissed');
+      if (!result.ok) throw new Error('The task changed before it could be dismissed. Try again.');
     } catch {
       setTasks(tasks); // restore on failure so the user can retry
     }
@@ -109,16 +109,16 @@ export function NeedsYouSection() {
         <header className="nxs__head">
           <h3 className="nxs__title">Needs you</h3>
           <p className="nxs__lede">
-            {error ? 'The task ledger could not be read.' : !loaded ? 'Reading the task ledger…' : waiting.length === 0 ? 'Nothing is waiting on you.' : `${waiting.length} task${waiting.length === 1 ? ' is' : 's are'} waiting on you.`}
+            {error ? 'Nexus could not read the tasks.' : !loaded ? 'Reading the tasks…' : waiting.length === 0 ? 'Nothing is waiting on you.' : `${waiting.length} task${waiting.length === 1 ? ' is' : 's are'} waiting on you.`}
           </p>
         </header>
-        {error && <p className="nxs__error" role="alert">Could not read tasks: {error}</p>}
+        {error && <p className="nxs__error" role="alert">Nexus could not read the tasks: {error}</p>}
         {error && waiting.length === 0 ? null : loaded && waiting.length === 0 ? (
           <EmptyState
             level={4}
             icon="check"
             title="All clear"
-            body="Nothing needs you right now. When an agent asks a question or needs an approval, it appears here."
+            body="Nothing needs you right now. When an AI helper asks a question or needs your OK, it shows up here."
           />
         ) : (
           <ul className="nxs__list" aria-label="Waiting on you">
@@ -178,7 +178,7 @@ function AskCard({ task: t, question, assignee, stuck, nameFor, draft, onDraft, 
           rows={3}
           value={draft}
           aria-describedby={`${uid}-q`}
-          placeholder="Your answer, or 'done' with the result… (Ctrl+Enter to send)"
+          placeholder="Type your answer, or “done” if you did it. Press Ctrl+Enter to send."
           onChange={(e) => onDraft(e.target.value)}
           onKeyDown={(e) => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); onSend(); } }}
         />
@@ -197,10 +197,10 @@ function AskCard({ task: t, question, assignee, stuck, nameFor, draft, onDraft, 
           Dismiss
         </Button>
       </div>
-      {error && <p className="nxs__error" role="alert">Could not send the answer: {error}</p>}
+      {error && <p className="nxs__error" role="alert">Nexus could not send your answer: {error}</p>}
       {stuck.length > 0 && (
         <div className="nxn-stuck">
-          <p className="nxs__subtitle">Blocking {stuck.length} downstream task{stuck.length === 1 ? '' : 's'}</p>
+          <p className="nxs__subtitle">Holding up {stuck.length} other task{stuck.length === 1 ? '' : 's'}</p>
           <ul className="nxn-stuck__list">
             {stuck.slice(0, 6).map((d) => (
               <li key={d.id}>

@@ -16,7 +16,7 @@ import { useNexusUi } from '../state/uiStore';
  *  later visit to the page does not reopen it on its own. */
 let handledMemoryTick = 0;
 
-/** Agents: a plain list plus the selected agent's real terminal. */
+/** Agents: a plain list of AI helpers plus the selected one's real terminal. */
 export function AgentsPage({ config }: { config: HarnessConfig }) {
   const agents = useStore((s) => s.agents);
   const queues = useStore((s) => s.messageQueues);
@@ -81,17 +81,17 @@ export function AgentsPage({ config }: { config: HarnessConfig }) {
     </details>
   );
 
-  // A new install starts no lead agent by itself (it is an agent program running in a terminal): it starts only from here.
+  // A new install starts no lead AI helper by itself (it is a helper program running in a terminal): it starts only from here.
   const requestLeadStart = useStore((s) => s.requestLeadStart);
   const startLeadButton = (primary: boolean) => (
     <button type="button" className={`nx-btn nx-focusable${primary ? ' nx-btn--primary' : ''}`} onClick={requestLeadStart}>
-      <Icon name="terminal" /> Start the lead agent
+      <Icon name="terminal" /> Start the lead AI helper
     </button>
   );
 
   const addButton = (primary: boolean) => (
     <button type="button" className={`nx-btn nx-focusable${primary ? ' nx-btn--primary' : ''}`} onClick={() => setAddAgentOpen(true)}>
-      <Icon name="plus" /> Add agent
+      <Icon name="plus" /> Add an AI helper
     </button>
   );
 
@@ -99,7 +99,7 @@ export function AgentsPage({ config }: { config: HarnessConfig }) {
     <div className="nxa">
       <div className="nxa__bar">
         <h1 className="nxa__title">Agents</h1>
-        <span className="nxa__auto">{autoOn ? 'Auto mode is on: agents skip their CLI approval prompts' : 'Auto mode is off: agents use their CLI approval prompts'}</span>
+        <span className="nxa__auto">{autoOn ? 'Auto mode is on: AI helpers do not ask before they change files or run commands' : 'Auto mode is off: AI helpers ask you before they change files or run commands'}</span>
         <div className="nxa__actions">
           {godStatus === 'off' && rows.length > 0 && startLeadButton(false)}
           {addButton(false)}
@@ -116,14 +116,14 @@ export function AgentsPage({ config }: { config: HarnessConfig }) {
       {rows.length === 0 ? (
         godStatus === 'booting' ? (
           <div className="nxa__empty">
-            <p className="nxa__note" role="status">The lead agent is starting. Its terminal appears here when it is ready.</p>
+            <p className="nxa__note" role="status">The lead AI helper is starting. Its terminal appears here when it is ready.</p>
             {memory}
           </div>
         ) : godStatus === 'off' ? (
           <div className="nxa__empty">
             <div className="nx-empty">
-              <h2 className="nx-empty__title">The lead agent is not running</h2>
-              <p className="nx-empty__body">Nothing starts by itself. The lead agent takes your requests in the terminal and hands work to other agents. It needs an agent program that is installed and signed in on this computer, which you choose in Settings. Start it only if you want it. Building in a project does not need it.</p>
+              <h2 className="nx-empty__title">The lead AI helper is not running</h2>
+              <p className="nx-empty__body">Nothing starts by itself. The lead AI helper takes your requests and passes the work to other AI helpers. It needs a helper program that is installed and signed in on this computer, and you choose that program in Settings. Start it only if you want it. You do not need it to build in a project.</p>
               <div className="nx-empty__actions">{startLeadButton(true)}{addButton(false)}</div>
             </div>
             {memory}
@@ -131,8 +131,8 @@ export function AgentsPage({ config }: { config: HarnessConfig }) {
         ) : (
           <div className="nxa__empty">
             <div className="nx-empty">
-              <h2 className="nx-empty__title">No agents yet</h2>
-              <p className="nx-empty__body">No agents are running. Add one to see its terminal here.</p>
+              <h2 className="nx-empty__title">No AI helpers yet</h2>
+              <p className="nx-empty__body">No AI helpers are running. Add one to see its terminal here.</p>
               <div className="nx-empty__actions">{addButton(true)}</div>
             </div>
             {memory}
@@ -141,7 +141,7 @@ export function AgentsPage({ config }: { config: HarnessConfig }) {
       ) : (
         <div className="nxa__body">
           <div className="nxa__side">
-          <ul className="nxa__list" aria-label="Agents">
+          <ul className="nxa__list" aria-label="AI helpers">
             {rows.map((r) => (
               <li key={r.id}>
                 <button
@@ -155,7 +155,7 @@ export function AgentsPage({ config }: { config: HarnessConfig }) {
                   <span className="nxa__row-meta">
                     <span>{r.provider}</span>
                     <span>Status: {r.status}</span>
-                    {r.queued > 0 && <span>{r.queued} queued</span>}
+                    {r.queued > 0 && <span>{r.queued} {r.queued === 1 ? 'message' : 'messages'} waiting</span>}
                   </span>
                 </button>
               </li>
@@ -163,7 +163,7 @@ export function AgentsPage({ config }: { config: HarnessConfig }) {
           </ul>
           {memory}
           </div>
-          <section className="nxa__term" role="region" aria-label={`${current?.title ?? 'Agent'} panel`}>
+          <section className="nxa__term" role="region" aria-label={`${current?.title ?? 'AI helper'} panel`}>
             {agent ? <AgentWorkbench agent={agent} /> : null}
           </section>
         </div>

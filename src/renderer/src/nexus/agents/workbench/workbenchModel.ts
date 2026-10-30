@@ -10,18 +10,18 @@ export interface WorkbenchSection { id: WorkbenchSectionId; label: string; hoste
 
 export const WORKBENCH_SECTIONS: readonly WorkbenchSection[] = [
   { id: 'terminal', label: 'Terminal', hosted: false, leadOnly: false },
-  { id: 'git', label: 'Git', hosted: true, leadOnly: false },
+  { id: 'git', label: 'File changes', hosted: true, leadOnly: false },
   { id: 'messages', label: 'Messages', hosted: true, leadOnly: false },
-  { id: 'traces', label: 'Traces', hosted: true, leadOnly: false },
+  { id: 'traces', label: 'Tool calls', hosted: true, leadOnly: false },
   { id: 'team', label: 'Team', hosted: false, leadOnly: true },
   { id: 'requests', label: 'Requests', hosted: false, leadOnly: true },
   { id: 'tasks', label: 'Tasks', hosted: false, leadOnly: true },
   { id: 'needs-you', label: 'Needs you', hosted: false, leadOnly: true },
   { id: 'activity', label: 'Activity', hosted: false, leadOnly: true },
   { id: 'triggers', label: 'Triggers', hosted: true, leadOnly: true },
-  { id: 'history', label: 'History', hosted: true, leadOnly: true },
+  { id: 'history', label: 'Trigger history', hosted: true, leadOnly: true },
   { id: 'memory', label: 'Memory', hosted: true, leadOnly: true },
-  { id: 'graph', label: 'Graph', hosted: true, leadOnly: true },
+  { id: 'graph', label: 'Memory map', hosted: true, leadOnly: true },
   { id: 'skills', label: 'Skills', hosted: true, leadOnly: true },
   { id: 'workers', label: 'Workers', hosted: true, leadOnly: true }
 ];
@@ -65,8 +65,8 @@ export function initialSection(o: { isLead: boolean; stored?: string | null }): 
 /** The lead agent's delivery switch: one control for every agent's queue. */
 export function deliveryLabel(paused: boolean): { text: string; title: string } {
   return paused
-    ? { text: 'Resume delivery', title: 'Queued messages are held for every agent. Resume to deliver them automatically.' }
-    : { text: 'Pause delivery', title: 'Queued messages are delivered to every agent automatically. Pause to hold them.' };
+    ? { text: 'Resume messages', title: 'Messages you queued are on hold for every AI helper. Resume to send them automatically.' }
+    : { text: 'Pause messages', title: 'Messages you queued are sent to every AI helper automatically. Pause to hold them back.' };
 }
 
 /** Every live agent, the lead included, gets the same auto-delivery state. */

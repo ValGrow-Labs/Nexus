@@ -104,7 +104,7 @@ test('FR5 source pin: the only place that spawns the lead agent is the boot effe
   // The Start button is the clear, explicit control: on the Agents page (empty state, and the bar when the lead is missing).
   const a = read('src/renderer/src/nexus/agents/AgentsPage.tsx');
   assert.match(a, /onClick=\{requestLeadStart\}>/);
-  assert.match(a, /Start the lead agent/);
+  assert.match(a, /Start the lead AI helper/);
   assert.match(a, /godStatus === 'off'/);
   // The only other legacy spawn on launch restores the previous session's workers (it never includes the lead agent and needs a saved team).
   assert.doesNotMatch(read('src/renderer/src/hooks/useRestoreTeam.ts'), /GOD_PTY|isGod: true/);

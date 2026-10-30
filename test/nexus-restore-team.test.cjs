@@ -27,11 +27,11 @@ test('only App.tsx opts in to the automatic restore', () => {
 });
 
 test('restore status lines are plain', () => {
-  assert.equal(restoreStatusLine({ kind: 'pending', count: 2 }), 'Restoring 2 agents from your last session in a moment.');
-  assert.equal(restoreStatusLine({ kind: 'pending', count: 1 }), 'Restoring 1 agent from your last session in a moment.');
-  assert.equal(restoreStatusLine({ kind: 'running', auto: true }), 'Restoring agents from your last session…');
-  assert.equal(restoreStatusLine({ kind: 'running', auto: false }), 'Restoring agents…');
-  assert.equal(restoreStatusLine({ kind: 'done', note: 'restored 2 · 1 already live' }), 'Last session: restored 2 · 1 already live');
+  assert.equal(restoreStatusLine({ kind: 'pending', count: 2 }), 'Bringing back 2 AI helpers from your last session in a moment.');
+  assert.equal(restoreStatusLine({ kind: 'pending', count: 1 }), 'Bringing back 1 AI helper from your last session in a moment.');
+  assert.equal(restoreStatusLine({ kind: 'running', auto: true }), 'Bringing back your AI helpers from your last session…');
+  assert.equal(restoreStatusLine({ kind: 'running', auto: false }), 'Bringing back your AI helpers…');
+  assert.equal(restoreStatusLine({ kind: 'done', note: '2 brought back · 1 already running' }), 'Last session: 2 brought back · 1 already running');
   assert.equal(restoreStatusLine({ kind: 'done', note: 'nothing to restore' }), null);
   assert.equal(restoreStatusLine({ kind: 'idle' }), null);
 });

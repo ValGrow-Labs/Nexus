@@ -33,8 +33,8 @@ test('labels carry no legacy vocabulary', () => {
 
 test('delivery control covers every agent and says what it does', () => {
   assert.deepEqual(m.deliveryTargets([{ id: 'god' }, { id: 'b1' }, { id: 'b2' }]), ['god', 'b1', 'b2']);
-  assert.deepEqual(m.deliveryLabel(false), { text: 'Pause delivery', title: 'Queued messages are delivered to every agent automatically. Pause to hold them.' });
-  assert.deepEqual(m.deliveryLabel(true), { text: 'Resume delivery', title: 'Queued messages are held for every agent. Resume to deliver them automatically.' });
+  assert.deepEqual(m.deliveryLabel(false), { text: 'Pause messages', title: 'Messages you queued are sent to every AI helper automatically. Pause to hold them back.' });
+  assert.deepEqual(m.deliveryLabel(true), { text: 'Resume messages', title: 'Messages you queued are on hold for every AI helper. Resume to send them automatically.' });
 });
 
 test('one terminal mount per pty, keyed by generation, with the fullscreen guard', () => {

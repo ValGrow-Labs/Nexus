@@ -30,11 +30,19 @@ interface GHIssue {
   assignees: string[];
 }
 
+/** What the usage limit is doing to an AI helper, in words. */
+const BREAKER_WORDS: Record<BreakerState['level'], string> = {
+  healthy: 'fine',
+  steering: 'being nudged to use less',
+  constrained: 'slowed down',
+  stopped: 'stopped'
+};
+
 type Restart = ReturnType<typeof useRestartAgent>;
 type Roster = ReturnType<typeof useFleetRoster>;
 type Telemetry = ReturnType<typeof useFleetTelemetry>;
 
-/** The lead agent's Team section: every visible agent with its live telemetry,
+/** The lead AI helper's Team section: every visible agent with its live telemetry,
  *  token limit and model, then archived agents, folders and GitHub issues.
  *  Telemetry is shown only once it has actually arrived. */
 export function TeamSection() {
@@ -70,17 +78,17 @@ export function TeamSection() {
       <div className="nxs__inner">
         <header className="nxs__head">
           <h3 className="nxs__title">Team</h3>
-          <p className="nxs__lede">Every running agent, with usage reported by its own telemetry.</p>
+          <p className="nxs__lede">Every running AI helper, and how much each one has used.</p>
         </header>
 
         {telemetry.error && (
-          <p className="nxs__error" role="alert">Could not read telemetry: {telemetry.error}</p>
+          <p className="nxs__error" role="alert">Nexus could not read the usage numbers: {telemetry.error}</p>
         )}
 
         {ordered.length === 0 ? (
-          <EmptyState level={4} icon="agents" title="No agents" body="No agents are running." />
+          <EmptyState level={4} icon="agents" title="No AI helpers" body="No AI helpers are running." />
         ) : (
-          <ul className="nxs__list" aria-label="Agents">
+          <ul className="nxs__list" aria-label="AI helpers">
             {ordered.map((a) => (
               <li key={a.id}>
                 <TeamMember
@@ -98,21 +106,21 @@ export function TeamSection() {
           </ul>
         )}
 
-        <section className="nxs__group" aria-label="Fleet total">
-          <h4 className="nxs__subtitle">Fleet total</h4>
+        <section className="nxs__group" aria-label="All AI helpers together">
+          <h4 className="nxs__subtitle">All AI helpers together</h4>
           {reported === 0 ? (
-            <p className="nxs__note">No usage has been reported yet. Totals appear once an agent&apos;s telemetry arrives.</p>
+            <p className="nxs__note">No usage has been reported yet. Totals appear once an AI helper reports.</p>
           ) : (
             <p className="nxt-total">
               <span><strong>{fmtTokens(sumTokens)}</strong> tokens</span>
-              <span>inputs {fmtTokens(sumInput)} (cache {fleetCachePct}%)</span>
+              <span>read in {fmtTokens(sumInput)} ({fleetCachePct}% reused)</span>
               <span>{Math.round(sumRate).toLocaleString()} tokens/min</span>
-              <span className="nxs__note">from {reported} of {agents.length} agent{agents.length === 1 ? '' : 's'}</span>
+              <span className="nxs__note">from {reported} of {agents.length} AI helper{agents.length === 1 ? '' : 's'}</span>
             </p>
           )}
           <p className="nxs__note">
-            Bars show cumulative tokens against each agent&apos;s limit, else the total token budget
-            {roster.tokenCap && roster.tokenCap > 0 ? ` of ${fmtTokens(roster.tokenCap)}` : ' (none set; set one in Settings)'}.
+            Each bar shows how many tokens an AI helper has used, against its own limit, or else against the total budget
+            {roster.tokenCap && roster.tokenCap > 0 ? ` of ${fmtTokens(roster.tokenCap)}` : ' (none is set; you can set one in Settings)'}. A token is a small piece of text that an AI reads or writes.
           </p>
         </section>
 
@@ -152,7 +160,7 @@ function TeamMember({ agent: a, label, role, isLead, toolCount, telemetry, roste
     <article className={`nxt-card${isLead ? ' nxt-card--lead' : ''}${armed ? ' nxt-card--armed' : ''}`} aria-labelledby={titleId}>
       <div className="nxt-card__top">
         <h4 className="nxt-card__name" id={titleId}>{label}</h4>
-        <span className="nxt-chip">Status: {armed ? 'held by the token breaker' : a.status}</span>
+        <span className="nxt-chip">Status: {armed ? 'held back because it used too much' : a.status}</span>
         <span className="nxt-card__meta">{agentPreset.label}{a.model ? ` · ${a.model}` : ''}</span>
         <span className="nxt-card__meta nxt-card__end">{toolCount} tool call{toolCount === 1 ? '' : 's'}</span>
       </div>
@@ -161,7 +169,7 @@ function TeamMember({ agent: a, label, role, isLead, toolCount, telemetry, roste
 
       {breaker && breaker.level !== 'healthy' && (
         <p className="nxt-warn" role="status">
-          Token breaker: {breaker.level}{breaker.reason ? `. ${breaker.reason}` : ''}
+          Usage limit: {BREAKER_WORDS[breaker.level]}{breaker.reason ? `. ${breaker.reason}` : ''}
         </p>
       )}
 
@@ -179,10 +187,10 @@ function TeamMember({ agent: a, label, role, isLead, toolCount, telemetry, roste
         {a.ptyId && (isLead || canResume) && (
           <Button
             disabled={busy}
-            title={`Stop and start ${label} again, resuming its current conversation. Fixes a garbled terminal without losing context.`}
+            title={`Stops ${label} and starts it again, and keeps its conversation. Use this if the terminal looks garbled.`}
             onClick={() => { void restart.restartWithModel(a, a.model, { resume: true }); }}
           >
-            {busy ? 'Restarting…' : 'Restart & continue'}
+            {busy ? 'Restarting…' : 'Restart and keep the conversation'}
           </Button>
         )}
         <Button variant="quiet" onClick={() => select(a.id)} ariaLabel={`Open ${label}'s workbench`}>Open</Button>
@@ -366,7 +374,7 @@ function ModelPicker({ agent: a, label, provider, busy, defaultModel, restart }:
           </optgroup>
         ))}
       </select>
-      <Button disabled={busy || choice === current} title="Restarts the agent on the chosen model" onClick={apply}>
+      <Button disabled={busy || choice === current} title="Restarts the AI helper on the model you picked" onClick={apply}>
         {busy ? 'Restarting…' : 'Apply model'}
       </Button>
     </span>
@@ -382,21 +390,21 @@ function EnginePicker({ agent: a, busy, roster, restart }: { agent: Agent; busy:
     setNote(null);
     const currentProvider = inferAgentProvider(a.command, a.provider);
     if (a.ptyId && roster.engineProvider !== currentProvider) {
-      if (!window.confirm("This restarts the lead agent; a conversation on a different engine can't be resumed.")) return;
+      if (!window.confirm("This restarts the lead AI helper. A conversation cannot move to a different program, so it starts fresh.")) return;
     }
     try {
       await window.cth.updateConfig({ godProvider: roster.engineProvider, godModel: roster.engineModel });
     } catch (e) {
-      setNote(`Could not save the engine: ${e instanceof Error ? e.message : String(e)}`);
+      setNote(`Nexus could not save your choice: ${e instanceof Error ? e.message : String(e)}`);
       return;
     }
     // Without a live terminal this is a no-op; the saved engine is used at the next start.
     await restart.restartWithModel(a, roster.engineModel, { provider: roster.engineProvider, resume: false });
-    if (!a.ptyId) setNote('Saved. The lead agent uses this engine the next time it starts.');
+    if (!a.ptyId) setNote('Saved. The lead AI helper uses this program the next time it starts.');
   };
   return (
     <span className="nxt-inline">
-      <label className="nxs-label" htmlFor={providerId}>Lead agent engine</label>
+      <label className="nxs-label" htmlFor={providerId}>Program for the lead AI helper</label>
       <select
         id={providerId}
         className="nxs-select"
@@ -409,17 +417,17 @@ function EnginePicker({ agent: a, busy, roster, restart }: { agent: Agent; busy:
         }}
       >
         {AGENT_PROVIDER_PRESETS.filter((p) => canReceiveInbox(p.id)).map((p) => (
-          <option key={p.id} value={p.id}>{p.label}{p.id === 'claude' ? ' (recommended)' : ''}</option>
+          <option key={p.id} value={p.id}>{p.label}</option>
         ))}
       </select>
-      <label className="nxs-label" htmlFor={modelId}>Lead agent model</label>
+      <label className="nxs-label" htmlFor={modelId}>Model for the lead AI helper</label>
       <select id={modelId} className="nxs-select" value={roster.engineModel ?? ''} disabled={busy} onChange={(e) => roster.setEngineModel(e.target.value || undefined)}>
         {modelsForProvider(roster.engineProvider).map((m) => (
           <option key={m.label} value={m.id ?? ''}>{m.label}</option>
         ))}
       </select>
-      <Button disabled={busy} title="Saves the engine and model, then restarts the lead agent" onClick={() => { void apply(); }}>
-        {busy ? 'Restarting…' : a.ptyId ? 'Apply engine' : 'Save engine'}
+      <Button disabled={busy} title="Saves your choice, then restarts the lead AI helper" onClick={() => { void apply(); }}>
+        {busy ? 'Restarting…' : a.ptyId ? 'Apply choice' : 'Save choice'}
       </Button>
       {note && <span className="nxs__status" role="status">{note}</span>}
     </span>
@@ -435,8 +443,8 @@ function ArchivedAgents() {
   if (archivedAgents.length === 0) return null;
   return (
     <details className="nxs__group nxs-details">
-      <summary>Archived agents ({archivedAgents.length})</summary>
-      <p className="nxs__note">Closed agents keep their history. Forget removes one from this list.</p>
+      <summary>Closed AI helpers ({archivedAgents.length})</summary>
+      <p className="nxs__note">Closed AI helpers keep their history. “Forget” removes one from this list.</p>
       <ul className="nxs__list">
         {archivedAgents.map((a) => {
           const name = displayNameForId(a.id, canon, hint);
@@ -461,16 +469,16 @@ function Folders({ repos }: { repos: string[] }) {
     setError(null);
     try {
       const res = await window.cth.openTerminalAt(r);
-      if (!res.ok) setError(`Could not open a terminal at ${r}: ${res.error ?? 'unknown error'}`);
+      if (!res.ok) setError(`Nexus could not open a terminal at ${r}: ${res.error ?? 'something went wrong'}`);
     } catch (e) {
-      setError(`Could not open a terminal at ${r}: ${e instanceof Error ? e.message : String(e)}`);
+      setError(`Nexus could not open a terminal at ${r}: ${e instanceof Error ? e.message : String(e)}`);
     }
   };
   return (
     <details className="nxs__group nxs-details">
       <summary>Folders ({repos.length})</summary>
       {repos.length === 0 ? (
-        <p className="nxs__note">No registered folders.</p>
+        <p className="nxs__note">No project folders added yet.</p>
       ) : (
         <ul className="nxs__list">
           {repos.map((r) => (
@@ -497,7 +505,7 @@ function GitHubIssues({ repos }: { repos: string[] }) {
   const repo = issueRepo || repos[0];
 
   const fetchIssues = async (): Promise<void> => {
-    if (!repo) { setError('No folder selected.'); return; }
+    if (!repo) { setError('No folder is picked yet.'); return; }
     setLoading(true);
     setError(null);
     try {
@@ -506,7 +514,7 @@ function GitHubIssues({ repos }: { repos: string[] }) {
         setIssues((res.issues ?? []).slice(0, 10));
       } else {
         setIssues([]);
-        setError(res.error ?? 'Failed to fetch issues.');
+        setError(res.error ?? 'Nexus could not load the issues.');
       }
     } catch (e) {
       setIssues([]);
@@ -527,7 +535,7 @@ function GitHubIssues({ repos }: { repos: string[] }) {
     <details className="nxs__group nxs-details">
       <summary>GitHub issues</summary>
       {repos.length === 0 ? (
-        <p className="nxs__note">No registered folders.</p>
+        <p className="nxs__note">No project folders added yet.</p>
       ) : (
         <>
           <div className="nxs-actions">

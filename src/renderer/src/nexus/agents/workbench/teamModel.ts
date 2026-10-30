@@ -50,12 +50,12 @@ export interface LogEntry { ts?: number; kind?: string; [k: string]: unknown }
 const str = (v: unknown): string => (typeof v === 'string' ? v : v == null ? '' : String(v));
 
 /** One activity-log line. Agents are named through `name` (display labels);
- *  stored names in the log (`e.name`) are never printed. Unknown kinds print
- *  only their kind, never the raw payload. */
+ *  stored names in the log (`e.name`) are never printed. An unknown kind prints
+ *  a plain "Something happened", never the raw kind or payload. */
 export function activityLine(e: LogEntry, name: (id: string) => string): string {
   const who = (id: unknown): string => {
     const s = str(id);
-    return s ? name(s) : 'an agent';
+    return s ? name(s) : 'an AI helper';
   };
   switch (e.kind) {
     case 'spawn': return `Started ${who(e.agentId)}`;
@@ -73,7 +73,7 @@ export function activityLine(e: LogEntry, name: (id: string) => string): string 
       const n = Number(e.count) || 0;
       return `Task list updated (${n} task${n === 1 ? '' : 's'})`;
     }
-    default: return e.kind ? `${e.kind} event` : 'Unknown event';
+    default: return 'Something happened';
   }
 }
 

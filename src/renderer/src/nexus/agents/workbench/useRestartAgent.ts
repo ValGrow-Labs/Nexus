@@ -64,7 +64,7 @@ export function useRestartAgent(): {
       const provider = opts.provider ?? previousProvider;
       let resume = opts.resume === true && provider === previousProvider;
       if (opts.resume && !resume && !opts.resumeOptional) {
-        throw new Error('Cannot resume a session through a different provider.');
+        throw new Error('A conversation cannot move to a different program, so it cannot be continued there.');
       }
       let resumeSessionId: string | undefined;
       if (resume) {
@@ -78,9 +78,9 @@ export function useRestartAgent(): {
         const registry = await window.cth.hiveRegistry();
         resumeSessionId = registry.agents[a.id]?.sessionId;
         if (!resumeSessionId) {
-          giveUpOnResume('No recorded session ID; current process was left running.');
+          giveUpOnResume('Nexus has no saved conversation for this AI helper, so it was left running as it is.');
         } else if (provider === 'claude' && !(await window.cth.resolveSessionCwd(resumeSessionId))) {
-          giveUpOnResume('Session transcript not found; current process was left running.');
+          giveUpOnResume('Nexus could not find the saved conversation, so the AI helper was left running as it is.');
         }
       }
       // Capture the live grid before replacing anything. Restart & Continue
@@ -103,7 +103,7 @@ export function useRestartAgent(): {
       // `no pty: <id>`. Treating that as fatal aborted before the respawn and
       // turned the one situation the button exists for into a dead end.
       if (!killed.ok && !/^no pty:/.test(killed.error ?? '')) {
-        throw new Error(killed.error ?? 'Could not stop the current process.');
+        throw new Error(killed.error ?? 'Nexus could not stop the AI helper to restart it.');
       }
       if (resume) {
         // A blank xterm can retain corrupt renderer/DOM/subscription state even
@@ -141,9 +141,9 @@ export function useRestartAgent(): {
         resumeSessionId,
         requireResume: resume
       });
-      if (!res.ok) throw new Error(res.error ?? 'Restart failed.');
+      if (!res.ok) throw new Error(res.error ?? 'The restart did not work.');
       if (resume && res.resumed !== true) {
-        throw new Error('Resume was refused; no replacement session was accepted.');
+        throw new Error('The AI helper did not accept its old conversation, so it could not continue it.');
       }
       if (res.ok) {
         // Record the model even on a resume. A same-provider model change now

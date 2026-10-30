@@ -31,7 +31,7 @@ export function WorkbenchHeader({ agent, label, role, isLead, fullscreen, delive
         setTimeout(() => setOpenTerminalState('idle'), 1500);
       } else {
         setOpenTerminalState('error');
-        setOpenTerminalError(result.error ?? 'unknown error');
+        setOpenTerminalError(result.error ?? 'something went wrong');
         setTimeout(() => setOpenTerminalState('idle'), 4000);
       }
     } catch (e) {
@@ -45,7 +45,7 @@ export function WorkbenchHeader({ agent, label, role, isLead, fullscreen, delive
   // the lead agent: it is restarted rather than closed.
   const onKill = async () => {
     if (!agent.ptyId) return;
-    if (!confirm(`Close ${label}? Its process stops and the agent moves to the archive (history is kept).`)) return;
+    if (!confirm(`Close ${label}? It stops running and moves to the archive. Its history is kept.`)) return;
     await window.cth.killPty(agent.ptyId);
     disposeTerminal(agent.ptyId);
     archiveAgent(agent.id);
@@ -84,14 +84,14 @@ export function WorkbenchHeader({ agent, label, role, isLead, fullscreen, delive
             </Button>
           )}
           {!isLead && agent.ptyId && (
-            <Button icon="close" title={`Close ${label}: stops its process and archives it`} onClick={() => { void onKill(); }}>
-              Close agent
+            <Button icon="close" title={`Close ${label}: it stops running and moves to the archive`} onClick={() => { void onKill(); }}>
+              Close AI helper
             </Button>
           )}
         </div>
       </header>
       {openTerminalError && (
-        <p className="nxw__alert" role="alert">Could not open a terminal: {openTerminalError}</p>
+        <p className="nxw__alert" role="alert">Nexus could not open a terminal: {openTerminalError}</p>
       )}
     </>
   );

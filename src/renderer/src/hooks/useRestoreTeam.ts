@@ -210,7 +210,7 @@ export function useRestoreTeam(config?: HarnessConfig | null, opts?: UseRestoreT
           } else {
             // Leave it restorable so the user can retry — but record WHY so the
             // outcome is shown on the floor, not buried in the devtools console.
-            failures.push(`${labelOf(a.id)}: ${res.error ?? 'spawn failed'}`);
+            failures.push(`${labelOf(a.id)}: ${res.error ?? 'it did not start'}`);
             console.error('[restore] spawn failed for', a.id, res.error);
           }
         } catch (e) {
@@ -230,9 +230,9 @@ export function useRestoreTeam(config?: HarnessConfig | null, opts?: UseRestoreT
       restoring = false;
       // ALWAYS surface a result so the button can never look inert.
       const parts: string[] = [];
-      if (restored) parts.push(`restored ${restored}`);
-      if (alreadyLive) parts.push(`${alreadyLive} already live`);
-      if (failures.length) parts.push(`${failures.length} failed — ${failures.join('; ')}`);
+      if (restored) parts.push(`${restored} brought back`);
+      if (alreadyLive) parts.push(`${alreadyLive} already running`);
+      if (failures.length) parts.push(`${failures.length} could not start: ${failures.join('; ')}`);
       note = parts.length ? parts.join(' · ') : 'nothing to restore';
       emit();
     }

@@ -142,7 +142,6 @@ const V5_ALLOWED = {
     '680d683e33d505f1',  // const canResume = agentProvider === 'claude' || !!agentPreset.resumeFlag || !!ag
     'dd1cf86422eeaa8c',  // // `defaultModel` is a Claude model id, so it can only mark an entry in the Clau
     'f86313423c3e2803',  // const isAppDefault = p.id === 'claude' && !!defaultModel && model.id === default
-    'f6f04d3c0947309f',  // <option key={p.id} value={p.id}>{p.label}{p.id === 'claude' ? ' (recommended)' :
   ],
   'src/renderer/src/nexus/agents/workbench/useFleetRoster.ts': [
     '596d5e6300ee0425',  // const [engineProvider, setEngineProvider] = useState<AgentProvider>('claude');

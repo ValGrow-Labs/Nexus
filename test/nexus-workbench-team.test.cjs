@@ -28,7 +28,7 @@ test('activity lines use display names, never raw ids or stored personas', () =>
   assert.equal(t.activityLine({ kind: 'drain', agentId: 'b1', count: 2 }, name), 'Builder read 2 messages');
   assert.equal(t.activityLine({ kind: 'escalate', subject: 'Need a key' }, name), 'Asked you: Need a key');
   assert.equal(t.activityLine({ kind: 'approval', approve: false }, name), 'Approval denied');
-  assert.equal(t.activityLine({ kind: 'weird', secret: 'x' }, name), 'weird event');
+  assert.equal(t.activityLine({ kind: 'weird', secret: 'x' }, name), 'Something happened', 'an unknown kind shows neither its name nor its payload');
 });
 
 test('requests go to the lead agent with an optional suggestion', () => {
@@ -59,7 +59,7 @@ test('answers and dismissals keep humanQA fields outside the schema', () => {
 
 test('task sections show a read failure instead of an empty state', () => {
   for (const f of ['TasksSection.tsx', 'NeedsYouSection.tsx'])
-    assert.match(read(`src/renderer/src/nexus/agents/workbench/${f}`), /Could not read tasks: \{error\}/, f);
+    assert.match(read(`src/renderer/src/nexus/agents/workbench/${f}`), /Nexus could not read the tasks: \{error\}/, f);
   assert.match(read('src/renderer/src/nexus/agents/workbench/TeamSection.tsx'), /\{isLead && <EnginePicker/);
 });
 

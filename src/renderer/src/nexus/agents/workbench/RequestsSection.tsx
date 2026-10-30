@@ -43,12 +43,12 @@ export function RequestsSection({ draft, onDraft }: { draft: RequestDraft; onDra
         onDraft({ text: '', suggest: '' });
         // The seed this draft came from is spent: a remount must not refill the box.
         useStore.getState().clearDispatchSeed();
-        setResult(`Sent to the lead agent${suggestedLabel ? ` (suggesting ${suggestedLabel})` : ''}`);
+        setResult(`Sent to the lead AI helper${suggestedLabel ? ` (suggesting ${suggestedLabel})` : ''}`);
       } else {
-        setResult(`Could not send: ${res.error ?? 'unknown error'}`);
+        setResult(`Nexus could not send it: ${res.error ?? 'something went wrong'}`);
       }
     } catch (e) {
-      setResult(`Could not send: ${e instanceof Error ? e.message : String(e)}`);
+      setResult(`Nexus could not send it: ${e instanceof Error ? e.message : String(e)}`);
     } finally {
       setSending(false);
       if (clearTimer.current) clearTimeout(clearTimer.current);
@@ -62,7 +62,7 @@ export function RequestsSection({ draft, onDraft }: { draft: RequestDraft; onDra
         <header className="nxs__head">
           <h3 className="nxs__title">Requests</h3>
           <p className="nxs__lede" id={helpId}>
-            The lead agent breaks a request into tasks, writes the task cards and assigns them. Nothing is sent until you press Send to lead agent.
+            The lead AI helper splits a request into tasks and gives them to other AI helpers. Nothing is sent until you press “Send to the lead AI helper”.
           </p>
         </header>
         <form
@@ -70,28 +70,28 @@ export function RequestsSection({ draft, onDraft }: { draft: RequestDraft; onDra
           onSubmit={(e) => { e.preventDefault(); void send(); }}
         >
           <div className="nxs-field">
-            <label className="nxs-label" htmlFor={textId}>Request for the lead agent</label>
+            <label className="nxs-label" htmlFor={textId}>Request for the lead AI helper</label>
             <textarea
               id={textId}
               className="nxs-textarea"
               rows={6}
               value={draft.text}
               aria-describedby={helpId}
-              placeholder="Describe the work… (Ctrl+Enter to send)"
+              placeholder="Describe what you want done. Press Ctrl+Enter to send."
               onChange={(e) => onDraft({ ...draft, text: e.target.value })}
               onKeyDown={(e) => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); void send(); } }}
             />
           </div>
           <div className="nxs-field">
-            <label className="nxs-label" htmlFor={suggestId}>Suggest an agent (optional)</label>
+            <label className="nxs-label" htmlFor={suggestId}>Suggest an AI helper (optional)</label>
             <select id={suggestId} className="nxs-select" value={draft.suggest} onChange={(e) => onDraft({ ...draft, suggest: e.target.value })}>
-              <option value="">No suggestion; the lead agent decides</option>
+              <option value="">No suggestion; the lead AI helper decides</option>
               {others.map((a) => <option key={a.id} value={a.id}>{labelOf(a.id)}</option>)}
             </select>
           </div>
           <div className="nxs-actions">
             <Button type="submit" variant="primary" icon="send" disabled={!draft.text.trim() || sending}>
-              {sending ? 'Sending…' : 'Send to lead agent'}
+              {sending ? 'Sending…' : 'Send to the lead AI helper'}
             </Button>
             <span className="nxs__status" role="status">{result ?? ''}</span>
           </div>

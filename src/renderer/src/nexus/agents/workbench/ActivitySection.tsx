@@ -41,7 +41,7 @@ export function ActivitySection() {
         <section className="nxs__col" aria-labelledby={`${uid}-log`}>
           <header className="nxs__head">
             <h3 className="nxs__title" id={`${uid}-log`}>Activity</h3>
-            <p className="nxs__lede">The last 60 events, newest first.</p>
+            <p className="nxs__lede">The last 60 things that happened, newest first.</p>
           </header>
           {loaded && entries.length === 0 ? (
             <p className="nxs__note">No activity yet.</p>
@@ -59,7 +59,7 @@ export function ActivitySection() {
         <section className="nxs__col" aria-labelledby={`${uid}-board`}>
           <header className="nxs__head">
             <h3 className="nxs__title" id={`${uid}-board`}>Board</h3>
-            <p className="nxs__lede">Notes the agents keep for each other.</p>
+            <p className="nxs__lede">Notes the AI helpers leave for each other.</p>
           </header>
           {loaded && <pre className="nxa-board" tabIndex={0} aria-label="Board">{board || 'The board is empty.'}</pre>}
         </section>

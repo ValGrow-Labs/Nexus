@@ -33,8 +33,8 @@ export function WorkbenchTerminal({ agent, fullscreen, isLead, onPtyStream }: {
           icon="terminal"
           title="No live terminal"
           body={isLead
-            ? 'The lead agent has no live terminal. It starts when Nexus opens your home folder.'
-            : 'This agent has no live terminal. Add an agent to get one.'}
+            ? 'The lead AI helper has no live terminal right now. Start it from the Agents page.'
+            : 'This AI helper has no live terminal. Add an AI helper to get one.'}
         />
       </div>
     );
