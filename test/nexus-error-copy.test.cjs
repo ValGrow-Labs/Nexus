@@ -154,3 +154,15 @@ test('R8c the hard cases say what happened and the safe next step in plain words
   // Every refusal that asks the person to go somewhere names the one place.
   for (const [k, v] of Object.entries(E.AGENT_REASON_TEXT)) assert.doesNotMatch(v, /\bSetup\b/, `${k} names the old Setup`);
 });
+
+test('R8c the git write failures a task can end with (the run list shows them) read in plain words, and the ones the envelope also words say the same thing', () => {
+  const { GIT_FAILURE_TEXT } = loadTs('src/main/nexus/exec/recovery.ts');
+  const { AGENT_REASON_MESSAGES } = loadTs('src/main/nexusIpc/envelope.ts');
+  const GIT_JARGON = /\b(branch(es)?|worktree|fast-forward|working tree|uncommitted|untracked|refs?|repository|snapshot|commits?|merge[ds]?|symbolic link|junction|GiB|MiB|nested git)\b/i;
+  for (const [k, v] of Object.entries(GIT_FAILURE_TEXT)) {
+    plain(v, `GIT_FAILURE_TEXT.${k}`);
+    assert.doesNotMatch(v, GIT_JARGON, `${k}: ${v}`);
+  }
+  for (const k of ['git_missing', 'merge_conflict', 'branch_mismatch', 'not_fast_forward', 'base_moved', 'integration_diverged'])
+    assert.equal(GIT_FAILURE_TEXT[k], AGENT_REASON_MESSAGES[k], `${k}: one sentence everywhere`);
+});

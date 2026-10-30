@@ -76,7 +76,7 @@ test('RB2 (B6): an accept still waiting to be merged is never resynced over; a d
   assert.equal(j.state, 'failed');
   assert.equal(JSON.parse(j.error_json).code, 'integration_diverged');
   assert.equal(JSON.parse(j.error_json).message, GIT_FAILURE_TEXT.integration_diverged);
-  assert.match(GIT_FAILURE_TEXT.integration_diverged, /both moved on/);
+  assert.match(GIT_FAILURE_TEXT.integration_diverged, /have both changed in different ways/);
   assert.equal(integrationHead(world), S, 'nothing was touched');
   assert.equal(resyncRows(w).length, 0);
   await assert.rejects(merge(world, () => true), (e) => e.detail.reason === 'not_fast_forward');

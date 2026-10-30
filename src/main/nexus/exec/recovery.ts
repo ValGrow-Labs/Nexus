@@ -328,27 +328,27 @@ const REASON_TEXT: Record<string, string> = {
  * code and this sentence: shown as it is, never as a raw code.
  */
 export const GIT_FAILURE_TEXT: Readonly<Record<string, string>> = Object.freeze({
-  git_missing: 'Git is not installed on this computer.',
-  bad_task: 'Nexus refused the git work: its plan was malformed.',
-  repo_layout_unsupported: 'This project folder is not a plain git repository (its .git is not a folder), so Nexus cannot make a worktree for it.',
-  repo_empty: 'The repository has no commits yet. Make a first commit, then ask again.',
-  branch_missing: 'The branch Nexus works from is no longer in the repository. Take a new repository snapshot, then ask again.',
-  worktree_tampered: 'The link from the session worktree to the repository was changed, so Nexus stopped and committed nothing.',
-  worktree_conflict: 'Git could not give the session worktree its expected name, so Nexus stopped.',
-  link_or_gitlink: 'The change holds a symbolic link or a nested repository entry, which Nexus does not commit.',
-  ref_moved: 'A Nexus ref moved while the work ran, so nothing was changed. Try again.',
-  unknown_commit: 'A commit Nexus recorded is no longer in the repository.',
-  merge_conflict: 'The change does not merge cleanly onto the accepted work.',
-  tree_dirty: 'Your working tree has uncommitted changes or an operation in progress, so nothing was merged.',
-  branch_mismatch: 'Another branch is checked out than the one the accepted work is for, so nothing was merged.',
-  not_fast_forward: 'Your branch has moved on, so the accepted work is no longer a fast-forward. Nothing was merged.',
-  base_moved: 'The ground this change was made on has moved; ask the agent to redo it on your current code.',
-  integration_diverged: 'Your branch and the accepted work have both moved on, so Nexus cannot start from your latest code. Merge the accepted work in your own tools, then ask again.',
-  git_failed: 'Git could not complete the work; nothing was changed.',
-  symlink_in_worktree: 'The session worktree holds a symbolic link or junction, so Nexus stopped and committed nothing.',
-  nested_repo: 'The session worktree holds a nested git repository, so Nexus stopped and committed nothing.',
-  worktree_too_large: 'The session worktree is larger than Nexus allows (8 GiB), so nothing was committed.',
-  file_too_large: 'A file in the session worktree is larger than Nexus allows (50 MiB), so nothing was committed.'
+  git_missing: 'Git, a free program Nexus needs, is not installed on this computer. Install it, then try again.',
+  bad_task: 'Nexus stopped this step because its own instructions were not in the right form.',
+  repo_layout_unsupported: "This project's git information is not stored in a normal folder, so Nexus cannot make a safe copy of the project.",
+  repo_empty: 'This project has no saved versions yet. Save a first version in git, then ask again.',
+  branch_missing: "Your project's main version, the one Nexus works from, is no longer there. Save a new starting point, then ask again.",
+  worktree_tampered: "The link between the AI helper's safe copy and your project was changed, so Nexus stopped and saved nothing.",
+  worktree_conflict: "Git could not give the AI helper's safe copy the name Nexus expected, so Nexus stopped.",
+  link_or_gitlink: 'The changes include a shortcut to another place or a whole project inside your project, which Nexus does not save.',
+  ref_moved: "Something in Nexus's saved copy changed while the work ran, so nothing was changed. Try again.",
+  unknown_commit: 'A saved version that Nexus recorded is no longer in your project.',
+  merge_conflict: 'These changes do not fit together with the changes you kept earlier, so they were not kept.',
+  tree_dirty: "Some of your project's files have changes that are not saved in its history yet, or another git action is in progress, so nothing was added. Save or undo those changes, then try again.",
+  branch_mismatch: 'Your project is switched to a different version than the one these changes were made for, so nothing was added.',
+  not_fast_forward: 'Your project has changed since the AI helper started, so these changes cannot be added cleanly. Nothing was added.',
+  base_moved: 'Your project changed after the AI helper started. Ask the AI helper to do the work again on your latest project.',
+  integration_diverged: "Your project and Nexus's saved copy have both changed in different ways, so the AI helper cannot start from your latest project. Nothing was changed. The safe next step is to ask a developer to bring the two together, then ask again.",
+  git_failed: 'Git could not finish the work. Nothing was changed.',
+  symlink_in_worktree: "The AI helper's safe copy holds a shortcut to another place, so Nexus stopped and saved nothing.",
+  nested_repo: "The AI helper's safe copy holds a project inside the project, so Nexus stopped and saved nothing.",
+  worktree_too_large: "The AI helper's safe copy is larger than Nexus allows (about 8 GB), so nothing was saved.",
+  file_too_large: "A file in the AI helper's safe copy is larger than Nexus allows (about 50 MB), so nothing was saved."
 });
 const reasonError = (reason: string): { code: string; message: string } => ({ code: reason, message: REASON_TEXT[reason] ?? 'the app restarted' });
 

@@ -36,7 +36,7 @@ test('RD1 (base_moved): the user amends away a commit the reviewed change sat on
   const { p, r, job } = await acceptWith(world, c.versionId, H2);
   assert.equal(r.refused, 'base_moved');
   await assert.rejects(p, (e) => e.code === 'conflict' && e.detail.reason === 'base_moved' && e.message === GIT_FAILURE_TEXT.base_moved);
-  assert.match(GIT_FAILURE_TEXT.base_moved, /ground this change was made on has moved; ask the agent to redo it on your current code/);
+  assert.match(GIT_FAILURE_TEXT.base_moved, /Your project changed after the AI helper started. Ask the AI helper to do the work again on your latest project/);
   assert.equal(JSON.parse(jobRow(w, job.id).error_json).code, 'base_moved');
   assert.equal(integrationHead(world), before, 'the ref did not move: nothing was merged (x.txt did not come back)');
   assert.equal(w.db.prepare('SELECT COUNT(*) AS n FROM change_set_accepts').get().n, 0);
