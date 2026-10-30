@@ -227,3 +227,33 @@
 /* A visible rule above the AI helper line, so the next-step box, the helper line and the progress row read as separate parts. */
 .nx-ag__head { border-top: 1px solid var(--nx-divider); padding-top: var(--nx-s2); }
 .nx-ag__next { border-color: var(--nx-border); border-left-color: var(--nx-ink); }
+/* The AI helper's conversation is bounded: about 40% of the window (never under 200px) with its own scroll, newest at the bottom, so it can
+   never push the work area off the page. Idle, it is one line: the status, the last reply's first words and "Show conversation". */
+.nx-ag__head { flex-wrap: nowrap; align-items: baseline; }
+.nx-ag__last { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--nx-text-2); font-size: 12.5px; }
+.nx-ag__reply { display: block; margin-top: var(--nx-s1); padding-left: var(--nx-s2); border-left: 2px solid var(--nx-border); white-space: pre-wrap; overflow-wrap: anywhere; }
+.nx-ag__earlier { margin-top: var(--nx-s2); }
+.nx-ag__earlier > summary { cursor: pointer; font: 600 12.5px var(--nx-font); color: var(--nx-text-2); }
+
+/* The docked AI helper (right side of the project page). */
+.nx-dock { flex: none; position: relative; display: flex; flex-direction: column; min-height: 0; border-left: 1px solid var(--nx-border); background: var(--nx-surface); }
+.nx-dock[hidden] { display: none; }
+.nx-dock__edge { position: absolute; left: -4px; top: 0; bottom: 0; width: 8px; cursor: col-resize; z-index: 3; touch-action: none; }
+.nx-dock__edge:hover, .nx-dock__edge:focus-visible { background: var(--nx-border-strong); }
+.nx-dock__bar { display: flex; align-items: center; justify-content: space-between; padding: var(--nx-s1) var(--nx-s3); border-bottom: 1px solid var(--nx-divider); }
+.nx-dock__title { font: 700 13px var(--nx-font); }
+.nx-ag--dock { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; gap: 0; }
+.nx-ag__statusline { display: grid; gap: 2px; padding: var(--nx-s2) var(--nx-s3); border-bottom: 1px solid var(--nx-divider); flex: none; }
+.nx-ag__statusline[data-tone="waiting"], .nx-ag__statusline[data-tone="review"] { border-left: 4px solid var(--nx-ink); }
+.nx-ag__chat { flex: 1 1 auto; min-height: 120px; overflow-y: auto; padding: var(--nx-s3); display: grid; gap: var(--nx-s2); align-content: start; font-size: 12.5px; }
+.nx-ag__chatlist { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--nx-s2); }
+.nx-ag__bubble { display: grid; gap: 2px; padding: var(--nx-s2); border: 1px solid var(--nx-border); border-radius: var(--nx-r-obj); }
+.nx-ag__bubble[data-from="you"] { background: var(--nx-sunken); }
+.nx-ag__input { flex: none; border-top: 1px solid var(--nx-border); padding: var(--nx-s2) var(--nx-s3); background: var(--nx-surface); }
+.nx-ag__input .nx-intent--inline { margin: 0; }
+.nx-intent__details details { display: inline; }
+.nx-dock-rail { flex: none; width: 44px; display: flex; flex-direction: column; align-items: center; padding-top: var(--nx-s3); border-left: 1px solid var(--nx-border); background: var(--nx-surface); }
+.nx-dock-rail__btn { position: relative; width: 34px; height: 34px; display: grid; place-items: center; border: 1px solid var(--nx-border-strong); border-radius: var(--nx-r-ctl); background: var(--nx-surface); color: var(--nx-ink); cursor: pointer; }
+.nx-dock-rail__dot { position: absolute; top: -3px; right: -3px; width: 10px; height: 10px; border-radius: 50%; background: var(--nx-border-strong); border: 2px solid var(--nx-surface); }
+.nx-dock-rail__dot[data-attention="true"] { background: var(--nx-ink); }
+.nx-dock--drawer { position: fixed; right: 12px; top: calc(var(--nx-bar-h) + 8px); bottom: 20px; width: min(420px, calc(100vw - 24px)); z-index: 30; border: 1px solid var(--nx-border-strong); box-shadow: var(--nx-shadow-float); }

@@ -109,8 +109,8 @@ test('PH4 every ending says what happened in plain words and gives one next step
   assert.equal(done.text, 'The AI helper handed in its suggested changes.');
   assert.equal(done.next, 'Look over the suggested changes. Press “Looks good” if you are happy with them.');
   const none = end({ state: 'partial', outcome: 'no_change', headline: 'checks_could_not_run' });
-  assert.deepEqual([none.tone, none.title, none.text], ['no_change', 'No changes', 'The AI helper made no changes.']);
-  assert.equal(none.next, 'Ask again and say more about what you want.');
+  assert.deepEqual([none.tone, none.title, none.text], ['no_change', 'No changes', 'The AI helper answered but did not suggest changes.']);
+  assert.equal(none.next, 'Ask again, or describe a change you want.');
   const early = end({ state: 'partial', outcome: null, headline: 'checks_could_not_run' });
   assert.deepEqual([early.tone, early.title], ['stopped', 'Stopped early']);
   assert.match(early.text, /Nexus did not keep a record of what it changed/);
@@ -359,6 +359,6 @@ test('PH11 every sentence the panel, the log, the task list and the request box 
   assert.match(A.ISOLATION_NOTE, /Add to my project/);
   // The panel's own words.
   const tsx = src('agent/AgentPanel.tsx');
-  for (const t of ['>AI helper</h2>', 'Ask in the box above', 'Save a starting point', 'Show what happened', 'Conversations with the AI helper', 'What the AI helper needs']) assert.ok(tsx.includes(t), t);
+  for (const t of ['aria-label="AI helper"', 'Ask in the box above', 'Save a starting point', 'Show what happened', 'Conversations with the AI helper', 'What the AI helper needs']) assert.ok(tsx.includes(t), t);
   assert.doesNotMatch(tsx, />Agent<|Ask the agent|Take a repository snapshot|Open Setup|Show log|Hide log|Send to the agent|Message to the agent/);
 });

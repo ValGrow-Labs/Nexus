@@ -63,9 +63,11 @@ export function usageLine(u: AgentUsageView | null): string | null {
 }
 
 /** Today's usage on the setup row and the panel. */
-export function usageTodayLine(u: AgentSetupView['usageToday']): string {
+export function usageTodayLine(u: AgentSetupView['usageToday'], service?: string | null): string {
+  const who = service ? `AI service: ${service}. ` : '';
+  const zero = service && u.turns > 0 && u.usdCents === 0 ? ' $0.00 means the AI service did not report a cost.' : '';
   if (u.turns === 0 && u.usdCents === 0) return 'No request to the AI helper has started today.';
-  return `Today: ${count(u.turns, 'request', 'requests')} started, cost ${u.estimated ? `about ${money(u.usdCents)} (${USAGE_ESTIMATED_LABEL})` : `${money(u.usdCents)} (${USAGE_LABEL})`}.`;
+  return `${who}Today: ${count(u.turns, 'request', 'requests')} started, cost ${u.estimated ? `about ${money(u.usdCents)} (${USAGE_ESTIMATED_LABEL})` : `${money(u.usdCents)} (${USAGE_LABEL})`}.${zero}`;
 }
 
 // ---------- the time a request has been running ----------
@@ -82,11 +84,38 @@ export function elapsedText(ms: number): string {
   return r === 0 ? count(h, 'hour', 'hours') : `${count(h, 'hour', 'hours')} ${count(r, 'minute', 'minutes')}`;
 }
 
+// ---------- what the AI helper said and what it is doing ----------
+
+/** The AI helper's last reply in a conversation, as plain text (whitespace folded, at most 600 characters), or null when it said nothing. */
+export function replyOf(d: Pick<SessionDetailView, 'messages'> | null | undefined): string | null {
+  const m = d ? [...d.messages].reverse().find((x) => x.from === 'agent' && x.text.trim() !== '') : undefined;
+  if (!m) return null;
+  const t = m.text.split(/[\t\n\r ]+/).join(' ').trim();
+  return t.length > 600 ? `${t.slice(0, 599)}…` : t;
+}
+/** The first words of a reply for the one-line idle summary. */
+export const shortReply = (r: string | null, n = 80): string | null => (r === null ? null : r.length > n ? `${r.slice(0, n - 1).trimEnd()}…` : r);
+
+/** What the AI helper is doing now, in plain words, from its latest step (and the start of its latest message when it has one). */
+export function liveStepLine(d: Pick<SessionDetailView, 'toolCalls' | 'messages'> | null | undefined): string | null {
+  if (!d) return null;
+  const c = d.toolCalls.length > 0 ? d.toolCalls[d.toolCalls.length - 1] : null;
+  const step = c ? toolLabel(c.tool) : null;
+  const said = shortReply(replyOf(d), 100);
+  if (!step && !said) return null;
+  return [step ? `${step}.` : null, said ? `It said: “${said}”` : null].filter(Boolean).join(' ');
+}
+
 // ---------- the panel ----------
 
 const SESSION_WORD: Record<SessionView['status'], string> = {
   open: 'Ready for your next message', running: 'Working', awaiting_approval: 'Waiting for you', completed: 'Ended', failed: 'Stopped: it could not go on',
   cancelled: 'Stopped', timed_out: 'Ran out of time', interrupted: 'Stopped early'
+};
+
+const SESSION_WHY: Partial<Record<SessionView['status'], string>> = {
+  interrupted: 'Stopped early: Nexus was closed or restarted while the AI helper was working.', failed: 'It could not go on after a problem.',
+  timed_out: 'It ran past its time limit.', cancelled: 'You or Nexus stopped it.'
 };
 
 export interface SessionRowView {
@@ -96,6 +125,8 @@ export interface SessionRowView {
   turn: string | null;
   /** How many requests the conversation has had ("2 requests"). */
   turns: string;
+  /** One plain line for a conversation that ended early or badly (why); null otherwise. */
+  why: string | null;
   live: boolean;
   canSend: boolean;
   canStop: boolean;
@@ -115,6 +146,8 @@ export interface PanelEnding {
   text: string;
   /** One next step; null when the sentence above already says what to do. */
   next: string | null;
+  /** What the AI helper said back (plain text, bounded) when the request ended with an answer and no changes; null otherwise. */
+  reply?: string | null;
   /** True when "Save a starting point" is the way forward (a button next to the sentence). */
   snapshot: boolean;
 }
@@ -169,6 +202,8 @@ export interface AgentPanelInput {
   availability: ExecAvailability;
   /** Null while unread. */
   sessions: readonly SessionView[] | null;
+  /** What the newest conversation's AI helper last said (see replyOf), for the ending of the newest request. */
+  reply?: string | null;
   /** The failure of the sessions read, if it failed. */
   sessionsFail: { code: string; reason?: string; subReason?: string } | null;
   /** The live request jobs by id (for the waiting reason, the progress line and how the newest one ended). */
@@ -234,7 +269,7 @@ export function agentWaiting(j: PanelJob): PanelWaiting | null {
 
 const ENDING_TITLE = { handed_in: 'Changes ready to look over', no_change: 'No changes', failed: 'Did not work', stopped: 'Stopped' } as const;
 /** How a request that is no longer live ended, with its reason in plain words and one next step. */
-export function agentEnding(j: PanelJob): PanelEnding | null {
+export function agentEnding(j: PanelJob, reply: string | null = null): PanelEnding | null {
   if (LIVE_JOB_STATES.includes(j.state)) return null;
   const text = agentTurnHeadline(j);
   const next = agentTurnNext(j);
@@ -242,7 +277,11 @@ export function agentEnding(j: PanelJob): PanelEnding | null {
     return { tone: 'failed', title: ENDING_TITLE.failed, text: `${text}.`, next, snapshot: j.outcome === 'branch_unknown' || j.error?.code === 'branch_unknown' };
   }
   if (j.state === 'completed' && j.outcome !== 'no_change') return { tone: 'handed_in', title: ENDING_TITLE.handed_in, text: `${text}.`, next, snapshot: false };
-  if ((j.state === 'completed' || j.state === 'partial') && j.outcome === 'no_change') return { tone: 'no_change', title: ENDING_TITLE.no_change, text: `${text}.`, next, snapshot: false };
+  // A request that only answered is not a failure: it says so, and shows the answer.
+  if ((j.state === 'completed' || j.state === 'partial') && j.outcome === 'no_change') {
+    return { tone: 'no_change', title: reply ? 'The AI helper replied' : ENDING_TITLE.no_change, text: 'The AI helper answered but did not suggest changes.', reply,
+      next: 'Ask again, or describe a change you want.', snapshot: false };
+  }
   return { tone: 'stopped', title: j.state === 'partial' || j.state === 'interrupted' ? 'Stopped early' : j.state === 'timed_out' ? 'Ran out of time' : ENDING_TITLE.stopped, text: `${text}.`, next, snapshot: false };
 }
 
@@ -288,7 +327,7 @@ export function agentPanelModel(i: AgentPanelInput): AgentPanelView {
     const waiting = job && (job.state === 'queued' || job.state === 'retry_scheduled' || job.state === 'leased') && waitPhaseText(job.phase) !== null;
     return {
       id: s.id, word: waiting ? 'Waiting' : idle ? SESSION_WORD.open : SESSION_WORD[s.status] ?? 'Status unknown', turn,
-      turns: count(s.turns, 'request', 'requests'), live, canSend: idle, canStop: live, canEnd: idle
+      turns: count(s.turns, 'request', 'requests'), why: SESSION_WHY[s.status] ?? null, live, canSend: idle, canStop: live, canEnd: idle
     };
   });
   const ss = i.sessions ?? [];
@@ -304,12 +343,12 @@ export function agentPanelModel(i: AgentPanelInput): AgentPanelView {
   const now = i.now ?? Date.now();
   const waitingForYou = live ? agentWaiting(live) : null;
   const progress = live && !waitingForYou ? agentProgress(live, now) : null;
-  const ending = newest && !live ? agentEnding(newest) : null;
+  const ending = newest && !live ? agentEnding(newest, i.reply ?? null) : null;
   return {
     kind: canAsk ? 'ready' : 'setup',
     lead: canAsk ? ISOLATION_NOTE : blockers[0],
     blockers, canAsk, setup: !canAsk, chooseRuntime, working, progress, waiting: waitingForYou, ending, sessions: rows,
-    usageToday: a && a.consent.live ? usageTodayLine(a.usageToday) : null,
+    usageToday: a && a.consent.live ? usageTodayLine(a.usageToday, a.label ?? null) : null,
     note: canAsk && staleButAskable ? RECHECK_ON_SEND_TEXT : canAsk && a !== null && a.state === 'ready' && a.signedIn !== 'yes' && a.kind !== HOSTED_MODEL_KIND ? SIGNIN_UNCONFIRMED_TEXT : null, readError, failure
   };
 }

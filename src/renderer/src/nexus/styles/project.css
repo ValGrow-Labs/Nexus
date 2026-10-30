@@ -27,7 +27,7 @@
 /* The bench never gives up below 340px: on a short window the workbench scrolls instead (the notices and the open agent panel sit above it). */
 .nx-workbench { overflow-y: auto; }
 .nx-workbench > .nx-spine { flex: none; }
-.nx-bench { display: grid; grid-template-columns: 48px minmax(0, 1fr) 280px; min-height: 340px; flex: 1 0 340px; }
+.nx-bench { display: grid; grid-template-columns: 48px minmax(0, 1fr); min-height: 340px; flex: 1 0 340px; }
 .nx-rail { display: grid; align-content: start; gap: var(--nx-s1); padding: var(--nx-s2) 6px; border-right: 1px solid var(--nx-line); background: var(--nx-surface); }
 .nx-rail__item { height: 34px; display: grid; place-items: center; border: 0; border-radius: var(--nx-r-ctl); background: none; color: var(--nx-text-3); cursor: pointer; }
 .nx-rail__item[aria-current="page"] { background: var(--nx-sunken); color: var(--nx-ink); box-shadow: inset 2px 0 0 var(--nx-ink); }
@@ -77,7 +77,7 @@
   .nx-bench > .nx-passport { display: none; }
   .nx-passport-btn { display: inline-flex; }
 }
-@media (min-width: 1280px) { .nx-passport-btn { display: none; } }
+
 @media (max-width: 767px) {
   .nx-rail [data-desktop-only] { display: none; }
   .nx-surface { padding: var(--nx-s4) var(--nx-s4) 140px; }
@@ -123,3 +123,9 @@
 .nx-bench { border-bottom: 1px solid var(--nx-divider); }
 /* When the side panel can scroll further, its bottom fades out: a half-shown last item reads as "scroll for more", not "cut off". */
 .nx-passport::after { content: ""; position: sticky; bottom: calc(-1 * var(--nx-s4) - 24px); height: 32px; margin-top: -32px; background: linear-gradient(to bottom, transparent, var(--nx-surface)); pointer-events: none; }
+
+/* The project page is two columns: the work area (left) and the AI helper dock (right), both under the header and the progress row. */
+.nx-pbody { flex: 1 0 340px; min-height: 340px; display: flex; min-width: 0; }
+.nx-pmain { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; min-height: 0; }
+.nx-pmain > .nx-bench { flex: 1 1 auto; min-height: 340px; }
+.nx-rail .nx-passport-btn { display: inline-flex; margin: var(--nx-s2) 0 0; height: auto; padding: 6px 2px; font-size: 11px; justify-content: center; }

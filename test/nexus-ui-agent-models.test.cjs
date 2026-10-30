@@ -118,7 +118,8 @@ test('UA11 no host or model string in agent/** or the change-set views; only the
   const h = health({ agent: agentView({ label: 'Acme Agent' }) });
   const hosts = ['api.example.test:443'];
   const outs = [];
-  const walkStrings = (v) => { if (typeof v === 'string') outs.push(v); else if (Array.isArray(v)) v.forEach(walkStrings); else if (v && typeof v === 'object') Object.values(v).forEach(walkStrings); };
+  const walkStrings = (v) => { if (typeof v === 'string') outs.push(v); else if (Array.isArray(v)) v.forEach(walkStrings); else if (v && typeof v === 'object') Object.entries(v).forEach(([k, x]) => { if (k !== 'usageToday') walkStrings(x); }); };
+  // (the usage line names the AI service on purpose: that is asked for, and it is the one place besides the setup row)
   walkStrings(A.agentPanelModel({ health: h, availability: READY, sessions: [session({ status: 'running', liveJobId: 'J1' })], sessionsFail: null,
     jobs: new Map([['J1', job({ state: 'queued', phase: 'waiting:consent' })]]) }));
   walkStrings(A.agentPanelModel({ health: health({ agent: agentView({ consent: { live: false, caps: null, hostsCount: 1, grantedAt: null } }) }), availability: READY, sessions: [], sessionsFail: null }));
@@ -526,7 +527,7 @@ test('source pins: the merge asks only the channel (the dialog is main\'s), Acce
   assert.match(sheet, /consentHostsOf\(/);
   assert.match(sheet, /r\.consent/);
   // The panel sits in the bench, the change sets in the Changes tool above the uncommitted review, the viewer in the Folio.
-  assert.match(src('project/ProjectBench.tsx'), /<AgentPanel /);
+  assert.match(src('project/ProjectBench.tsx'), /<AiDock /);
   assert.match(src('review/ReviewSurface.tsx'), /<ChangeSets /);
   assert.match(src('project/kindViewers.tsx'), /case 'change_set'/);
 });
@@ -630,7 +631,7 @@ test('R4-C1 a session main keeps `running` with no live turn reads "Ready for yo
   assert.match(src('intent/IntentLine.tsx'), /continuableSession\(list\.data\)/);
   assert.match(src('intent/IntentLine.tsx'), /nexusClient\.sessionsList\(\{ projectId \}\)/);
   // The panel opens itself only for a live turn.
-  assert.match(src('agent/AgentPanel.tsx'), /if \(panel\.working \|\| repoWaiting\.length > 0\) setOpen\(true\)/);
+  assert.match(src('agent/AgentPanel.tsx'), /const needsLook = panel\.working !== null \|\| repoWaiting\.length > 0/);
 });
 
 test('R4-I1 the program is "signed in" only when the view says so; an unreadable sign-in is said so', () => {
@@ -758,7 +759,7 @@ test('R4-minors copy and hygiene: merge copy, no raw ids, hashed intent keys, pl
   const failed = A.agentPanelModel({ health: health(), availability: READY, sessions: null, sessionsFail: { code: 'internal' } });
   assert.match(failed.readError, /could not be completed/);
   const panelSrc = src('agent/AgentPanel.tsx') + src('project/ChangeSetReview.tsx');
-  assert.ok((panelSrc.match(/ariaExpanded=/g) || []).length >= 3);
+  assert.ok((panelSrc.match(/ariaExpanded=/g) || []).length >= 2);
   assert.match(src('project/ChangeSetReview.tsx'), /commentBox\.current\?\.focus\(\)/);
 });
 
@@ -1135,7 +1136,7 @@ test('V9e-1 one box says what is happening and the one thing to do next; a reque
 test('V9e-2 the page order and plain words: header, notice strip (only when something blocks), progress closed by default; the disk advice stays in Get this computer ready', () => {
   const bench = src('project/ProjectBench.tsx');
   const iHeader = bench.indexOf('<ProjectHeader'); const iStrip = bench.indexOf('<div className="nx-xstrip">'); const iProg = bench.indexOf('<ProgressSection>'); const iBench = bench.indexOf('<div className="nx-bench">');
-  assert.ok(iHeader > 0 && iHeader < iStrip && iStrip < iProg && iProg < iBench);
+  assert.ok(iHeader > 0 && iHeader < iProg && iProg < iStrip && iStrip < iBench, 'nothing about the AI helper is stacked above the work area: it is the dock on the right');
   assert.ok(src('project/ProgressSection.tsx').includes('useState(false)'), 'closed by default');
   assert.ok(src('components/ExecutionNotice.tsx').includes("availability.kind === 'ready') return null"), 'a recommendation is not shown on the project page');
   const base = { kind: 'artifact', artifactKind: 'repository', name: 'Repository', versionNo: 1, status: 'active', isCurrent: true };
@@ -1158,13 +1159,74 @@ test('V9f the request bar has its own row under the page and never covers conten
   assert.ok(pc.includes('padding: var(--nx-s6) var(--nx-s6) 120px'), 'the work area keeps room under its last line');
 });
 
-test('V9g the project page has no fixed bottom bar: its request box is inside the next-step box, drawn in the flow; only the workspace page docks the line', () => {
+test('V9g the project page has no fixed bottom bar and no helper stack on top: the AI helper is a dock on the right with the request box pinned at its bottom; only the workspace page docks the line', () => {
   const shell = fs.readFileSync(path.join(NEXUS, 'NexusShell.tsx'), 'utf8');
   assert.ok(shell.includes("const docked = route.name === 'workspace';"));
   const panelSrc = src('agent/AgentPanel.tsx');
-  const card = panelSrc.slice(panelSrc.indexOf('nx-ag__next'), panelSrc.indexOf('nx-ag__head'));
-  assert.ok(card.includes('<IntentLine inline />'), 'the card contains the input');
+  const dockPart = panelSrc.slice(panelSrc.indexOf('nx-ag--dock'));
+  assert.ok(dockPart.indexOf('nx-ag__chat') < dockPart.indexOf('<IntentLine inline compact />'), 'the request box comes after the conversation: pinned at the bottom');
   assert.ok(src('project/ProjectBench.tsx').includes('{!hasSde && <section className="nx-ag__next"'), 'a project without the AI helper keeps its lead-helper box, inline');
   assert.ok(src('intent/IntentLine.tsx').includes("inline ? 'nx-intent nx-intent--inline'"));
   assert.ok(fs.readFileSync(path.join(NEXUS, 'styles', 'agent.css'), 'utf8').includes('.nx-intent--inline { position: static;'));
+});
+
+// ---------- V9j: the docked AI helper, its reply and its conversation ----------
+
+const DM = loadTs('src/renderer/src/nexus/agent/dockModel.ts');
+
+test('V9j-1 what the AI helper said back is shown; a request that only answered is not worded as a failure; the live line says what it is doing', () => {
+  const detail = (messages, toolCalls = []) => ({ messages, toolCalls });
+  const said = detail([{ seq: 1, ts: 1, from: 'user', text: 'hi', displayOnly: true }, { seq: 2, ts: 2, from: 'agent', text: 'Hi!   I can help.\n\nWhat would you like?', displayOnly: true }]);
+  assert.equal(A.replyOf(said), 'Hi! I can help. What would you like?');
+  assert.equal(A.replyOf(detail([{ seq: 1, ts: 1, from: 'user', text: 'hi', displayOnly: true }])), null);
+  assert.equal(A.replyOf(detail([{ seq: 1, ts: 1, from: 'agent', text: 'x'.repeat(900), displayOnly: true }])).length, 600);
+  assert.equal(A.shortReply('a'.repeat(200), 80).length, 80);
+  const end = (reply) => A.agentEnding(job({ state: 'partial', outcome: 'no_change', headline: 'checks_could_not_run' }), reply);
+  assert.equal(end('Hi! I can help.').title, 'The AI helper replied');
+  assert.equal(end('Hi! I can help.').reply, 'Hi! I can help.');
+  assert.equal(end('Hi! I can help.').text, 'The AI helper answered but did not suggest changes.');
+  assert.equal(end(null).text, 'The AI helper answered but did not suggest changes.');
+  assert.equal(end(null).next, 'Ask again, or describe a change you want.');
+  const live = A.liveStepLine(detail([{ seq: 1, ts: 1, from: 'agent', text: 'Looking at the tests now', displayOnly: true }], [{ seq: 1, ts: 1, jobId: 'J', tool: 'write_file', ok: null, resultBytes: null }]));
+  assert.equal(live, 'Writing a file. It said: “Looking at the tests now”');
+  assert.equal(A.liveStepLine(null), null);
+  assert.ok(A.usageTodayLine({ usdCents: 0, turns: 1, estimated: false }, 'Claude Code').includes('$0.00 means the AI service did not report a cost.'));
+  assert.ok(A.usageTodayLine({ usdCents: 0, turns: 1, estimated: false }, 'Claude Code').startsWith('AI service: Claude Code. '));
+  assert.equal(A.usageTodayLine({ usdCents: 0, turns: 1, estimated: false }), 'Today: 1 request started, cost $0.00 (reported by the AI service).');
+});
+
+test('V9j-2 earlier conversations are folded away, a stopped one says why in one line, and the newest conversation is the one shown first', () => {
+  const rows = A.agentPanelModel({ health: health(), availability: READY, sessionsFail: null, sessions: [
+    session({ id: 'S1', status: 'interrupted', updatedAt: 1 }), session({ id: 'S2', status: 'running', updatedAt: 3 }), session({ id: 'S3', status: 'failed', updatedAt: 2 })] }).sessions;
+  assert.deepEqual(rows.map((r) => r.id), ['S2', 'S3', 'S1'], 'newest first');
+  assert.ok(rows.find((r) => r.id === 'S1').why.startsWith('Stopped early: Nexus was closed or restarted'));
+  assert.equal(rows.find((r) => r.id === 'S2').why, null);
+  const p = src('agent/AgentPanel.tsx');
+  assert.ok(p.includes('panel.sessions.slice(0, 1).map(row)') && p.includes('Earlier conversations ('));
+  assert.ok(p.includes('<details className="nx-ag__earlier">'), 'closed by default (a details element without open)');
+});
+
+test('V9j-3 the dock: width bounds, remembered state, the narrow breakpoint, collapse and keyboard', () => {
+  assert.equal(DM.clampDockWidth(100, 1920), 320);
+  assert.equal(DM.clampDockWidth(2000, 1920), 960);
+  assert.equal(DM.clampDockWidth(500, 1920), 500);
+  assert.equal(DM.clampDockWidth(900, 1267), 633, 'at most half the window');
+  assert.equal(DM.clampDockWidth(NaN, 1920), 420);
+  const mem = new Map(); const store = { getItem: (k) => (mem.has(k) ? mem.get(k) : null), setItem: (k, v) => { mem.set(k, v); } };
+  assert.deepEqual(DM.readDock(store), { width: 420, collapsed: false });
+  DM.writeDock(store, { width: 512.4, collapsed: true });
+  assert.deepEqual(DM.readDock(store), { width: 512, collapsed: true });
+  assert.deepEqual(DM.readDock({ getItem: () => '{bad json', setItem: () => {} }), { width: 420, collapsed: false });
+  assert.doesNotThrow(() => DM.writeDock({ getItem: () => null, setItem: () => { throw new Error('blocked'); } }, { width: 400, collapsed: false }));
+  assert.equal(DM.DOCK_NARROW_BREAKPOINT, 1100);
+  assert.equal(DM.DOCK_NARROW_QUERY, '(max-width: 1099px)');
+  const d = src('agent/AiDock.tsx');
+  assert.ok(d.includes("e.key.toLowerCase() === 'l'") && d.includes('Ctrl+L'));
+  assert.ok(d.includes('onDoubleClick={() => save({ ...state, width: DOCK_DEFAULT_WIDTH })}'));
+  assert.ok(d.includes('aria-label="AI helper"') && d.includes('role="separator"'));
+  const css = fs.readFileSync(path.join(NEXUS, 'styles', 'execution.css'), 'utf8');
+  assert.ok(css.includes('.nx-dock--drawer { position: fixed;'), 'a drawer over the page when narrow');
+  assert.ok(css.includes('.nx-ag__input { flex: none; border-top:'), 'the request box is pinned at the bottom');
+  assert.ok(src('project/ProjectBench.tsx').includes('<AiDock projectId'));
+  assert.ok(fs.readFileSync(path.join(NEXUS, 'styles', 'project.css'), 'utf8').includes('.nx-pbody { flex: 1 0 340px; min-height: 340px;'), 'the work area keeps at least 340px');
 });

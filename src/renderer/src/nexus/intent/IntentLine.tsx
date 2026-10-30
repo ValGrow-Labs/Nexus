@@ -26,7 +26,7 @@ function newRequestId(): string { requestSeq += 1; return `r-${Date.now()}-${req
  *  project that is ready, the lead AI helper everywhere else. A label and one plain line say which. `summoned`: mounted on demand
  *  (Ctrl/Cmd+J or an "Ask" button) on a route that does not dock it, so it takes focus on mount and can close. `inline`: drawn in the
  *  flow of the page (inside the project page's next-step box) instead of docked at the bottom. */
-export function IntentLine({ summoned = false, inline = false, onClose }: { summoned?: boolean; inline?: boolean; onClose?: () => void }) {
+export function IntentLine({ summoned = false, inline = false, compact = false, onClose }: { summoned?: boolean; inline?: boolean; compact?: boolean; onClose?: () => void }) {
   const port = useAssistant();
   const route = useRoute();
   const projects = useStore((s) => s.projects);
@@ -197,7 +197,9 @@ export function IntentLine({ summoned = false, inline = false, onClose }: { summ
       </div>
       {error && <p id={ids.error} className="nx-intent__error" role="alert">{error}</p>}
       <p id={ids.status} className="nx-intent__status">
-        <span>{words.explain}</span>
+        {compact
+          ? <span className="nx-intent__details">Works in a safe copy of your project. <details><summary>Details</summary>{words.explain}</details></span>
+          : <span>{words.explain}</span>}
         <span role="status">
           {sent && <> {sent.lead} <a href={sent.href}>{sent.label}</a></>}
         </span>

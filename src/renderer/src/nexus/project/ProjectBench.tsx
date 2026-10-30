@@ -37,7 +37,7 @@ import { ExecutionNotice } from '../components/ExecutionNotice';
 import { ExecutionSetupSheet } from '../components/ExecutionSetupSheet';
 import { JobLogSheet } from '../runs/JobLogSheet';
 import { ApprovalsSection } from './ApprovalsSection';
-import { AgentPanel } from '../agent/AgentPanel';
+import { AiDock } from '../agent/AiDock';
 import { RequirementSheet } from './RequirementSheet';
 import { FirstBuildLine } from './FirstBuildLine';
 import { firstBuildLine } from './firstBuildLineModel';
@@ -226,7 +226,8 @@ function Workbench({ project, tool }: { project: Project; tool: ProjectTool }) {
   useEffect(() => { setSelection({ kind: node.kind, label }); }, [node.kind, label, setSelection]);
   useEffect(() => () => setSelection(null), [setSelection]);
 
-  const wide = !useMedia('(max-width: 1279px)');
+  // The project's details (the old right-hand panel) open from the Details button now: the right side belongs to the AI helper dock.
+  const wide = false;
   const mobile = useMedia('(max-width: 767px)');
   const [detailsOpen, setDetailsOpen] = useState(false);
   const closeDetails = useCallback(() => setDetailsOpen(false), []);
@@ -332,26 +333,29 @@ function Workbench({ project, tool }: { project: Project; tool: ProjectTool }) {
     <div className="nx-workbench">
       {mobile && <MobileRuns projectId={project.id} />}
       <ProjectHeader name={project.name} kind={groups[0]?.label ?? 'Project'} git={git} />
-      <div className="nx-xstrip">
-        {firstLine && <FirstBuildLine line={firstLine} onOpen={execUi.openSetup} />}
-        <ExecutionNotice availability={availability} onSetup={execUi.openSetup} />
-        <ApprovalsSection projectId={project.id} except={hasSde ? ['repo.write_refs'] : []} />
-        {/* B2b: the AI helper is offered only where Software takes part: no other workspace claims to work yet. */}
-        {!hasSde && <section className="nx-ag__next" aria-label="Ask for what you want"><IntentLine inline /></section>}
-        {hasSde && <AgentPanel projectId={project.id} workspaceId="sde" reviewReady={reviewReady} onReview={() => navigate({ name: 'project', id: project.id, tool: 'changes' })} />}
-      </div>
       <ProgressSection>
         <Spine groups={groups} selectedId={tool === 'completion' || tool === 'runs' ? '' : node.id} onSelect={onSelect}
           line={line} onRetryLine={reloadArtifacts} truncated={artifactsTruncated} focusRequest={focusRequest} onFocused={focused} checks={checks} rails={rails} />
       </ProgressSection>
-      <div className="nx-bench">
-        <ToolRail projectId={project.id} rootPath={project.rootPath} tool={tool} hasChanges={hasChanges} onOpenTerminal={openTerminal}
-          extra={!wide && (
-            <button type="button" className="nx-passport-btn" aria-haspopup="dialog" aria-expanded={detailsOpen} onClick={() => setDetailsOpen(true)}>Details</button>
-          )} />
-        {!wide && notice && <p className="nx-passport__note" role="alert">{notice}</p>}
-        <FocusSurface tool={tool} project={project} node={sourceNode} git={git} onRetryGit={refresh} />
-        {wide && <Passport project={project} node={node} headSha={head?.sha ?? null} onRefreshProject={refreshProject} onOpenTerminal={openTerminal} notice={notice} artifacts={artifacts} onSave={onSave} onHandOff={onHandOff} />}
+      <div className="nx-pbody">
+        <div className="nx-pmain">
+        <div className="nx-xstrip">
+          {firstLine && <FirstBuildLine line={firstLine} onOpen={execUi.openSetup} />}
+          <ExecutionNotice availability={availability} onSetup={execUi.openSetup} />
+          <ApprovalsSection projectId={project.id} except={hasSde ? ['repo.write_refs'] : []} />
+          {!hasSde && <section className="nx-ag__next" aria-label="Ask for what you want"><IntentLine inline /></section>}
+        </div>
+        <div className="nx-bench">
+          <ToolRail projectId={project.id} rootPath={project.rootPath} tool={tool} hasChanges={hasChanges} onOpenTerminal={openTerminal}
+            extra={!wide && (
+              <button type="button" className="nx-passport-btn" aria-haspopup="dialog" aria-expanded={detailsOpen} onClick={() => setDetailsOpen(true)}>Details</button>
+            )} />
+          {!wide && notice && <p className="nx-passport__note" role="alert">{notice}</p>}
+          <FocusSurface tool={tool} project={project} node={sourceNode} git={git} onRetryGit={refresh} />
+          {wide && <Passport project={project} node={node} headSha={head?.sha ?? null} onRefreshProject={refreshProject} onOpenTerminal={openTerminal} notice={notice} artifacts={artifacts} onSave={onSave} onHandOff={onHandOff} />}
+        </div>
+        </div>
+      {hasSde && <AiDock projectId={project.id} workspaceId="sde" reviewReady={reviewReady} onReview={() => navigate({ name: 'project', id: project.id, tool: 'changes' })} />}
       </div>
       {!wide && (
         <Sheet open={detailsOpen} onClose={closeDetails} side={mobile ? 'bottom' : 'right'} labelledBy="nx-passport-title" focusHeading>

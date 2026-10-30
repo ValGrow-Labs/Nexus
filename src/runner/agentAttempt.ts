@@ -132,7 +132,7 @@ function redactEvent(e: RuntimeEvent): RuntimeEvent {
 function summaryOf(e: RuntimeEvent): string {
   switch (e.t) {
     case 'run.started': return `run started (${e.runRef})`;
-    case 'message.delta': return `message: ${e.text.length > 200 ? `${e.text.slice(0, 200)}…` : e.text}`;
+    case 'message.delta': return `message: ${e.text.length > 2000 ? `${e.text.slice(0, 2000)}…` : e.text}`;
     case 'tool.started': return `tool ${e.tool} started`;
     case 'tool.completed': return `tool call ${e.ok ? 'ok' : 'failed'} (${e.resultBytes} bytes)`;
     case 'approval.requested': return `approval requested: ${e.summary}`;
