@@ -354,16 +354,16 @@ test('DOC10-15 the preview verdict, the integration rewrite, the refresh bound a
   assert.match(section(56), /`no_session`/);
 });
 
-test('DOC10-16 the off reasons and their sentences, the five preview sentences and the 20 hashed allow-list lines are stated as the code has them', () => {
+test('DOC10-16 the off reasons and their sentences, the five preview sentences and the 19 hashed allow-list lines are stated as the code has them', () => {
   const read = (rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8').replace(/\r\n/g, '\n');
   const copy = read('src/renderer/src/nexus/data/errorCopy.ts');
   const s54 = section(54);
   const quoted = (name) => {
     const reasons = /AGENT_OFF_REASON_TEXT[^{]*\{([\s\S]*?)\}\);/.exec(copy);
     assert.ok(reasons, 'AGENT_OFF_REASON_TEXT found');
-    const m = new RegExp(`${name} = '([^']*)'`).exec(copy) || new RegExp(`\\b${name}: '([^']*)'`).exec(reasons[1]);
+    const m = new RegExp(`${name} = (?:'([^']*)'|"([^"]*)")`).exec(copy) || new RegExp(`\\b${name}: (?:'([^']*)'|"([^"]*)")`).exec(reasons[1]); // a sentence with an apostrophe is a double-quoted literal in the code: either quote style is read, and the sentence is still compared exactly
     assert.ok(m, `${name} found in errorCopy.ts`);
-    return m[1];
+    return m[1] ?? m[2] ?? m[3] ?? m[4];
   };
   for (const name of ['AGENT_OFF_TEXT', 'database', 'held', 'AGENT_ACTION_OFF_TEXT']) assert.ok(s54.includes(quoted(name)), `section 54 quotes ${name}`);
   assert.match(read('src/shared/nexus/ipc.ts'), /offReason\?: 'build' \| 'database' \| 'held' \| 'execution' \| null;/);
@@ -377,14 +377,14 @@ test('DOC10-16 the off reasons and their sentences, the five preview sentences a
   assert.deepEqual(sentences.map((x) => x[1]).sort(), ['binary_file', 'hidden_lines', 'too_large', 'truncated', 'unknown', 'unsafe_characters']);
   assert.equal(new Set(sentences.map((x) => x[2])).size, 6, 'six distinct sentences');
   assert.doesNotMatch(sentences[0][2], /agent (added|wrote)/i, 'hidden_lines makes no claim that the agent added a secret');
-  // The vendor allow-list pins each line by hash: 20 lines in all, as the doc says (17 before the local-model adapter's three:
-  // 2 in localModel/fileTools.ts and 1 in localModel/prompt.ts, its refusal of the agent CLI's per-worktree settings folder).
+  // The vendor allow-list pins each line by hash: 19 lines in all, as the doc says (17 before the local-model adapter's three:
+  // 2 in localModel/fileTools.ts and 1 in localModel/prompt.ts, its refusal of the agent CLI's per-worktree settings folder; the lead-agent workbench's Claude-only tag was then removed, which took TeamSection.tsx from 4 lines to 3: 20 became 19).
   const v5 = /const V5_ALLOWED = \{([\s\S]*?)\n\};/.exec(read('test/nexus-core-vendor-neutral.test.cjs'));
   assert.ok(v5);
   const hashes = [...v5[1].matchAll(/^\s*'[0-9a-f]{16}'/gm)].length;
-  assert.equal(hashes, 20);
-  assert.ok(section(59).includes('each of the 20 allowed lines'));
-  assert.ok(section(53).includes('each of the 20 allowed lines'));
+  assert.equal(hashes, 19);
+  assert.ok(section(59).includes('each of the 19 allowed lines'));
+  assert.ok(section(53).includes('each of the 19 allowed lines'));
 });
 
 test('DOC10-17 the base_moved sentence and the unsafe-character set are stated as the code has them', () => {
