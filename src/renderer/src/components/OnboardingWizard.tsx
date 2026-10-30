@@ -79,9 +79,10 @@ const PROVIDER_BLURB: Partial<Record<AgentProvider, string>> = {
 };
 
 export function OnboardingWizard({ onComplete }: OnboardingWizardProps) {
-  const [step, setStep] = useState<Step>('persona');
-  // Self-identified audience (item 1). Undefined until chosen on the first screen;
-  // the rest of the wizard reads `plain` to swap copy registers.
+  // The wizard no longer asks "which sounds like you?": Nexus's own Welcome page asks it (once), so asking it here as well made
+  // the person answer the same question twice. The first screen is "meet Nexus"; the legacy answer defaults to technical.
+  const [step, setStep] = useState<Step>('welcome');
+  // Self-identified audience (item 1). Unset here (Welcome owns the question); the rest of the wizard reads `plain` to swap copy registers.
   const [audience, setAudience] = useState<Audience | undefined>();
   const plain = audience === 'non-technical';
 
@@ -662,11 +663,6 @@ export function OnboardingWizard({ onComplete }: OnboardingWizardProps) {
                     back
                   </PixelButton>
                 )}
-                {step === 'welcome' && (
-                  <PixelButton variant="ghost" size="md" onClick={() => setStep('persona')} disabled={busy}>
-                    back
-                  </PixelButton>
-                )}
                 {step !== 'permissions' && (
                   <PixelButton
                     variant="primary"
@@ -776,7 +772,7 @@ function ToggleRow({ icon, label, desc, on, tint, edge, onChange }: {
 }
 
 function Dots({ step }: { step: Step }) {
-  const order: Step[] = ['persona', 'welcome', 'home', 'orchestrator', 'repos', 'permissions'];
+  const order: Step[] = ['welcome', 'home', 'orchestrator', 'repos', 'permissions'];
   return (
     <div style={{ display: 'flex', gap: 4 }}>
       {order.map((s) => (
@@ -803,8 +799,7 @@ function prevStep(s: Step): Step {
     : s === 'repos' ? 'orchestrator'
     : s === 'orchestrator' ? 'home'
     : s === 'home' ? 'welcome'
-    : s === 'welcome' ? 'persona'
-    : 'persona';
+    : 'welcome';
 }
 
 const inputStyle: React.CSSProperties = {
