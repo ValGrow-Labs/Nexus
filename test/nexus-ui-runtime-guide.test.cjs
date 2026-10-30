@@ -99,7 +99,14 @@ test('RG3 on this computer: server not running / model missing / ready, each a p
   const down = g({ state: 'not_installed', models: null, problem: null });
   assert.deepEqual([down.state, down.word, down.status, down.action], ['server_down', 'Not running', E.AGENT_REASON_TEXT.local_model_server_down, null]);
   assert.equal(down.steps.length, 4);
-  assert.match(down.steps.join(' '), /Install a free program that runs AI models/);
+  // The steps name the program with the probe's own label (here the invented "Local model (Test)"): no vendor word in Nexus code.
+  assert.match(down.steps.join(' '), /Install Test, a free program that runs AI models/);
+  assert.match(down.steps.join(' '), /Start Test\./);
+  // No label read: the generic words, same four steps.
+  const nameless = g({ state: 'not_installed', label: null, models: null, problem: null });
+  assert.equal(nameless.steps.length, 4);
+  assert.match(nameless.steps.join(' '), /Install a free program that runs AI models/);
+  assert.match(nameless.steps.join(' '), /Start it\./);
   assert.match(down.steps.join(' '), /model that can use tools/);
   const none = g({ models: [], problem: 'model_missing' });
   assert.deepEqual([none.state, none.status, none.action], ['no_model', 'The program that runs AI on this computer is working, but it has no model yet.', null]);

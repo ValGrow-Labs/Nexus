@@ -82,7 +82,7 @@ export function HostedKeysSettings() {
       // The typed text leaves the field either way once it has been sent; a refusal never keeps a copy of the key on screen.
       setDrafts((d) => ({ ...d, [id]: '' }));
     } catch {
-      note = { text: 'The key could not be saved. Nothing was changed.', alert: true };
+      note = { text: 'The access key could not be saved. Nothing was changed.', alert: true };
       setRefused((m) => ({ ...m, [id]: note.text }));
       setDrafts((d) => ({ ...d, [id]: '' }));
     }
@@ -98,7 +98,7 @@ export function HostedKeysSettings() {
       const r = await window.cth.hostedKeyDelete({ provider: id });
       note = r.ok ? { text: KEY_DELETED_NOTE, alert: false } : { text: r.message, alert: true };
       if (r.ok) setRefused((m) => { const n = { ...m }; delete n[id]; return n; });
-    } catch { note = { text: 'The key could not be deleted. Nothing was changed.', alert: true }; }
+    } catch { note = { text: 'The access key could not be deleted. Nothing was changed.', alert: true }; }
     setNotes((n) => ({ ...n, [id]: note }));
     setBusy(null);
     void read();

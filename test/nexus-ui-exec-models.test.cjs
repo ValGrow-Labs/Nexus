@@ -207,7 +207,7 @@ const act = (id, o = {}) => ({ actionId: id, label: id, stepId: null, available:
 test('U-A1 available actions are buttons; unavailable ones are sentences with the setup link; FUTURE actions are absent', () => {
   const list = [
     act('sde.requirement.write', { label: 'Write a requirement', stepId: 'requirement' }),
-    act('sde.repository.snapshot', { label: 'Take a repository snapshot', stepId: 'repository', available: false, reason: 'setup:git_missing' }),
+    act('sde.repository.snapshot', { label: 'Save a starting point', stepId: 'repository', available: false, reason: 'setup:git_missing' }),
     act('sde.build.run', { label: 'Build', stepId: 'build', available: false, reason: 'blocked_by_step:repository', inputs: [{ slot: 'repository', kinds: ['repository'], min: 1, max: 1 }] }),
     act('sde.future.thing', { label: 'Later', available: false, reason: 'future' }),
     act('sde.preview.stop', { label: 'Stop' })
@@ -215,7 +215,7 @@ test('U-A1 available actions are buttons; unavailable ones are sentences with th
   const v = AM.actionBar(list, { workspaceId: 'sde', availability: READY, version: null });
   assert.deepEqual(v.buttons.map((b) => [b.actionId, b.inline]), [['sde.requirement.write', true]]);
   assert.deepEqual(v.sentences.map((s) => [s.actionId, s.setup]), [['sde.repository.snapshot', true], ['sde.build.run', false]]);
-  assert.equal(v.sentences[0].text, 'Take a repository snapshot: Git, a free program, is not installed, so this cannot run on this computer yet. Install it, then try again.');
+  assert.equal(v.sentences[0].text, 'Save a starting point: Git, a free program, is not installed, so this cannot run on this computer yet. Install it, then try again.');
   assert.equal(v.sentences[1].text, 'Build: finish the “Repository” step first.');
   const all = JSON.stringify(v);
   assert.doesNotMatch(all, /Later|sde\.future/, 'a FUTURE action is not present at all');
@@ -974,15 +974,15 @@ test('S13 the rail, the Folio and Runs use the same words for a draft waiting on
   }
 });
 
-test('S15 no second "Start a dev deployment" while one of that version is starting or running (main refuses one: deployment_live)', () => {
+test('S15 no second "Start a test run of your app" while one of that version is starting or running (main refuses one: deployment_live)', () => {
   const def = getUserAction('sde.preview.start');
   const answer = [{ actionId: def.id, label: def.label, stepId: null, available: true, reason: null, needsApproval: false, inputs: def.inputs.map((s) => ({ ...s })) }];
   const ctx = (liveDeployment) => ({ workspaceId: 'sde', availability: READY, version: { kind: 'application', status: 'draft' }, liveDeployment });
   assert.deepEqual(AM.actionBar(answer, ctx(null)).buttons.map((b) => b.actionId), ['sde.preview.start']);
   const starting = AM.actionBar(answer, ctx('starting'));
   assert.equal(starting.buttons.length, 0);
-  assert.deepEqual(starting.sentences, [{ actionId: 'sde.preview.start', setup: false, text: 'Start a dev deployment: a test run of your app is starting for this saved version. Follow it under “Test runs of your app”.' }]);
-  assert.equal(AM.actionBar(answer, ctx('running')).sentences[0].text, 'Start a dev deployment: a test run of your app is already running for this saved version. Stop it to start another.');
+  assert.deepEqual(starting.sentences, [{ actionId: 'sde.preview.start', setup: false, text: 'Start a test run of your app: a test run of your app is starting for this saved version. Follow it under “Test runs of your app”.' }]);
+  assert.equal(AM.actionBar(answer, ctx('running')).sentences[0].text, 'Start a test run of your app: a test run of your app is already running for this saved version. Stop it to start another.');
   // Which deployment is live, from the records: a deployment row of the version, or a live job starting one before its row exists.
   const dep = (subjectVersionId, status, jobId = 'JX') => ({ jobId, subjectVersionId, status, startedAt: 1 });
   const j = (state, build, id = 'JQ') => ({ id, state, actionId: 'sde.preview.start', inputs: [{ versionId: build }], createdAt: 1 });

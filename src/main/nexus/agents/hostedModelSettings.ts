@@ -35,13 +35,13 @@ const PASTE_MAX = 4096;
 export type KeyRefusal = 'bad_provider' | 'providers_unknown' | 'bad_key' | 'encryption_unavailable' | 'store_failed' | 'not_allowed' | 'bad_request';
 /** The fixed sentences of a refused key change (no key text, no path, no system message). */
 export const KEY_REFUSAL_TEXT: Readonly<Record<KeyRefusal, string>> = Object.freeze({
-  bad_provider: 'That provider is not one Nexus offers.',
-  providers_unknown: 'Nexus has not read the list of providers yet. Open the agent setup and check again, then try again.',
-  bad_key: 'That does not look like an API key. Paste the key exactly as the provider shows it (letters, digits and symbols, no spaces).',
-  encryption_unavailable: 'This computer cannot keep a secret safely right now, so the key was not saved.',
-  store_failed: 'The key could not be saved. Nothing was changed.',
-  not_allowed: 'Only the person who owns this Nexus can change provider keys.',
-  bad_request: 'The request could not be read. Nothing was changed.'
+  bad_provider: 'That AI service is not one Nexus offers.',
+  providers_unknown: 'Nexus has not read the list of AI services yet. Open “Get this computer ready”, check again, then try again.',
+  bad_key: 'That does not look like an access key. Paste the key exactly as the AI service shows it (letters, numbers and symbols, no spaces).',
+  encryption_unavailable: 'This computer cannot keep a secret safely right now, so the access key was not saved.',
+  store_failed: 'The access key could not be saved. Nothing was changed.',
+  not_allowed: 'Only the person who owns this Nexus can change access keys.',
+  bad_request: 'Nexus could not read that request. Nothing was changed.'
 });
 export type KeyRefused = { ok: false; reason: KeyRefusal; message: string };
 export type KeyResult = { ok: true } | KeyRefused;

@@ -78,12 +78,22 @@ const HOSTED_STEPS = [
   `Press “Add my key”. Settings opens at ${KEYS_PATH}. Paste the key there and press Save.`,
   'Come back here, pick the AI service and a model, then press “Use this AI service”.'
 ];
-const LOCAL_STEPS = [
-  'Install a free program that runs AI models on this computer.',
-  'Start it.',
-  'Download a model that can use tools. Look for the word “tools” in the model’s description.',
-  'Press Check again.'
-];
+/** The program's own name is the probe's label, e.g. "Local model (Name)": Nexus code never spells a vendor, so the name inside the
+ *  brackets (else the whole label) is what the steps call the program. No label read yet: the generic words. */
+function programName(label: string | null | undefined): string | null {
+  const text = typeof label === 'string' ? label.trim() : '';
+  if (text === '') return null;
+  return /\(([^()]+)\)\s*$/.exec(text)?.[1]?.trim() || text;
+}
+function localSteps(label: string | null | undefined): string[] {
+  const name = programName(label);
+  return [
+    name ? `Install ${name}, a free program that runs AI models on this computer.` : 'Install a free program that runs AI models on this computer.',
+    name ? `Start ${name}.` : 'Start it.',
+    'Download a model that can use tools. Look for the word “tools” in the model’s description.',
+    'Press Check again.'
+  ];
+}
 const LOCAL_MODEL_STEPS = [
   'Download a model that can use tools into the program that runs AI models.',
   'Press Check again.'
@@ -142,7 +152,7 @@ function localWay(opt: AgentRuntimeOptionView | undefined, choice: RuntimeChoice
       status: 'Nexus has not found out whether a program that runs AI is available here. Press Check again in a moment.' };
   }
   if (opt.state === 'not_installed') {
-    return { ...base, kind: opt.kind, state: 'server_down', word: 'Not running', status: AGENT_REASON_TEXT.local_model_server_down, steps: LOCAL_STEPS, action: null };
+    return { ...base, kind: opt.kind, state: 'server_down', word: 'Not running', status: AGENT_REASON_TEXT.local_model_server_down, steps: localSteps(opt.label), action: null };
   }
   if (opt.state === 'version_unsupported') {
     return { ...base, kind: opt.kind, state: 'model_problem', word: 'Needs a model', status: LOCAL_PROBLEM_TEXT.model_no_tools, steps: LOCAL_MODEL_STEPS, action: null };
