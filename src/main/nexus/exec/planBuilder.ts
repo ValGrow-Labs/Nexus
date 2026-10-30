@@ -57,6 +57,8 @@ import type { RunRequest, RuntimeKind } from '../../../shared/nexus/runtime';
 import type { RecipeDef } from '../../../shared/nexus/recipes';
 import { looksSecret } from '../../../shared/nexus/secretShape';
 import { loopbackEndpoint } from '../../../shared/nexus/localModel';
+import { HOSTED_MODEL_KIND } from '../../../shared/nexus/hostedModel';
+import { isRuntimeApiKey } from '../../../shared/nexus/runnerProtocol';
 import { homeLabel } from '../../../shared/nexus/homeLabel';
 import { containsSecret } from '../activity/redact';
 import {
@@ -700,6 +702,11 @@ export interface AgentPlanContext {
     message: string; mcpUrl: string; model: { provider: string; model: string };
     /** The local-model runtime only: the loopback endpoint of the user's settings (absent for every other runtime: the request has no such key). */
     endpoint?: { host: string; port: number };
+    /**
+     * The hosted-model runtime only: the user's provider API key, resolved by main at lease time. It goes into `plan.runtime.apiKey`
+     * (in memory, over the runner's port) and nowhere else: it is not in the request, and no record is built from it.
+     */
+    apiKey?: string;
   };
   /** The live consent's hosts and its recorded `hosts_sha256` (never derived from `allow`). */
   egress: { allow: readonly { host: string; port: number }[]; consentHostsSha256: string };
@@ -728,6 +735,8 @@ export function buildAgentPlan(ctx: AgentPlanContext): AgentPlan {
   if (!SHA256_HEX.test(ctx.egress.consentHostsSha256)) return refuse('consent_mismatch', 'the live consent carries no valid hosts hash');
   // A runtime endpoint is a loopback address and nothing else (the local-model runtime reaches nothing remote).
   if (ctx.runtime.endpoint !== undefined && loopbackEndpoint(ctx.runtime.endpoint) === null) return refuse('bad_input', 'the runtime endpoint is not a loopback address');
+  // A key belongs to the hosted-model runtime only, and has the accepted shape; the refusal never names it.
+  if (ctx.runtime.apiKey !== undefined && (ctx.runtime.kind !== HOSTED_MODEL_KIND || !isRuntimeApiKey(ctx.runtime.apiKey))) return refuse('bad_input', 'the API key of the turn is not acceptable for this runtime');
   const worktreePath = underDataHome(ctx.dataHomeRoot, ctx.worktree.relPath);
   const configDir = underDataHome(ctx.dataHomeRoot, `jobs/${job.id}/agent`);
   const labels = attemptLabels({ job, attempt, bootId: ctx.bootId, dataHomeRoot: ctx.dataHomeRoot });
@@ -769,7 +778,7 @@ export function buildAgentPlan(ctx: AgentPlanContext): AgentPlan {
     workDir: underDataHome(ctx.dataHomeRoot, ctx.workRel), logPath: underDataHome(ctx.dataHomeRoot, ctx.logRel),
     kind: 'agent', container,
     worktree: { hostPath: worktreePath, gitDir: ctx.worktree.gitDir, ref: ctx.worktree.ref, base: ctx.worktree.base, editable: ['/workspace'] },
-    runtime: { kind: ctx.runtime.kind as RuntimeKind, request, token: ctx.runtime.token },
+    runtime: { kind: ctx.runtime.kind as RuntimeKind, request, token: ctx.runtime.token, ...(ctx.runtime.apiKey !== undefined ? { apiKey: ctx.runtime.apiKey } : {}) },
     egress: { allow: ctx.egress.allow.map((h) => ({ host: h.host, port: h.port })), consentHostsSha256: ctx.egress.consentHostsSha256 },
     caps: { ...ctx.caps },
     mcpTools: [...ctx.mcpTools],

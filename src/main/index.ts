@@ -84,6 +84,7 @@ import { TelemetryCollector } from './telemetry';
 import { analytics } from './analytics';
 import { IntegrationBroker } from './integrationBroker';
 import * as integrations from './integrations';
+import { createHostedKeys, hostedKeyHandlers, HOSTED_MODEL_KIND } from './nexus/agents/hostedModelSettings';
 import { validateBaseUrl, buildAuthHeaders, resolveUpstreamUrl, secretRefFor, INTEGRATION_TEMPLATES } from '../shared/integrations';
 import { RosterStore } from './roster';
 import { ControlRegistry } from './control';
@@ -385,6 +386,16 @@ const projectManager = new ProjectManager(persist);
 // The Nexus platform core, composed on persist's connection once the database is
 // at v7, v8 or v9. Read lazily by the nexus:* IPC module (registerNexusIpc below).
 let nexusPlatform: NexusPlatform | null = null;
+/**
+ * The hosted-model runtime's provider keys: the user's API keys in the encrypted secret store (safeStorage, `config:hosted:<provider>`),
+ * write-only from the renderer. The provider list is the runner's probe data; a change leaves an audit row naming the provider only.
+ * The platform reads a key (`resolve`) only at lease time, for the plan's in-memory field.
+ */
+const hostedKeys = createHostedKeys({
+  store: { encryptionAvailable: integrations.encryptionAvailable, set: integrations.setSecret, get: integrations.getSecret, has: integrations.hasSecret, delete: integrations.deleteSecret },
+  providers: () => nexusPlatform?.agentProbe?.cache.fresh(HOSTED_MODEL_KIND)?.setup?.providers ?? null,
+  onChange: (op, provider) => { const nx = nexusPlatform; if (nx?.agents) nx.agents.recordKeyChange(nx.principals.localUser(), op, provider); }
+});
 /**
  * Why the WHOLE platform is unavailable, for the later nexus:* IPC layer to return with
  * platform_unavailable. null when the platform is up (even if handoffs alone are off).
@@ -3183,6 +3194,23 @@ ipcMain.handle('providerKey:clear', (_evt, backend: unknown) => {
   try { integrations.deleteSecret(providerKeyRef(backend)); return { ok: true }; }
   catch (e) { return { ok: false, error: e instanceof Error ? e.message : String(e) }; }
 });
+// ─── IPC: the hosted-model runtime's provider keys (write-only) ───────────────
+// The Settings panel can SET and DELETE a provider's key and ASK which providers have one (booleans); no method returns a key. Owner only
+// (the permission's role); the provider list is the runner's probe data. Refused whole on any unknown key or non-string value.
+const hostedKeyIpc = hostedKeyHandlers({ keys: hostedKeys, authorize: () => {
+  const nx = nexusPlatform;
+  if (!nx?.budget) return true;
+  nx.budget.requireOwner(nx.principals.localUser());
+  return true;
+} });
+ipcMain.handle('hostedKey:set', (_evt, payload: unknown) => hostedKeyIpc.set(payload));
+ipcMain.handle('hostedKey:delete', (_evt, payload: unknown) => hostedKeyIpc.delete(payload));
+ipcMain.handle('hostedKey:present', (_evt, payload?: unknown) => {
+  // A first look (or a stale probe) asks for a fresh probe so the provider list is there on the next read.
+  const probe = nexusPlatform?.agentProbe;
+  if (probe && probe.cache.isStale()) probe.refresh();
+  return hostedKeyIpc.present(payload);
+});
 // Ollama Model Provider handlers: health check, model discovery, and connection test
 ipcMain.handle('ollama:status', (_evt, host: unknown) =>
   checkOllamaStatus(typeof host === 'string' ? host : undefined));
@@ -5749,7 +5777,9 @@ app.whenReady().then(() => {
         skillsResourcesDir: app.isPackaged ? process.resourcesPath : join(app.getAppPath(), 'resources'),
         onQueued: () => { nexusExecution?.tickSoon(); },
         // The user's local-server address and default model (legacy settings), read only for a turn of the local-model runtime.
-        localModelConfig: () => readConfig()
+        localModelConfig: () => readConfig(),
+        // The hosted-model runtime's keys, read only at lease time for a turn of that runtime.
+        hostedKeys
       })
       : null;
     nexusPlatform?.startup();

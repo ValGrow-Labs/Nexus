@@ -66,6 +66,7 @@ import { TokenService } from './agents/tokenService';
 import { BudgetService, hostsSha256 } from './agents/budgetService';
 import { RuntimeHealthCache, type AgentRuntimeProbe } from './agents/runtimeHealth';
 import type { LocalServerConfig } from './agents/localModelSettings';
+import type { HostedKeys } from './agents/hostedModelSettings';
 import { ContextResolver } from './agents/contextResolver';
 import { Skills } from './agents/skills';
 import { McpGateway } from './agents/mcpGateway';
@@ -221,6 +222,8 @@ export interface NexusPlatformOptions {
   runtimeHealthTtlMs?: number;
   /** The user's local-server settings (main passes the legacy `readConfig`); read only for a turn of the local-model runtime. */
   localModelConfig?: () => LocalServerConfig | null | undefined;
+  /** The hosted-model runtime's provider keys (main: the encrypted secret store); read only at lease time for a turn of that runtime. */
+  hostedKeys?: Pick<HostedKeys, 'resolve' | 'present'>;
 }
 
 /**
@@ -328,7 +331,7 @@ export function createNexusPlatform(db: Database.Database, opts?: NexusPlatformO
   const agents = agentsAvailable && tokens && budget && contextResolver && skills && worktrees
     ? new AgentService(db, { auth, principals, jobs, sessions, tokens, budget, contextResolver, skills, worktrees, exec, system: principals.system(), now, log,
       runtimeHealth: opts?.runtimeHealth ?? (runtimeCache ? (kind) => runtimeCache.healthEntry(kind) : undefined), dataHome: opts?.dataHome ?? null, onQueued: opts?.onQueued,
-      localModelConfig: opts?.localModelConfig })
+      localModelConfig: opts?.localModelConfig, hostedKeys: opts?.hostedKeys })
     : null;
   exec.bindAgents(agents);
   // B2b Task 9: the git reads (status for the accept service, diffs for the viewer) go through the runner; its answers are

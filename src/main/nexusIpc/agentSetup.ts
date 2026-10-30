@@ -8,6 +8,7 @@
  */
 import type { AgentConsentView, AgentRuntimeOptionView, AgentRuntimeProblem, AgentSetupState, AgentSetupView } from '../../shared/nexus/ipc';
 import { LOCAL_MODEL_KIND, type LocalModelReason } from '../../shared/nexus/localModel';
+import { HOSTED_MODEL_KIND, type HostedModelReason } from '../../shared/nexus/hostedModel';
 import type { NexusPlatform } from '../nexus/platform';
 import type { RuntimeCacheEntry } from '../nexus/agents/runtimeHealth';
 import { scrubMessage } from './envelope';
@@ -20,6 +21,9 @@ const PROBLEM_OF: Record<LocalModelReason, AgentRuntimeProblem | null> = {
   local_model_not_chosen: 'model_not_chosen', local_model_endpoint: 'address_not_local', local_model_missing: 'model_missing',
   local_model_no_tools: 'model_no_tools', local_model_server_down: null
 };
+const PROBLEM_OF_HOSTED: Partial<Record<HostedModelReason, AgentRuntimeProblem>> = {
+  hosted_provider_not_chosen: 'provider_not_chosen', hosted_key_missing: 'key_missing', hosted_model_unavailable: 'model_unavailable'
+};
 const stateOf = (e: RuntimeCacheEntry): AgentSetupState => (e.health.ok ? 'ready' : (STATE_OF[e.health.reason] ?? 'unavailable'));
 
 /** One runtime of the probe, as the picker lists it. The model list and its problem are only for the runtime that serves models. */
@@ -28,6 +32,7 @@ function optionOf(nx: NexusPlatform, e: RuntimeCacheEntry, live: { runtimeKind: 
     version: e.health.ok ? scrubMessage(e.health.version).slice(0, 40) : null, state: stateOf(e), signedIn: e.setup?.signedIn ?? 'unknown',
     selected: live !== null && live.runtimeKind === e.kind, models: null, model: null, problem: null,
     hosts: (e.setup?.egressHosts ?? []).slice(0, 8).map((h) => scrubMessage(`${h.host}:${h.port}`).slice(0, 260)) };
+  if (e.kind === HOSTED_MODEL_KIND && nx.agents) return hostedOptionOf(nx, e, base, live);
   if (e.kind !== LOCAL_MODEL_KIND || !nx.agents) return base;
   const models = (e.setup?.models ?? []).slice(0, 64).map((m) => ({ name: scrubMessage(m.name).slice(0, 128), tools: m.tools === true }));
   // The chosen model only counts for the runtime the live permission names; any other row shows the settings' default.
@@ -36,6 +41,24 @@ function optionOf(nx: NexusPlatform, e: RuntimeCacheEntry, live: { runtimeKind: 
   // "cannot use tools" problem, not an unsupported program version.
   const noTools = !e.health.ok && e.health.reason === 'version_unsupported';
   return { ...base, models, model: st.model, problem: noTools ? 'model_no_tools' : st.reason === null ? null : PROBLEM_OF[st.reason] };
+}
+
+/**
+ * The hosted runtime's row: its providers (from the probe) with their models and whether a key is saved for each (a boolean), the
+ * provider and model in force (only for the runtime the live permission names) and the one problem a person can act on, if any.
+ */
+function hostedOptionOf(nx: NexusPlatform, e: RuntimeCacheEntry, base: AgentRuntimeOptionView, live: { runtimeKind: string } | null): AgentRuntimeOptionView {
+  const agents = nx.agents!;
+  const providers = (e.setup?.providers ?? []).slice(0, 8).map((p) => ({ id: p.id, label: scrubMessage(p.label).slice(0, 64),
+    hosts: p.hosts.slice(0, 4).map((h) => scrubMessage(h).slice(0, 260)), models: p.models.slice(0, 64).map((m) => ({ name: scrubMessage(m.name).slice(0, 128), tools: m.tools === true })),
+    keyPresent: agents.hostedKeyPresent(p.id) }));
+  const selected = live !== null && live.runtimeKind === HOSTED_MODEL_KIND;
+  // The choice only counts for the runtime the live permission names; any other row has none chosen yet (the picker preselects one).
+  const chosen = selected ? nx.budget!.liveChoice() : { provider: null, model: null };
+  const st = agents.hostedCheck({ providers: e.setup?.providers, chosen });
+  let problem: AgentRuntimeProblem | null = st.problem === null ? null : PROBLEM_OF_HOSTED[st.problem] ?? null;
+  if (problem === null && selected && agents.hostedKeyRejected()) problem = 'key_rejected';
+  return { ...base, providers, provider: chosen.provider, model: chosen.model, problem };
 }
 
 /**
@@ -54,7 +77,7 @@ export function agentConsentView(nx: NexusPlatform): AgentConsentView {
   const live = nx.agentsAvailable && nx.budget ? nx.budget.live() : null;
   const runtimes = nx.agentsAvailable && nx.budget && nx.agentProbe ? nx.agentProbe.cache.all().map((e) => optionOf(nx, e, live)) : [];
   return { ...base, consent: { ...base.consent, hosts: hosts.map((h) => scrubMessage(h).slice(0, 260)).slice(0, 16) },
-    ...(runtimes.length > 1 || runtimes.some((r) => r.models !== null) ? { runtimes } : {}) };
+    ...(runtimes.length > 1 || runtimes.some((r) => r.models !== null || r.providers) ? { runtimes } : {}) };
 }
 
 /** Main's reason agent work is off (`agentsUnavailableReason`'s vocabulary, then execution's) as the view's four words. */
@@ -78,11 +101,11 @@ export function agentSetupView(nx: NexusPlatform, offReason?: string | null): Ag
   const caps = live ? { turnUsdCents: live.caps.turnUsdCents, dayUsdCents: live.caps.dayUsdCents, turnsPerHour: live.caps.turnsPerHour,
     concurrentTurns: live.caps.concurrentTurns, turnTokens: live.caps.turnTokens, toolCalls: live.caps.toolCalls, wallClockMs: live.caps.wallClockMs,
     childJobs: live.caps.childJobs } : null;
-  const optionRow = entry && entry.kind === LOCAL_MODEL_KIND ? optionOf(nx, entry, live) : null;
+  const optionRow = entry && (entry.kind === LOCAL_MODEL_KIND || entry.kind === HOSTED_MODEL_KIND) ? optionOf(nx, entry, live) : null;
   return {
     state,
-    // Only the local-model runtime's row says which runtime it is about, and why its chosen model cannot be used (every other row is as before).
-    ...(optionRow ? { kind: LOCAL_MODEL_KIND, ...(optionRow.problem !== null ? { problem: optionRow.problem } : {}) } : {}),
+    // Only a runtime that serves a choice of models says which runtime its row is about, and why its chosen model cannot be used (every other row is as before).
+    ...(optionRow ? { kind: entry!.kind, ...(optionRow.problem !== null ? { problem: optionRow.problem } : {}) } : {}),
     label: entry?.setup ? scrubMessage(entry.setup.label).slice(0, 64) : null,
     version: entry && entry.health.ok ? scrubMessage(entry.health.version).slice(0, 40) : null,
     signedIn: entry?.setup?.signedIn ?? 'unknown',

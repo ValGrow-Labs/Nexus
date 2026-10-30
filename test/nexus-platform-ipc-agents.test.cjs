@@ -859,8 +859,9 @@ test('IA12 no system-only method is reachable: the agent channels call a closed 
   const files = ['src/main/nexusIpc/registerNexusIpc.ts', 'src/main/nexusIpc/agentSetup.ts', 'src/main/nexusIpc/dto.ts'].map((f) => [f, read(f)]);
   const allowed = {
     // Deliberate additions (local-model runtime): switchRuntime and localModelState (agents), chooseModel (budget): each user-facing, owner-checked in the service.
-    agents: new Set(['start', 'get', 'list', 'end', 'cancel', 'revokeConsent', 'switchRuntime', 'localModelState']), reviews: new Set(['decide']), accepts: new Set(['accept', 'status', 'mergeAccepted']),
-    budget: new Set(['grant', 'revoke', 'live', 'usageToday', 'chooseModel']), agentProbe: new Set(['cache', 'refresh', 'refreshAndWait'])
+    // Hosted-model runtime: hostedCheck, hostedKeyPresent, hostedKeyRejected (agents, read-only views of the choice and the key's presence) and liveChoice (budget).
+    agents: new Set(['start', 'get', 'list', 'end', 'cancel', 'revokeConsent', 'switchRuntime', 'localModelState', 'hostedCheck', 'hostedKeyPresent', 'hostedKeyRejected']), reviews: new Set(['decide']), accepts: new Set(['accept', 'status', 'mergeAccepted']),
+    budget: new Set(['grant', 'revoke', 'live', 'usageToday', 'chooseModel', 'liveChoice']), agentProbe: new Set(['cache', 'refresh', 'refreshAndWait'])
   };
   const SERVICES = ['agents', 'reviews', 'accepts', 'budget', 'agentProbe', 'tokens', 'mcpGateway', 'worktrees', 'changeSets', 'contextResolver', 'skills', 'gitRead'];
   for (const [f, text] of files) {
@@ -917,7 +918,7 @@ test('I3 #51 names the destination in its consent row (hosts, `host:port`, the a
   const setup = read('src/main/nexusIpc/agentSetup.ts');
   assert.equal((setup.match(/hosts/g) || []).length > 0, true);
   const mod = read('src/main/nexusIpc/registerNexusIpc.ts');
-  assert.equal((mod.match(/agentConsentView\(nx\)/g) || []).length, 4, 'get, revoke, model and grant/switch of #51 only');
+  assert.equal((mod.match(/agentConsentView\(nx\)/g) || []).length, 5, 'get, revoke, model (local and hosted) and grant/switch of #51 only');
   assert.match(mod, /agentSetupView\(nx, agentsOff\(nx\)\)\)\);/, '#23 keeps the plain setup row (plus, only while agents are off, why)');
   const dto = read('src/main/nexusIpc/dto.ts');
   assert.doesNotMatch(dto, /hosts\??\s*:|\.hosts|egressHosts/, 'dto.ts builds no view from a host list');

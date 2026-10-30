@@ -132,6 +132,10 @@ export type {
   ContextBenchmarkResult
 };
 
+/** The hosted-model provider keys' answers: booleans and fixed sentences only. */
+export type HostedKeyRefused = { ok: false; reason: string; message: string };
+export type HostedKeyResult = { ok: true } | HostedKeyRefused;
+export type HostedKeyList = { ok: true; providers: { id: string; label: string; present: boolean }[] } | HostedKeyRefused;
 /** Renderer-visible integration record: the secretRef handle is redacted to a
  *  presence boolean. Matches main `integrations.listRecordsRedacted()` — the
  *  write-only secret contract (spec §2): a secret value is NEVER returned over IPC. */
@@ -1392,6 +1396,11 @@ const api = {
     ipcRenderer.invoke('providerKey:has', backend),
   providerKeyClear: (backend: string): Promise<{ ok: boolean; error?: string }> =>
     ipcRenderer.invoke('providerKey:clear', backend),
+  // The hosted-model runtime's provider keys — WRITE-ONLY. `hostedKeySet` stores one key (never echoed); `hostedKeyPresent` answers booleans
+  // (which providers the runner's probe lists and whether each has a key, or one provider's); no method ever returns a key.
+  hostedKeySet: (req: { provider: string; key: string }): Promise<HostedKeyResult> => ipcRenderer.invoke('hostedKey:set', req),
+  hostedKeyDelete: (req: { provider: string }): Promise<HostedKeyResult> => ipcRenderer.invoke('hostedKey:delete', req),
+  hostedKeyPresent: (req?: { provider: string }): Promise<HostedKeyList | { ok: true; present: boolean } | HostedKeyRefused> => ipcRenderer.invoke('hostedKey:present', req),
   // Ollama Model Provider — health check, dynamic models, test inference
   ollamaStatus: (host?: string): Promise<{ running: boolean; version?: string; error?: string }> =>
     ipcRenderer.invoke('ollama:status', host),

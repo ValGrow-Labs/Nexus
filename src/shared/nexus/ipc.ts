@@ -392,7 +392,14 @@ export interface AgentSetupView {
   usageToday: { usdCents: number; turns: number; estimated: boolean };
 }
 /** Why a runtime that serves a choice of models cannot be used now (each has a fixed sentence in the renderer). */
-export type AgentRuntimeProblem = 'model_not_chosen' | 'address_not_local' | 'model_missing' | 'model_no_tools';
+export type AgentRuntimeProblem = 'model_not_chosen' | 'address_not_local' | 'model_missing' | 'model_no_tools'
+  // The runtime that offers hosted providers: nothing chosen, no key saved, the provider did not accept the key, the model is not offered.
+  | 'provider_not_chosen' | 'key_missing' | 'key_rejected' | 'model_unavailable';
+/**
+ * One provider of a runtime that offers a choice of them (from its probe, offline preset data): its opaque id and label, the host names a
+ * permission covers for it, its models, and whether a key is saved for it (a boolean: the key itself never leaves main).
+ */
+export interface AgentProviderOptionView { id: string; label: string; hosts: string[]; models: { name: string; tools: boolean }[]; keyPresent: boolean }
 /** One agent runtime the probe reported, as the setup sheet's picker lists it. Its label is the adapter's own. */
 export interface AgentRuntimeOptionView {
   kind: string; label: string | null; version: string | null; state: AgentSetupState; signedIn: 'yes' | 'no' | 'unknown';
@@ -403,6 +410,10 @@ export interface AgentRuntimeOptionView {
   /** The model in force (the live permission's choice), else the settings' default when the server lists it; null when none. */
   model: string | null;
   problem: AgentRuntimeProblem | null;
+  /** Only a runtime that offers hosted providers: each provider with its models and whether a key is saved (absent for every other runtime). */
+  providers?: AgentProviderOptionView[] | null;
+  /** Only with `providers`: the provider chosen for the live permission (null when none is chosen yet). `model` is then that provider's model. */
+  provider?: string | null;
   /** The destinations a permission for this runtime covers (`host:port`): the runtime's own, from its probe. Shown on the picker row only. */
   hosts: string[];
 }
@@ -486,8 +497,8 @@ export interface AgentConsentCaps {
  * `switch`: revoke the live permission and grant one for `runtime`, as one step (refused while a turn is running).
  * `model`: change the model of the live permission without changing the permission.
  */
-export type AgentConsentArgs = { op: 'get' } | { op: 'revoke' } | { op: 'grant'; caps?: AgentConsentCaps; runtime?: string; model?: string }
-  | { op: 'switch'; runtime: string; model?: string; caps?: AgentConsentCaps } | { op: 'model'; model: string };
+export type AgentConsentArgs = { op: 'get' } | { op: 'revoke' } | { op: 'grant'; caps?: AgentConsentCaps; runtime?: string; model?: string; provider?: string }
+  | { op: 'switch'; runtime: string; model?: string; provider?: string; caps?: AgentConsentCaps } | { op: 'model'; model: string; provider?: string };
 export interface AgentStartResultView { session: SessionView; job: JobView }
 export interface ReviewResultView { review: ReviewView; job: JobView | null }
 export interface AcceptResultView { version: VersionView; accept: ChangeSetAcceptView }

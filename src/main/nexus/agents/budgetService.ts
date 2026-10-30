@@ -26,6 +26,7 @@ import type { AuthService } from '../auth/authService';
 import { PrincipalResolver, requireStoredUser } from '../auth/principals';
 import { appendActivityRow } from '../activity/writer';
 import { isModelName } from '../../../shared/nexus/localModel';
+import { isProviderId } from '../../../shared/nexus/hostedModel';
 import { newId } from '../db/ids';
 import { immediateTx } from '../db/tx';
 import { PlatformError } from '../errors';
@@ -89,11 +90,14 @@ export class BudgetService {
   /**
    * `model`: only a runtime that serves a choice of models (the local-model runtime): the model the user chose, recorded WITH the
    * grant in its audit row (no schema change; read back by `liveModel`). The caller has checked it against the probe's list.
+   * `provider`: only a runtime that serves models of several providers (the hosted-model runtime): the provider id, recorded the same way
+   * (read back by `liveChoice`); it is only ever recorded together with a model.
    */
-  grant(user: Principal, i: { runtimeKind: string; hosts: EgressHost[]; caps?: Partial<Record<keyof AgentCaps, unknown>> | null; model?: string | null }): LiveConsent {
+  grant(user: Principal, i: { runtimeKind: string; hosts: EgressHost[]; caps?: Partial<Record<keyof AgentCaps, unknown>> | null; model?: string | null; provider?: string | null }): LiveConsent {
     this.requireConsenter(user);
     if (!i || typeof i !== 'object') throw new PlatformError('invalid', 'input must be an object');
     if (i.model !== undefined && i.model !== null && !isModelName(i.model)) throw new PlatformError('invalid', 'model is a model name', { reason: 'bad_model' });
+    if (i.provider !== undefined && i.provider !== null && !(isProviderId(i.provider) && i.model)) throw new PlatformError('invalid', 'provider is a provider id, with a model', { reason: 'bad_provider' });
     if (typeof i.runtimeKind !== 'string' || !/^[a-z][a-z0-9_.-]{0,31}$/.test(i.runtimeKind)) throw new PlatformError('invalid', 'runtimeKind is a runtime kind');
     const hostsJson = canonicalHostsJson(i.hosts);
     const sha = createHash('sha256').update(hostsJson, 'utf8').digest('hex');
@@ -119,7 +123,7 @@ export class BudgetService {
       appendActivityRow(this.db, { actorKind: 'user', actorId: user.id, onBehalfOf: user.id, entityType: 'runtime_consent', entityId: id,
         action: 'agent.consent', status: 'succeeded', details: { op: 'grant', runtimeKind: i.runtimeKind, hostsCount: JSON.parse(hostsJson).length,
           turnUsdCents: caps.turnUsdCents, dayUsdCents: caps.dayUsdCents, turnsPerHour: caps.turnsPerHour, turnTokens: caps.turnTokens,
-          toolCalls: caps.toolCalls, ...(i.model ? { model: i.model } : {}) } }, now);
+          toolCalls: caps.toolCalls, ...(i.model ? { model: i.model } : {}), ...(i.model && i.provider ? { provider: i.provider } : {}) } }, now);
       return this.toLive(this.liveRow()!);
     });
   }
@@ -143,15 +147,16 @@ export class BudgetService {
    * against the live consent records it, and `liveModel` reads the newest. The caller has checked it against the probe's list.
    * Refused (`consent_missing`) with no live permission.
    */
-  chooseModel(user: Principal, model: string): void {
+  chooseModel(user: Principal, model: string, provider?: string | null): void {
     this.requireConsenter(user);
     if (!isModelName(model)) throw new PlatformError('invalid', 'model is a model name', { reason: 'bad_model' });
+    if (provider !== undefined && provider !== null && !isProviderId(provider)) throw new PlatformError('invalid', 'provider is a provider id', { reason: 'bad_provider' });
     const now = this.deps.now();
     immediateTx(this.db, () => {
       const live = this.liveRow();
       if (!live) throw new PlatformError('unavailable', 'the agent has not been given permission yet', { reason: 'consent_missing' });
       appendActivityRow(this.db, { actorKind: 'user', actorId: user.id, onBehalfOf: user.id, entityType: 'runtime_consent', entityId: live.id,
-        action: 'agent.consent', status: 'succeeded', details: { op: 'model', runtimeKind: live.runtime_kind, model } }, now);
+        action: 'agent.consent', status: 'succeeded', details: { op: 'model', runtimeKind: live.runtime_kind, model, ...(provider ? { provider } : {}) } }, now);
     });
   }
 
@@ -164,6 +169,20 @@ export class BudgetService {
         AND action = 'agent.consent' AND status = 'succeeded' AND json_extract(details_json, '$.model') IS NOT NULL ORDER BY seq DESC LIMIT 1`).get(live.id) as { m: unknown } | undefined;
       return r && isModelName(r.m) ? r.m : null;
     } catch { return null; }
+  }
+
+  /**
+   * The provider and model the user chose for the live permission (the hosted-model runtime): the provider recorded WITH the newest row
+   * that names a model (so a model change always names the provider with it). `provider` is null for a row that recorded none.
+   */
+  liveChoice(): { provider: string | null; model: string | null } {
+    try {
+      const live = this.liveRow();
+      if (!live) return { provider: null, model: null };
+      const r = this.db.prepare(`SELECT json_extract(details_json, '$.model') AS m, json_extract(details_json, '$.provider') AS p FROM activity WHERE entity_type = 'runtime_consent'
+        AND entity_id = ? AND action = 'agent.consent' AND status = 'succeeded' AND json_extract(details_json, '$.model') IS NOT NULL ORDER BY seq DESC LIMIT 1`).get(live.id) as { m: unknown; p: unknown } | undefined;
+      return r && isModelName(r.m) ? { provider: isProviderId(r.p) ? r.p : null, model: r.m } : { provider: null, model: null };
+    } catch { return { provider: null, model: null }; }
   }
 
   /** The live consent (hosts included: for the setup sheet's consent row and the proxy's binding only), or null. */
@@ -229,6 +248,9 @@ export class BudgetService {
   }
 
   // ---------- helpers ----------
+
+  /** Owner only (`agent.consent`): the permission's grant, revoke and model choice, and the hosted runtime's key audit rows. */
+  requireOwner(user: Principal): void { this.requireConsenter(user); }
 
   private requireConsenter(user: Principal): void {
     requireStoredUser(this.principals, this.deps.auth, user, 'agent.consent', 'runtime_consent', 'only you can grant or revoke the agent\'s network permission');

@@ -4,6 +4,7 @@
 // from the HealthView or an approval; nothing is estimated in the renderer.
 import type { AgentConsentView, AgentRuntimeOptionView, AgentRuntimeProblem, AgentSetupView, EventView, HealthView, NexusResult } from '@shared/nexus/ipc';
 import { LOCAL_MODEL_KIND } from '@shared/nexus/localModel';
+import { HOSTED_MODEL_KIND } from '@shared/nexus/hostedModel';
 import { GIB, MIN_DOCKER_CPUS, MIN_DOCKER_MEMORY } from '@shared/nexus/resourceGate';
 import { AGENT_DEFAULTS } from '@shared/nexus/agentPolicy';
 import { AGENT_REASON_TEXT, agentOffText, agentsNotice, errorCopy, executionNotice, unavailableNotice } from './errorCopy';
@@ -307,8 +308,33 @@ export const LOCAL_PROBLEM_TEXT: Readonly<Record<AgentRuntimeProblem, string>> =
   model_not_chosen: AGENT_REASON_TEXT.local_model_not_chosen,
   address_not_local: AGENT_REASON_TEXT.local_model_endpoint,
   model_missing: AGENT_REASON_TEXT.local_model_missing,
-  model_no_tools: AGENT_REASON_TEXT.local_model_no_tools
+  model_no_tools: AGENT_REASON_TEXT.local_model_no_tools,
+  // The runtime that offers hosted providers words its own problems the same way.
+  provider_not_chosen: AGENT_REASON_TEXT.hosted_provider_not_chosen,
+  key_missing: AGENT_REASON_TEXT.hosted_key_missing,
+  key_rejected: AGENT_REASON_TEXT.hosted_key_rejected,
+  model_unavailable: AGENT_REASON_TEXT.hosted_model_unavailable
 });
+
+/**
+ * Said once, on the permission row of the hosted runtime: where the requests go and what Nexus does with the key. The provider names and
+ * hosts are the probe's own (the row names the hosts it would cover); no provider is named here.
+ */
+export const HOSTED_MODEL_DISCLOSURE = 'The hosted runtime sends the agent’s requests over the internet to the model provider you choose, through Nexus’s proxy, '
+  + 'which allows only the providers’ hosts you grant; each turn uses only the provider you chose. Your API key stays on this computer in encrypted storage, '
+  + 'is never shown again, and is sent only to that provider. Every command the agent runs goes into a sandbox with no network. '
+  + 'Which files it may touch is a rule of Nexus’s file tools, which stay inside the agent’s own working copy.';
+
+/** How to get a key, said where a key is missing and in Settings. No address is given here: the person finds the provider's own page. */
+export const KEY_HELP_TEXT = 'Create a free key in the provider’s console, then paste it in Settings under AI provider keys. Nexus stores it encrypted and never shows it again.';
+
+/** The hosted runtime's program row for the states it words itself; null leaves the generic row to speak. */
+function hostedProgramRow(a: Pick<AgentSetupView, 'state' | 'problem'>, label: string): SetupRow | null {
+  if (a.state !== 'ready') return null;
+  if (a.problem === 'key_missing' || a.problem === 'key_rejected') return row('agent', label, 'problem', LOCAL_PROBLEM_TEXT[a.problem], 'Open Settings, add your key under AI provider keys, then check again.');
+  if (a.problem) return row('agent', label, 'problem', LOCAL_PROBLEM_TEXT[a.problem], 'Choose a provider and a model in the runtime list, then check again.');
+  return row('agent', label, 'ok', 'A model provider, a model and your API key are set up.');
+}
 
 /** The local-model runtime's program row for the states it words itself; null leaves the generic row to speak. */
 function localProgramRow(a: Pick<AgentSetupView, 'state' | 'problem'>, label: string, version: string): SetupRow | null {
@@ -329,7 +355,8 @@ export function agentSetupRows(a: AgentSetupView, o: { hosts?: readonly string[]
   const label = a.label ?? 'Agent';
   const version = a.version ? ` (version ${a.version})` : '';
   const local = a.kind === LOCAL_MODEL_KIND;
-  const localRow = local ? localProgramRow(a, label, version) : null;
+  const hosted = a.kind === HOSTED_MODEL_KIND;
+  const localRow = local ? localProgramRow(a, label, version) : hosted ? hostedProgramRow(a, label) : null;
   if (localRow) rows.push(localRow);
   else switch (a.state) {
     case 'ready':
@@ -352,7 +379,7 @@ export function agentSetupRows(a: AgentSetupView, o: { hosts?: readonly string[]
   }
   const hosts = o.hosts && o.hosts.length > 0 ? o.hosts : null;
   const dest = hosts ? hosts.join(', ') : a.consent.hostsCount === 1 ? 'one network destination' : `${a.consent.hostsCount} network destinations`;
-  const disclosure = local ? LOCAL_MODEL_DISCLOSURE : AGENT_STATE_DISCLOSURE;
+  const disclosure = local ? LOCAL_MODEL_DISCLOSURE : hosted ? HOSTED_MODEL_DISCLOSURE : AGENT_STATE_DISCLOSURE;
   const grants = local ? 'Nexus may use the local model only at' : 'Nexus’s proxy allows the agent only';
   if (a.consent.live) {
     const c = a.consent.caps;
@@ -386,11 +413,22 @@ export interface RuntimeChoice {
   destination: string | null;
   /** Only the runtime that serves models: its choices (a model that cannot use tools is listed, but cannot be picked). */
   models: { name: string; label: string; disabled: boolean }[] | null;
-  /** The model in force or preselected (a name from `models`), null when none. */
+  /** The model in force or preselected (a name from `models`, or from the chosen provider's `providers` entry), null when none. */
   model: string | null;
+  /**
+   * Only the runtime that offers hosted providers: its providers, each with its models (the chosen provider's list is the model dropdown's),
+   * the provider in force or preselected, and what a missing or rejected key needs (a sentence, with the provider's label; the button
+   * opens Settings). `models` is null for such a runtime: the model list is the chosen provider's.
+   */
+  providers?: ProviderChoice[] | null;
+  provider?: string | null;
+  keyHelp?: { text: string; settings: boolean } | null;
   /** What the row's button does: use this runtime when no permission is live, switch to it when another is; null for the one in use. */
   action: { op: 'grant' | 'switch'; label: string; disabled: boolean } | null;
 }
+
+/** One provider of the hosted runtime as the picker lists it: its models (one that cannot use tools is listed, but cannot be picked) and whether a key is saved. */
+export interface ProviderChoice { id: string; label: string; keyPresent: boolean; destination: string | null; models: { name: string; label: string; disabled: boolean }[] }
 
 const runtimeWord = (o: AgentRuntimeOptionView): { word: string; text: string; ok: boolean } => {
   const local = o.kind === LOCAL_MODEL_KIND;
@@ -413,14 +451,17 @@ const runtimeWord = (o: AgentRuntimeOptionView): { word: string; text: string; o
  * chosen per runtime. Closing the sheet or revoking the permission does not forget it, so the picker comes back as it was left
  * and "Use this runtime" grants that same runtime and model again.
  */
-const memory: { kind: string | null; models: Record<string, string> } = { kind: null, models: {} };
+const memory: { kind: string | null; models: Record<string, string>; providers: Record<string, string> } = { kind: null, models: {}, providers: {} };
 export const runtimeMemory = {
   models: (): Record<string, string> => ({ ...memory.models }),
+  /** The provider picked per runtime (only a runtime that offers providers). */
+  providers: (): Record<string, string> => ({ ...memory.providers }),
   kind: (): string | null => memory.kind,
   rememberModel(kind: string, model: string): void { memory.models[kind] = model; },
+  rememberProvider(kind: string, provider: string): void { memory.providers[kind] = provider; },
   /** The runtime in use (with its model, when it serves models). */
   rememberInUse(kind: string, model: string | null): void { memory.kind = kind; if (model) memory.models[kind] = model; },
-  clear(): void { memory.kind = null; memory.models = {}; }
+  clear(): void { memory.kind = null; memory.models = {}; memory.providers = {}; }
 };
 
 /**
@@ -447,10 +488,45 @@ export function shrunkRereadDelay(prev: Pick<AgentConsentView, 'runtimes'> | nul
 }
 
 /** The runtime in use in a #51 answer, for the memory: its kind and model. Null when no permission is live. */
-export function runtimeInUse(view: Pick<AgentConsentView, 'runtimes' | 'consent'> | null | undefined): { kind: string; model: string | null } | null {
+export function runtimeInUse(view: Pick<AgentConsentView, 'runtimes' | 'consent'> | null | undefined): { kind: string; model: string | null; provider?: string | null } | null {
   if (!view || !view.consent.live || !Array.isArray(view.runtimes)) return null;
   const r = view.runtimes.find((o) => o.selected);
-  return r ? { kind: r.kind, model: r.model ?? null } : null;
+  // The provider is named only for a runtime that offers providers (every other answer keeps its two keys).
+  return r ? { kind: r.kind, model: r.model ?? null, ...(Array.isArray(r.providers) ? { provider: r.provider ?? null } : {}) } : null;
+}
+
+/**
+ * The hosted runtime's picker row. The provider is the one picked in this sheet, else the one in force, else the first provider that has
+ * a model able to use tools (the probe's own order); the model is the picked one when that provider lists it (and it can use tools), else
+ * the one in force for that provider, else that provider's first model able to use tools. Usable once the provider has a saved key.
+ */
+function hostedChoice(o: AgentRuntimeOptionView, live: boolean, chosen: Readonly<Record<string, string>>, chosenProviders: Readonly<Record<string, string>>, lastKind: string | null): RuntimeChoice {
+  const providers: ProviderChoice[] = (o.providers ?? []).map((p) => ({ id: p.id, label: p.label, keyPresent: p.keyPresent === true,
+    destination: p.hosts.length > 0 ? p.hosts.join(', ') : null,
+    models: p.models.map((m) => ({ name: m.name, label: m.tools ? m.name : `${m.name} (cannot use tools)`, disabled: !m.tools })) }));
+  const usableModels = (p: ProviderChoice | undefined): string[] => (p ? p.models.filter((m) => !m.disabled).map((m) => m.name) : []);
+  const byId = (id: string | undefined | null): ProviderChoice | undefined => (typeof id === 'string' ? providers.find((p) => p.id === id) : undefined);
+  const provider = byId(chosenProviders[o.kind]) ?? byId(o.provider) ?? providers.find((p) => usableModels(p).length > 0);
+  const pickedModel = chosen[o.kind];
+  const model = !provider ? null
+    : pickedModel !== undefined && usableModels(provider).includes(pickedModel) ? pickedModel
+      : o.model !== null && o.provider === provider.id && usableModels(provider).includes(o.model) ? o.model : usableModels(provider)[0] ?? null;
+  const hasKey = provider?.keyPresent === true;
+  const rejected = o.selected && o.problem === 'key_rejected';
+  const destination = o.hosts.length > 0 ? o.hosts.join(', ') : null;
+  const usable = o.state === 'ready' && provider !== undefined && model !== null && hasKey && !rejected;
+  const keyHelp = o.state === 'ready' && provider !== undefined && (!hasKey || rejected)
+    ? { text: rejected ? AGENT_REASON_TEXT.hosted_key_rejected : `${AGENT_REASON_TEXT.hosted_key_missing} ${KEY_HELP_TEXT}`, settings: true } : null;
+  const w: { word: string; text: string; ok: boolean } = o.state !== 'ready' ? runtimeWord(o)
+    : !provider || model === null ? { word: 'Needs attention', text: AGENT_REASON_TEXT.hosted_provider_not_chosen, ok: false }
+      : rejected ? { word: 'Needs attention', text: AGENT_REASON_TEXT.hosted_key_rejected, ok: false }
+        : !hasKey ? { word: 'Needs attention', text: AGENT_REASON_TEXT.hosted_key_missing, ok: false }
+          : o.selected && o.problem !== null ? { word: 'Needs attention', text: LOCAL_PROBLEM_TEXT[o.problem], ok: false }
+            : { word: 'Ready', text: 'A model provider, a model and your API key are set up.', ok: true };
+  const text = o.selected ? (w.ok ? w.text : `In use. ${w.text}`) : !live && lastKind === o.kind ? `${w.text} It was the one in use before the permission ended.` : w.text;
+  return { kind: o.kind, label: o.label ?? 'Agent runtime', selected: o.selected, state: usable || (o.selected && w.ok) ? 'ok' : w.word === 'Not checked' ? 'unknown' : 'problem',
+    word: o.selected && w.ok ? 'In use' : w.word, text, destination, models: null, model, providers, provider: provider?.id ?? null, keyHelp,
+    action: o.selected ? null : { op: live ? 'switch' : 'grant', label: live ? 'Switch to this runtime' : 'Use this runtime', disabled: !usable } };
 }
 
 /**
@@ -470,11 +546,13 @@ export function pickerPermissionRows(rows: readonly SetupRow[], o: { picker: boo
  * The picker's rows from #51's runtimes. Empty unless the probe reported more than one runtime (or one that serves models): with a
  * single runtime the sheet is as it always was. `chosen`: the model the person picked per runtime in the open sheet.
  */
-export function runtimeChoices(view: Pick<AgentConsentView, 'runtimes' | 'consent'> | null | undefined, chosen: Readonly<Record<string, string>> = {}, lastKind: string | null = null): RuntimeChoice[] {
+export function runtimeChoices(view: Pick<AgentConsentView, 'runtimes' | 'consent'> | null | undefined, chosen: Readonly<Record<string, string>> = {}, lastKind: string | null = null,
+  chosenProviders: Readonly<Record<string, string>> = {}): RuntimeChoice[] {
   const list = view && Array.isArray(view.runtimes) ? view.runtimes : [];
-  if (list.length === 0 || (list.length < 2 && list.every((r) => r.models === null))) return [];
+  if (list.length === 0 || (list.length < 2 && list.every((r) => r.models === null && !Array.isArray(r.providers)))) return [];
   const live = view!.consent.live;
   return list.map((o): RuntimeChoice => {
+    if (o.kind === HOSTED_MODEL_KIND && Array.isArray(o.providers)) return hostedChoice(o, live, chosen, chosenProviders, lastKind);
     const w = runtimeWord(o);
     const models = o.models ? o.models.map((m) => ({ name: m.name, label: m.tools ? m.name : `${m.name} (cannot use tools)`, disabled: !m.tools })) : null;
     const pick = chosen[o.kind];

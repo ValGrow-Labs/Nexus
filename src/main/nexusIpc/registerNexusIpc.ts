@@ -45,6 +45,7 @@ import { MAX_LINK_SOURCES } from '../nexus/lineage/lineageService';
 import { getUserAction } from '../../shared/nexus/actions';
 import { DOMAINS } from '../../shared/nexus/domains/index';
 import { LOCAL_MODEL_KIND, modelProblem } from '../../shared/nexus/localModel';
+import { HOSTED_MODEL_KIND, hostedChoiceProblem } from '../../shared/nexus/hostedModel';
 import { fail, ok, unavailable } from './envelope';
 import {
   APPROVAL_STATUSES_ACCEPTED, DEPLOYMENT_STATUSES_ACCEPTED, MAX_FOCUS_VERSIONS, PREVIEW_PARTS, RequestError, V
@@ -791,23 +792,24 @@ export function registerNexusIpc(registrar: IpcRegistrar, deps: NexusIpcDeps): v
   // another runtime as one step; `model` changes the live permission's model. Owner role (the service checks); `revoke` ends it.
   reg('nexus:agent:consent', (args) => {
     V.arity(args, 1);
-    const o = V.object(args[0], ['op', 'caps', 'runtime', 'model'] as const, ['caps', 'runtime', 'model'] as const);
+    const o = V.object(args[0], ['op', 'caps', 'runtime', 'model', 'provider'] as const, ['caps', 'runtime', 'model', 'provider'] as const);
     const op = V.enumOf(o.op, 'op', ['get', 'grant', 'revoke', 'switch', 'model'] as const);
     if (op === 'get' || op === 'revoke') {
       if (o.caps !== undefined) throw new RequestError('caps', 'is sent only with grant');
       if (o.runtime !== undefined) throw new RequestError('runtime', 'is sent only with grant or switch');
       if (o.model !== undefined) throw new RequestError('model', 'is sent only with grant, switch or model');
+      if (o.provider !== undefined) throw new RequestError('provider', 'is sent only with grant, switch or model');
       return { op };
     }
     if (op === 'model') {
       if (o.caps !== undefined) throw new RequestError('caps', 'is sent only with grant or switch');
       if (o.runtime !== undefined) throw new RequestError('runtime', 'is sent only with grant or switch');
       if (o.model === undefined) throw new RequestError('model', 'is required');
-      return { op, model: V.modelName(o.model) };
+      return { op, model: V.modelName(o.model), provider: o.provider === undefined ? undefined : V.providerId(o.provider) };
     }
     if (op === 'switch' && o.runtime === undefined) throw new RequestError('runtime', 'is required');
     return { op, caps: o.caps === undefined ? {} : V.consentCaps(o.caps), runtime: o.runtime === undefined ? undefined : V.runtimeKind(o.runtime),
-      model: o.model === undefined ? undefined : V.modelName(o.model) };
+      model: o.model === undefined ? undefined : V.modelName(o.model), provider: o.provider === undefined ? undefined : V.providerId(o.provider) };
   }, async (nx, me, q) => {
     const probe = nx.agentProbe;
     if (q.op === 'get') {
@@ -827,7 +829,17 @@ export function registerNexusIpc(registrar: IpcRegistrar, deps: NexusIpcDeps): v
       const live = nx.budget!.live();
       if (!live) throw new PlatformError('unavailable', 'the agent has not been given permission yet', { reason: 'consent_missing' });
       const entry = probe?.cache.fresh(live.runtimeKind) ?? null;
-      if (live.runtimeKind !== LOCAL_MODEL_KIND || !entry) throw new PlatformError('unavailable', 'the agent has not been checked on this computer yet', { reason: 'runtime_unknown' });
+      if ((live.runtimeKind !== LOCAL_MODEL_KIND && live.runtimeKind !== HOSTED_MODEL_KIND) || !entry) throw new PlatformError('unavailable', 'the agent has not been checked on this computer yet', { reason: 'runtime_unknown' });
+      if (live.runtimeKind === HOSTED_MODEL_KIND) {
+        // The provider (the one named, else the one in force) and the model must be ones the runtime's probe listed, tool support included.
+        const provider = q.provider ?? nx.budget!.liveChoice().provider;
+        const hp = hostedChoiceProblem(entry.setup?.providers, provider, q.model);
+        if (hp !== null || provider === null) throw new PlatformError('invalid', 'that provider and model cannot be used', { reason: hp ?? 'hosted_provider_not_chosen' });
+        nx.budget!.chooseModel(me, q.model, provider);
+        probe?.refresh();
+        return ok(agentConsentView(nx));
+      }
+      if (q.provider !== undefined) throw new PlatformError('invalid', 'that runtime does not offer providers', { reason: 'bad_provider' });
       const mp = modelProblem(entry.setup?.models, q.model);
       if (mp !== null) throw new PlatformError('invalid', 'that model cannot be used', { reason: mp });
       nx.budget!.chooseModel(me, q.model);
@@ -841,7 +853,17 @@ export function registerNexusIpc(registrar: IpcRegistrar, deps: NexusIpcDeps): v
       throw new PlatformError('unavailable', 'the agent has not been checked on this computer yet', { reason: 'runtime_unknown' });
     }
     let model: string | null = null;
-    if (seen.kind === LOCAL_MODEL_KIND) {
+    let provider: string | null = null;
+    if (seen.kind === HOSTED_MODEL_KIND) {
+      // The hosted runtime: a provider the probe listed and one of its models that can use tools; the permission covers every provider's host
+      // (the probe's own list), whether or not a key is saved yet (a missing key is said when a turn starts).
+      const hp = hostedChoiceProblem(seen.setup?.providers, q.provider ?? null, q.model ?? null);
+      if (hp !== null) throw new PlatformError('invalid', 'that provider and model cannot be used', { reason: hp });
+      provider = q.provider!;
+      model = q.model!;
+    } else if (q.provider !== undefined) {
+      throw new PlatformError('invalid', 'that runtime does not offer providers', { reason: 'bad_provider' });
+    } else if (seen.kind === LOCAL_MODEL_KIND) {
       // The local-model runtime: the settings' address must be the destination granted, and the model must be one the server lists.
       const st = nx.agents ? nx.agents.localModelState(hosts, seen.setup?.models, q.model ?? null) : { model: null, reason: 'local_model_not_chosen' as const };
       if (st.reason !== null) throw new PlatformError('invalid', 'the local model cannot be used', { reason: st.reason });
@@ -851,9 +873,9 @@ export function registerNexusIpc(registrar: IpcRegistrar, deps: NexusIpcDeps): v
     }
     if (q.op === 'switch') {
       if (!nx.agents) throw new PlatformError('unavailable', 'agent turns are not available', { reason: 'agents_unavailable' });
-      nx.agents.switchRuntime(me, { runtimeKind: seen.kind, hosts, caps: Object.keys(q.caps).length > 0 ? q.caps : null, model });
+      nx.agents.switchRuntime(me, { runtimeKind: seen.kind, hosts, caps: Object.keys(q.caps).length > 0 ? q.caps : null, model, provider });
     } else {
-      nx.budget!.grant(me, { runtimeKind: seen.kind, hosts, caps: q.caps, ...(model !== null ? { model } : {}) });
+      nx.budget!.grant(me, { runtimeKind: seen.kind, hosts, caps: q.caps, ...(model !== null ? { model } : {}), ...(provider !== null ? { provider } : {}) });
     }
     probe?.refresh();
     return ok(agentConsentView(nx));

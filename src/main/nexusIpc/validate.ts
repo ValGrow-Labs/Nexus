@@ -24,6 +24,7 @@ import { USER_ACTIONS } from '../../shared/nexus/actions';
 import type { ParamField } from '../../shared/nexus/domainSpec';
 import { JOB_STATES } from '../nexus/jobs/jobRules';
 import { isModelName } from '../../shared/nexus/localModel';
+import { isProviderId } from '../../shared/nexus/hostedModel';
 
 export class RequestError extends Error {
   /** `bad_request` (the shape) or `bad_params` (an action's own parameter schema). */
@@ -290,6 +291,12 @@ export const V = {
   modelName(x: unknown): string {
     const s = str(x, 'model');
     if (!isModelName(s)) throw new RequestError('model', 'is not a model name');
+    return s;
+  },
+  /** A provider id as the runner's probe lists one (checked against main's own probe cache before it is used). */
+  providerId(x: unknown): string {
+    const s = str(x, 'provider');
+    if (!isProviderId(s)) throw new RequestError('provider', 'is not a provider id');
     return s;
   },
   branchName(x: unknown): string {

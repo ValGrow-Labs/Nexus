@@ -13,6 +13,7 @@
 import type { RuntimeSetup } from '../../../shared/nexus/runnerProtocol';
 import type { RuntimeHealth } from '../../../shared/nexus/runtime';
 import type { RuntimeModelInfo } from '../../../shared/nexus/localModel';
+import type { HostedProviderInfo } from '../../../shared/nexus/hostedModel';
 
 /** The longest a cached health stays usable (the runner probes every minute; five minutes of silence is a dead runner). */
 export const RUNTIME_HEALTH_TTL_MS = 5 * 60_000;
@@ -24,6 +25,8 @@ export interface RuntimeHealthEntryOut {
   egressHosts?: { host: string; port: number }[];
   /** The models the runtime's probe listed (a runtime that offers a choice of models); absent otherwise. */
   models?: RuntimeModelInfo[];
+  /** The providers the runtime's probe listed (the hosted-model runtime); absent otherwise. */
+  providers?: HostedProviderInfo[];
 }
 
 /** The most runtimes one probe records (the runner reports one per adapter; a handful at most). */
@@ -87,7 +90,8 @@ export class RuntimeHealthCache {
     if (!e) return null;
     return { kind: e.kind, health: e.health, flagsSha256: null,
       ...(e.setup ? { egressHosts: e.setup.egressHosts.map((h) => ({ host: h.host, port: h.port })) } : {}),
-      ...(e.setup?.models ? { models: e.setup.models.map((m) => ({ name: m.name, tools: m.tools })) } : {}) };
+      ...(e.setup?.models ? { models: e.setup.models.map((m) => ({ name: m.name, tools: m.tools })) } : {}),
+      ...(e.setup?.providers ? { providers: e.setup.providers.map((p) => ({ id: p.id, label: p.label, hosts: [...p.hosts], models: p.models.map((m) => ({ name: m.name, tools: m.tools })) })) } : {}) };
   }
 
   /** The hosts the adapter reported (the given runtime's, else the default one's), while fresh; null otherwise. Used for a consent grant. */

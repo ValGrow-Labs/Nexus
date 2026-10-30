@@ -182,30 +182,33 @@ test('the agent request schemas (#42-#51) name no folder, command, image, networ
   const banned = /^(root|rootPath|cwd|path|dir|folder|file|image|network|argv|command|env|host|hosts|hostname|url|proxy|model|modelId|provider|runtime|principal|principalId|actor|actorId|role|token|secret|worktree)$|Path$|Root$|Dir$|File$/i;
   // Deliberate contract change (local-model runtime): #51 alone may carry `runtime` (a kind id) and `model` (a name), and only as a CHOICE among
   // what main's own probe listed; main never takes a destination, command or path from them (pinned below). No other schema may.
-  const isConsent = (l) => keysOf(l).join() === 'op,caps,runtime,model';
-  for (const l of lists) for (const k of keysOf(l)) assert.ok(!banned.test(k) || (isConsent(l) && (k === 'runtime' || k === 'model')), k);
+  // Hosted-model runtime (second deliberate change): #51 also carries `provider` (an opaque id), again only a choice among the probe's providers.
+  const isConsent = (l) => keysOf(l).join() === 'op,caps,runtime,model,provider';
+  for (const l of lists) for (const k of keysOf(l)) assert.ok(!banned.test(k) || (isConsent(l) && (k === 'runtime' || k === 'model' || k === 'provider')), k);
   for (const k of [...validate.matchAll(/CONSENT_CAP_KEYS = \[([^\]]*)\]/g)].flatMap((m) => keysOf(m[1]))) assert.ok(!banned.test(k), k);
   assert.deepEqual(lists.map(keysOf).sort(), [
-    ['decision', 'comment'], ['op', 'caps', 'runtime', 'model'], ['branch', 'expectedAcceptedHead'], ['projectId', 'statuses'],
+    ['decision', 'comment'], ['op', 'caps', 'runtime', 'model', 'provider'], ['branch', 'expectedAcceptedHead'], ['projectId', 'statuses'],
     ['projectId', 'workspaceId', 'sessionId', 'skillId', 'focusVersionIds', 'message', 'intentId']
   ].sort());
   // The one place a destination enters a consent is the runtime probe's cache, never a request field.
   // (Local-model runtime: the cache is asked per kind, and the grant may add the one model the probe listed; the destination is still only `hosts`.)
-  assert.match(block, /nx\.budget!\.grant\(me, \{ runtimeKind: seen\.kind, hosts, caps: q\.caps, \.\.\.\(model !== null \? \{ model \} : \{\}\) \}\)/);
+  assert.match(block, /nx\.budget!\.grant\(me, \{ runtimeKind: seen\.kind, hosts, caps: q\.caps, \.\.\.\(model !== null \? \{ model \} : \{\}\), \.\.\.\(provider !== null \? \{ provider \} : \{\}\) \}\)/);
   assert.match(block, /const hosts = probe\?\.cache\.egressHosts\(q\.runtime\) \?\? null;/);
   assert.doesNotMatch(block, /\b(o|q|a)\.hosts?\b/);
   // The runtime kind and the model are shape-checked here and then only looked up in main's own probe cache (a kind the probe never
   // reported, or a model its server did not list, is refused).
   assert.match(block, /const seen = probe\?\.cache\.fresh\(q\.runtime\) \?\? null;/);
   assert.match(block, /modelProblem\(entry\.setup\?\.models, q\.model\)/);
+  // The provider is shape-checked and then only looked up in the probe's own provider list (hostedChoiceProblem), never taken as a destination.
+  assert.match(block, /hostedChoiceProblem\(seen\.setup\?\.providers, q\.provider \?\? null, q\.model \?\? null\)/);
   // The request types the preload sends (B2b part): the same ban.
   const ipc = read('src/shared/nexus/ipc.ts');
   const b2b = ipc.slice(ipc.indexOf('// ---------- B2b requests'));
   assert.ok(b2b.length > 300);
   // Everything but #51's own args type, which alone carries `runtime` and `model` (deliberate; see above) and is pinned to exactly those keys.
-  const consentArgs = b2b.match(/export type AgentConsentArgs =[\s\S]*?\{ op: 'model'; model: string \};/);
-  assert.ok(consentArgs && /runtime\??: string/.test(consentArgs[0]) && /model\??: string/.test(consentArgs[0]));
-  assert.deepEqual([...new Set([...consentArgs[0].matchAll(/\b([A-Za-z]+)\??:\s/g)].map((m) => m[1]))].sort(), ['caps', 'model', 'op', 'runtime']);
+  const consentArgs = b2b.match(/export type AgentConsentArgs =[\s\S]*?\{ op: 'model'; model: string; provider\?: string \};/);
+  assert.ok(consentArgs && /runtime\??: string/.test(consentArgs[0]) && /model\??: string/.test(consentArgs[0]) && /provider\??: string/.test(consentArgs[0]));
+  assert.deepEqual([...new Set([...consentArgs[0].matchAll(/\b([A-Za-z]+)\??:\s/g)].map((m) => m[1]))].sort(), ['caps', 'model', 'op', 'provider', 'runtime']);
   for (const k of [...b2b.replace(consentArgs[0], '').matchAll(/\b([A-Za-z]+)\??:\s/g)].map((m) => m[1])) assert.ok(!banned.test(k), k);
   // The preload takes no principal or function: each agent method forwards its ids and values and nothing else.
   const preload = read('src/preload/index.ts');
@@ -285,9 +288,9 @@ test('the engine check is asked for in one place (the platform\'s refresh), neve
   const body = setup.slice(setup.indexOf('export function agentSetupView'));
   assert.doesNotMatch(body, /\bhosts\b\s*[:=]|\.hosts\b(?!\.length)|egressHosts/, 'the plain setup row only counts the hosts');
   const ipc = read('src/shared/nexus/ipc.ts');
-  // Two: the consent view's own list and (deliberate, local-model runtime) each picker row's `AgentRuntimeOptionView.hosts`, the probe's own
-  // destinations the user sees before granting.
-  assert.equal((ipc.match(/\bhosts: string\[\]/g) || []).length, 2, 'two view types have a hosts field');
+  // Three: the consent view's own list, (deliberate, local-model runtime) each picker row's `AgentRuntimeOptionView.hosts`, and (deliberate, hosted-model
+  // runtime) each provider entry's `AgentProviderOptionView.hosts`: the probe's own destinations the user sees before granting.
+  assert.equal((ipc.match(/\bhosts: string\[\]/g) || []).length, 3, 'three view types have a hosts field');
   assert.match(ipc, /export interface AgentConsentView extends AgentSetupView \{\s*consent: AgentSetupView\['consent'\] & \{ hosts: string\[\] \};/);
   assert.match(read('src/preload/index.ts'), /nexusAgentConsent: \(args: AgentConsentArgs\): Promise<NexusResult<AgentConsentView>>/);
 });

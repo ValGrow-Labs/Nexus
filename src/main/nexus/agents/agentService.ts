@@ -35,6 +35,7 @@ import type {
 } from '../../../shared/nexus/ipc';
 import type { RuntimeEvent, RuntimeHealth } from '../../../shared/nexus/runtime';
 import { LOCAL_MODEL_KIND, LOCAL_MODEL_PROVIDER, modelProblem, type LocalModelReason, type RuntimeModelInfo } from '../../../shared/nexus/localModel';
+import { HOSTED_MODEL_KIND, hostedReasonOfMessage, type HostedModelReason, type HostedProviderInfo } from '../../../shared/nexus/hostedModel';
 import { turnLimitReached } from '../../../shared/nexus/agentPolicy';
 import { MCP_TOOLS } from '../../../shared/nexus/mcpTools';
 import { SKILLS } from '../../../shared/nexus/capabilities';
@@ -43,6 +44,7 @@ import { getDomain } from '../../../shared/nexus/domains/index';
 import type { TokenCapability } from '../../../shared/nexus/tokens';
 import type { SandboxProfileId } from '../../../shared/nexus/execution';
 import { containsSecret, redactText, scrubHostPaths } from '../activity/redact';
+import { appendActivityRow } from '../activity/writer';
 import { ensureAgentPrincipalTx, type AuthService } from '../auth/authService';
 import { requireStoredUser, type PrincipalResolver } from '../auth/principals';
 import { immediateTx } from '../db/tx';
@@ -58,6 +60,7 @@ import type { SessionService } from '../sessions/sessionService';
 import type { WorktreeService } from '../repo/worktreeService';
 import { canonicalHostsJson, hostsSha256, type BudgetService, type EgressHost, type LiveConsent } from './budgetService';
 import type { ContextResolver } from './contextResolver';
+import { hostedChoice, type HostedKeys } from './hostedModelSettings';
 import { readLocalModelSettings, type LocalServerConfig } from './localModelSettings';
 import type { Skills } from './skills';
 import type { TokenService } from './tokenService';
@@ -90,6 +93,8 @@ export interface RuntimeHealthEntry {
   egressHosts?: { host: string; port: number }[];
   /** The models the runtime's probe listed (the local-model runtime): the chosen model must be one of them, and report tool support. */
   models?: RuntimeModelInfo[];
+  /** The providers the runtime's probe listed (the hosted-model runtime): the chosen provider and model must be among them. */
+  providers?: HostedProviderInfo[];
 }
 /** `kind`: the runtime whose entry is wanted (the live consent's); none: the default one. A provider that ignores it answers its one entry. */
 export type RuntimeHealthProvider = (kind?: string | null) => RuntimeHealthEntry | null;
@@ -124,6 +129,12 @@ export interface AgentServiceDeps {
    * local-model runtime, through `localModelSettings.ts`. Omitted: that runtime's turns are refused ("no model is chosen").
    */
   localModelConfig?: () => LocalServerConfig | null | undefined;
+  /**
+   * The hosted-model runtime's provider keys (main: the encrypted secret store through `createHostedKeys`): `resolve` is read ONLY at
+   * lease time for a turn of that runtime (the key then goes into the plan's in-memory `runtime.apiKey`), `present` for the views and the
+   * start check. Omitted: that runtime's turns are refused ("add your key").
+   */
+  hostedKeys?: Pick<HostedKeys, 'resolve' | 'present'>;
 }
 
 /** A turn held by `waiting:runtime` asks for a fresh probe at most this often. */
@@ -163,6 +174,16 @@ const LOCAL_MODEL_PROBLEMS: Record<LocalModelReason, string> = {
   local_model_missing: 'the chosen local model is not installed on this computer',
   local_model_no_tools: 'the chosen local model cannot use tools, which agent turns need',
   local_model_server_down: 'the local model server is not running on this computer'
+};
+
+/** The sentences the hosted-model runtime's own problems are told in (main's AGENT_REASON_MESSAGES words them the same). */
+const HOSTED_MODEL_PROBLEMS: Record<HostedModelReason, string> = {
+  hosted_provider_not_chosen: 'no model provider and model are chosen yet',
+  hosted_key_missing: 'no API key is saved for the chosen model provider',
+  hosted_key_rejected: 'the model provider did not accept the saved API key',
+  hosted_rate_limited: 'the model provider is asking for fewer requests right now',
+  hosted_quota_exhausted: 'the free allowance with the model provider is used up for now',
+  hosted_model_unavailable: 'the chosen model is not available from the model provider'
 };
 
 export class AgentService implements AgentTurnPort {
@@ -315,7 +336,7 @@ export class AgentService implements AgentTurnPort {
    * (`turn_live`): a switch never cancels work; queued turns are held by the permission guard and then run on the new runtime.
    * `hosts` are the new runtime's own, from its probe entry (the caller passes them, never the renderer).
    */
-  switchRuntime(user: Principal, i: { runtimeKind: string; hosts: EgressHost[]; model?: string | null; caps?: Partial<Record<string, unknown>> | null }): LiveConsent {
+  switchRuntime(user: Principal, i: { runtimeKind: string; hosts: EgressHost[]; model?: string | null; provider?: string | null; caps?: Partial<Record<string, unknown>> | null }): LiveConsent {
     const holding = this.db.prepare(`SELECT COUNT(*) AS n FROM jobs WHERE kind = 'agent.run' AND state IN (${HOLDING_STATES.map(() => '?').join(', ')})`)
       .get(...HOLDING_STATES) as { n: number };
     if (holding.n > 0) refuse('conflict', 'a turn is running; finish or stop it before switching the runtime', 'turn_live');
@@ -324,7 +345,7 @@ export class AgentService implements AgentTurnPort {
       this.deps.budget.revoke(user);
       const carried = prior ? { turnUsdCents: prior.caps.turnUsdCents, dayUsdCents: prior.caps.dayUsdCents, turnsPerHour: prior.caps.turnsPerHour,
         concurrentTurns: prior.caps.concurrentTurns, turnTokens: prior.caps.turnTokens, toolCalls: prior.caps.toolCalls } : null;
-      return this.deps.budget.grant(user, { runtimeKind: i.runtimeKind, hosts: i.hosts, caps: i.caps ?? carried, ...(i.model ? { model: i.model } : {}) });
+      return this.deps.budget.grant(user, { runtimeKind: i.runtimeKind, hosts: i.hosts, caps: i.caps ?? carried, ...(i.model ? { model: i.model } : {}), ...(i.model && i.provider ? { provider: i.provider } : {}) });
     });
   }
 
@@ -438,7 +459,88 @@ export class AgentService implements AgentTurnPort {
       const lp = this.localModelProblem(consent, hosts);
       if (lp.problem !== null) refuse('unavailable', LOCAL_MODEL_PROBLEMS[lp.problem], lp.problem);
     }
+    // The hosted-model runtime needs a chosen provider and model that its probe lists, and a saved key for that provider.
+    if (consent.runtimeKind === HOSTED_MODEL_KIND) {
+      const hp = this.hostedCheck();
+      if (hp.problem !== null) refuse('unavailable', HOSTED_MODEL_PROBLEMS[hp.problem], hp.problem);
+    }
     return consent;
+  }
+
+  /**
+   * Why a turn of the hosted-model runtime cannot be built: the chosen provider and model (the permission's audit rows) judged against
+   * the probe's provider list, then whether a key is saved for that provider. `providers` / `chosen` override the live ones (a grant or a
+   * view asks about a choice that is not stored yet). Never reads the key's value.
+   */
+  hostedCheck(o: { providers?: readonly HostedProviderInfo[] | null; chosen?: { provider: string | null; model: string | null } } = {}):
+    { problem: HostedModelReason | null; provider: string | null; model: string | null } {
+    const providers = o.providers !== undefined ? o.providers : this.healthOf(HOSTED_MODEL_KIND)?.providers;
+    const chosen = o.chosen ?? this.deps.budget.liveChoice();
+    const c = hostedChoice({ providers, chosen });
+    if (!c.ok) return { problem: c.reason, provider: chosen.provider, model: chosen.model };
+    let has = false;
+    try { has = this.deps.hostedKeys?.present(c.provider) === true; } catch { has = false; }
+    return { problem: has ? null : 'hosted_key_missing', provider: c.provider, model: c.model };
+  }
+
+  /**
+   * Whether the newest hosted-model turn failed because the provider rejected the key and nothing was changed since (no key saved or
+   * deleted, no new permission or model choice): the setup row then says the key was rejected. False otherwise. Never throws.
+   */
+  hostedKeyRejected(): boolean {
+    try {
+      const a = this.db.prepare(`SELECT a.outcome AS outcome, COALESCE(a.finished_at, a.created_at) AS at FROM job_attempts a JOIN jobs j ON j.id = a.job_id
+        WHERE j.kind = 'agent.run' AND a.runtime_kind = ? ORDER BY a.created_at DESC, a.rowid DESC LIMIT 1`).get(HOSTED_MODEL_KIND) as { outcome: string | null; at: number } | undefined;
+      if (!a || a.outcome !== 'hosted_key_rejected') return false;
+      const after = this.db.prepare(`SELECT 1 FROM activity WHERE ts > ? AND ((action = 'hosted.key') OR (action = 'agent.consent' AND status = 'succeeded'
+        AND json_extract(details_json, '$.op') IN ('grant', 'model'))) LIMIT 1`).get(a.at);
+      return after === undefined;
+    } catch { return false; }
+  }
+
+  /** Whether a key is saved for a provider (a boolean for the views; never the value). */
+  hostedKeyPresent(provider: string): boolean {
+    try { return this.deps.hostedKeys?.present(provider) === true; } catch { return false; }
+  }
+
+  /** The audit row of a key being saved or deleted (provider id and operation only: never the key). Owner only, like the permission. */
+  recordKeyChange(user: Principal, op: 'set' | 'delete', provider: string): void {
+    this.deps.budget.requireOwner(user);
+    appendActivityRow(this.db, { actorKind: 'user', actorId: user.id, onBehalfOf: user.id, entityType: 'hosted_key', entityId: provider,
+      action: 'hosted.key', status: 'succeeded', details: { op, provider } }, this.deps.now());
+    // Deleting the key of the provider a live turn is using stops that turn through the same cancel path a revoked permission uses.
+    if (op === 'delete') this.stopHostedTurns(user, provider);
+  }
+
+  /**
+   * Cancels every live turn (leased, running, waiting for approval) of the hosted-model runtime when the live permission's chosen provider is
+   * `provider`: the execution core's own cancel (its attempt, token, proxy and container go with it), reason `hosted_key_deleted`.
+   */
+  stopHostedTurns(user: Principal, provider: string): number {
+    const live = this.deps.budget.live();
+    if (!live || live.runtimeKind !== HOSTED_MODEL_KIND || this.deps.budget.liveChoice().provider !== provider) return 0;
+    const rows = this.db.prepare(`SELECT id FROM jobs WHERE kind = 'agent.run' AND state IN ('leased','running','awaiting_approval') ORDER BY created_at, rowid`).all() as { id: string }[];
+    let n = 0;
+    for (const j of rows) {
+      try { this.deps.exec.cancel(user, j.id, { reason: 'hosted_key_deleted' }); n++; } catch (e) {
+        this.log(`[nexus] agents: a turn was not cancelled at the key deletion (${e instanceof PlatformError ? e.code : (e as Error)?.name ?? 'error'})`);
+      }
+    }
+    return n;
+  }
+
+  /** The text with every saved provider key replaced (a last guard before a runtime's text is kept; nothing puts a key there). */
+  private withoutKeys(text: string): string {
+    const keys = this.deps.hostedKeys;
+    if (!keys) return text;
+    let out = text;
+    try {
+      for (const p of this.healthOf(HOSTED_MODEL_KIND)?.providers ?? []) {
+        const k = keys.resolve(p.id);
+        if (k && out.includes(k)) out = out.split(k).join('[redacted]');
+      }
+    } catch { /* the guard never fails a settlement */ }
+    return out;
   }
 
   /** The sentence of a runtime problem reason; the local-model runtime's "not installed" is its server not running. */
@@ -698,6 +800,19 @@ export class AgentService implements AgentTurnPort {
       model = { provider: LOCAL_MODEL_PROVIDER, model: lp.model };
       endpoint = lp.endpoint;
     }
+    // The hosted-model runtime's turn names its chosen provider and model and carries the user's key for that provider, resolved HERE,
+    // before anything is minted: a turn without a usable choice or key fails with the fixed sentence and nothing is left behind. The key
+    // goes into the plan's in-memory `runtime.apiKey` and nowhere else (not in the request, the sandbox record or the environment record).
+    let apiKey: string | undefined;
+    if (consent.runtimeKind === HOSTED_MODEL_KIND) {
+      const hp = this.hostedCheck();
+      if (hp.problem !== null) return { failed: { code: hp.problem, message: HOSTED_MODEL_PROBLEMS[hp.problem] } };
+      let key: string | null = null;
+      try { key = this.deps.hostedKeys?.resolve(hp.provider!) ?? null; } catch { key = null; }
+      if (key === null) return { failed: { code: 'hosted_key_missing', message: HOSTED_MODEL_PROBLEMS.hosted_key_missing } };
+      model = { provider: hp.provider!, model: hp.model! };
+      apiKey = key;
+    }
     const domain = getDomain(j.workspace_id);
     const ceiling = domain?.capabilities ?? [];
     const caps: TokenCapability[] = TURN_GRANT.map((id) => ceiling.find((x) => x.id === id)).filter((x): x is NonNullable<typeof x> => !!x)
@@ -711,7 +826,7 @@ export class AgentService implements AgentTurnPort {
       job: { id: j.id, projectId: j.project_id }, attempt, bootId: c.bootId, dataHomeRoot: c.dataHomeRoot, workRel: c.workRel, logRel: c.logRel,
       profile: c.profile, imageId: c.imageId, worktree: p.worktree,
       runtime: { kind: consent.runtimeKind, token, sessionId: j.session_id, idempotencyKey: `${j.id}:${attempt.n}`, domainId: j.workspace_id,
-        skills: p.skills, context: { hash: p.contextSha256 }, message: this.messageOf(j), mcpUrl: c.mcpUrl, model, ...(endpoint ? { endpoint } : {}) },
+        skills: p.skills, context: { hash: p.contextSha256 }, message: this.messageOf(j), mcpUrl: c.mcpUrl, model, ...(endpoint ? { endpoint } : {}), ...(apiKey !== undefined ? { apiKey } : {}) },
       egress: { allow: hosts, consentHostsSha256: consent.hostsSha256 },
       caps: { turnTokens: consent.caps.turnTokens, turnUsdCents: consent.caps.turnUsdCents, dayRemainingUsdCents: dayRemaining, toolCalls: consent.caps.toolCalls },
       wallClockMs: consent.caps.wallClockMs, mcpTools
@@ -824,10 +939,15 @@ export class AgentService implements AgentTurnPort {
         ? { attempt: 'succeeded', job: 'completed', outcome: 'completed' }
         : { attempt: 'succeeded', job: 'partial', outcome: 'no_change' };
     }
+    if (terminal && terminal.t === 'run.failed' && a.runtime_kind === HOSTED_MODEL_KIND && hostedReasonOfMessage(terminal.message) !== null) {
+      // A hosted turn's own fixed failure sentences are recorded as the reasons main has copy for; a key problem does not end the conversation.
+      const reason = hostedReasonOfMessage(terminal.message)!;
+      return { attempt: 'failed', job: 'failed', outcome: reason, error: { code: reason, message: HOSTED_MODEL_PROBLEMS[reason] } };
+    }
     if (terminal && terminal.t === 'run.failed') {
       const outcome = terminal.code === 'auth' ? 'runtime_auth' : terminal.code === 'limit' ? 'limit' : terminal.code === 'protocol' ? 'runtime_protocol' : failureWord(terminal.message);
       return { attempt: 'failed', job: 'failed', outcome, sessionFailed: outcome === 'runtime_auth',
-        error: { code: outcome, message: scrubHostPaths(redactText(String(terminal.message ?? ''))).slice(0, 300) || outcome } };
+        error: { code: outcome, message: scrubHostPaths(redactText(a.runtime_kind === HOSTED_MODEL_KIND ? this.withoutKeys(String(terminal.message ?? '')) : String(terminal.message ?? ''))).slice(0, 300) || outcome } };
     }
     if (terminal && terminal.t === 'run.cancelled') {
       return { attempt: 'cancelled', job: 'interrupted', outcome: 'interrupted', error: { code: 'interrupted', message: 'the agent was stopped before it finished' } };
@@ -957,7 +1077,7 @@ export class AgentService implements AgentTurnPort {
           let f: unknown;
           try { f = JSON.parse(line); } catch { continue; }
           if (isObj(f) && f.stream === 'nexus' && typeof f.text === 'string' && f.text.startsWith('message: ') && typeof f.ts === 'number') {
-            out.push({ ts: f.ts, text: redactText(f.text.slice('message: '.length)).slice(0, 4000) });
+            out.push({ ts: f.ts, text: redactText(this.withoutKeys(f.text.slice('message: '.length))).slice(0, 4000) });
           }
         }
       } finally { await fh.close(); }

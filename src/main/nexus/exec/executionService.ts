@@ -2776,7 +2776,7 @@ export class ExecutionService {
     return { target: d.target, containerIds: withContainer ? [withContainer.container_id!] : [], logRanges };
   }
 
-  cancel(p: Principal, jobId: string, o?: { reason?: 'consent_revoked' }): ExecJob {
+  cancel(p: Principal, jobId: string, o?: { reason?: 'consent_revoked' | 'hosted_key_deleted' }): ExecJob {
     this.requireAvailable();
     const j = this.load(p, jobId, 'job.cancel');
     if (TERMINAL_JOB_STATES.has(j.state)) throw new PlatformError('illegal_transition', `a ${j.state} job cannot be cancelled`, { from: j.state });
@@ -2794,7 +2794,8 @@ export class ExecutionService {
         SELECT id, MAX(depth) AS depth FROM t GROUP BY id ORDER BY depth DESC, id`).all(j.id) as { id: string }[];
       for (const c of tree) this.cancelOneTx(p, c.id, 'parent', now, toCancel);
       this.cancelOneTx(p, j.id, 'user', now, toCancel, o?.reason === 'consent_revoked'
-        ? { code: 'consent_revoked', message: 'the network permission was revoked, so the turn was stopped' } : undefined);
+        ? { code: 'consent_revoked', message: 'the network permission was revoked, so the turn was stopped' }
+        : o?.reason === 'hosted_key_deleted' ? { code: 'hosted_key_missing', message: 'the API key was deleted, so the turn was stopped' } : undefined);
     });
     for (const c of toCancel) this.send({ op: 'attempt.cancel', attemptId: c.attemptId, graceMs: CANCEL_GRACE_MS, reason: c.reason });
     return this.toExecJob(this.row(j.id)!);

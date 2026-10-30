@@ -45,6 +45,8 @@ export const ACTIVITY_ACTIONS: readonly string[] = Object.freeze([
   'exec.orphan_removed',
   // B2b Task 4: the agent's network permission, and its per-turn capability tokens (counts only, never the token).
   'agent.consent', 'token.mint', 'token.revoke',
+  // The hosted-model runtime: a provider key was saved or deleted (the provider's id and the operation only; never the key).
+  'hosted.key',
   // B2b Task 7: a job's git worktree was prepared (never the worktree's own path, which is never in details).
   'repo.worktree',
   // B2b Task 9: a user's review decision, an accepted change set (or an accept that was rolled back), the undo of an
@@ -121,6 +123,7 @@ const ACTION_WORDS: Record<string, string> = {
   'repo.integration_resync': 'bring the accepted branch up to your latest commits',
   'context_redacted': "leave part of the agent's context out",
   'agent.consent': "change the agent's network permission",
+  'hosted.key': 'change an AI provider key',
   'token.mint': "issue the agent's turn permission",
   'token.revoke': "end the agent's turn permission",
   'auth.denied': 'act with its turn permission'
@@ -373,6 +376,7 @@ function sentence(row: ActivityView, ctx: ActivityContext): string | null {
       if (op === 'grant') return 'The agent was given network permission, with spend limits';
       return "The agent's network permission was changed";
     }
+    case 'hosted.key': return detail(row, 'op') === 'delete' ? 'An AI provider key was deleted' : 'An AI provider key was saved';
     case 'auth.denied': return 'The agent asked for something its permission does not cover, so it was refused';
     case 'token.mint': return 'The agent was given a permission for one turn';
     case 'token.revoke': return "The agent's turn permission ended";
