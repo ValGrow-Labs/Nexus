@@ -92,7 +92,7 @@ test('P-D3 no check id on screen: every check has one plain line for each result
   // The four lines the brief names.
   assert.equal(EV.validatorLine('cs.tests_pass', 'passed'), 'Your tests ran and passed');
   assert.equal(EV.validatorLine('git.paths_in_scope', 'passed'), 'The changes only touch files they should');
-  assert.equal(EV.validatorLine('sec.secret_scan', 'passed'), 'No secret keys found');
+  assert.equal(EV.validatorLine('sec.secret_scan', 'passed'), 'No common secret keys found');
   assert.equal(EV.validatorLine('git.applies_cleanly', 'passed'), 'The changes fit your project without conflicts');
   // A failing check never reads as passing, and a source never prints an id.
   for (const id of BLOCKING) assert.doesNotMatch(EV.validatorLine(id, 'failed'), /passed|\bpass\b/i, id);

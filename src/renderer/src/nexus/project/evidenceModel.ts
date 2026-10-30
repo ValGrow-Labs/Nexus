@@ -57,7 +57,7 @@ const CHECK_WORDS: Readonly<Record<string, CheckWords>> = Object.freeze({
   // A change the AI helper suggested. The tests of a change are the project's own tests run on it, and no name says "passed".
   'git.diff_nonempty': { name: 'Edits in the suggested changes', pass: 'The suggested changes include real edits', fail: 'The suggested changes are empty' },
   'git.paths_in_scope': { name: 'Files the changes touch', pass: 'The changes only touch files they should', fail: 'The changes touch files they should not' },
-  'sec.secret_scan': { name: 'Scan for common kinds of secret keys', pass: 'No secret keys found', fail: 'A secret key may be in the changes' },
+  'sec.secret_scan': { name: 'Scan for common kinds of secret keys', pass: 'No common secret keys found', fail: 'Something that looks like a secret key was found' },
   'sec.entropy_notes': { name: 'Text that could be a password (advice only)', pass: 'No random-looking text that could be a password', fail: 'Some random-looking text could be a password (advice only)' },
   'cs.tests_pass': { name: 'Your tests, run on the changes', pass: 'Your tests ran and passed', fail: 'Some of your tests failed' },
   'git.applies_cleanly': { name: 'Fit with your project', pass: 'The changes fit your project without conflicts', fail: 'The changes clash with your project' }

@@ -723,7 +723,7 @@ test('R4-minors copy and hygiene: merge copy, no raw ids, hashed intent keys, pl
   const EV = loadTs('src/renderer/src/nexus/project/evidenceModel.ts');
   assert.doesNotMatch(EV.validatorLabel('sec.secret_scan'), /holds no key or secret/);
   assert.match(EV.validatorLabel('sec.secret_scan'), /common kinds of secret keys/, 'the scan is named for what it looks for: common kinds only');
-  assert.equal(EV.validatorLine('sec.secret_scan', 'passed'), 'No secret keys found');
+  assert.equal(EV.validatorLine('sec.secret_scan', 'passed'), 'No common secret keys found');
   const live = X.agentSetupRows(agentView(), { hosts: ['api.example.test:443'] }).find((r) => r.id === 'agent-consent').text;
   assert.match(live, /400k tokens, 200 tool calls, 30 minutes and 20 child jobs per turn/);
   assert.doesNotMatch(live, /and nothing else/);
