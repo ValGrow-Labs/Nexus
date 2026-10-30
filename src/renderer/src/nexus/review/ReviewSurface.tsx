@@ -15,7 +15,7 @@ type DiffResult =
 
 const NO_CHANGES: { path: string; kind: 'modified' }[] = [];
 
-/** Read-only review of the project's uncommitted changes: real diff, no accept/discard. */
+/** Read-only look at the project's own unsaved changes: what changed in each file, with no keep or undo here. */
 export function ReviewSurface({ root, git, refresh }: { root: string; git: GitState; refresh: () => void }) {
   const actions = useShellActions();
   // Below 768px the diff editor is not mounted at all, and no diff is fetched.
@@ -42,11 +42,11 @@ export function ReviewSurface({ root, git, refresh }: { root: string; git: GitSt
     window.cth.gitDiff(root, selected).then((res) => {
       if (cancelled) return;
       if (!('ok' in res) || res.ok !== true) {
-        setResult({ key, status: 'error', message: 'error' in res && typeof res.error === 'string' ? res.error : 'The diff could not be read.' });
+        setResult({ key, status: 'error', message: 'error' in res && typeof res.error === 'string' ? res.error : 'Nexus could not read what changed in this file. Press Retry.' });
       } else if (res.isBinary) setResult({ key, status: 'binary' });
       else setResult({ key, status: 'ready', head: res.head, working: res.working });
     }).catch((e: unknown) => {
-      if (!cancelled) setResult({ key, status: 'error', message: e instanceof Error ? e.message : 'The diff could not be read.' });
+      if (!cancelled) setResult({ key, status: 'error', message: e instanceof Error ? e.message : 'Nexus could not read what changed in this file. Press Retry.' });
     });
     return () => { cancelled = true; };
   }, [root, selected, sig, key, mobile]);
@@ -54,26 +54,26 @@ export function ReviewSurface({ root, git, refresh }: { root: string; git: GitSt
   const frame = (body: ReactNode) => (
     <section className="nx-surface nx-review" aria-labelledby="nx-surface-title">
       <h1 id="nx-surface-title" className="nx-surface__title" tabIndex={-1}>Changes</h1>
-      {/* B2b: the changes the agent made (decide, accept, merge) come first; your own uncommitted changes follow. */}
+      {/* The AI helper's suggested changes (Looks good, Keep these changes, Add to my project) come first; your own unsaved changes follow. */}
       <ChangeSets />
       {body}
     </section>
   );
 
-  if (git.status === 'loading') return frame(<p className="nx-muted" role="status">Reading git status…</p>);
+  if (git.status === 'loading') return frame(<p className="nx-muted" role="status">Looking at your project’s files…</p>);
   if (git.status === 'error') {
     return frame(
       <div className="nx-review__empty" role="status">
-        <span>Git status is unavailable for this folder{git.message ? `: ${git.message}` : '.'}</span>
+        <span title={git.message || undefined}>Nexus could not check this folder for changes. Press Retry. If this keeps happening, check that Git is installed.</span>
         <Button variant="quiet" icon="refresh" onClick={refresh}>Retry</Button>
       </div>
     );
   }
-  if (!git.isRepo) return frame(<p className="nx-muted">This folder is not a git repository, so there is nothing to review.</p>);
+  if (!git.isRepo) return frame(<p className="nx-muted">This folder is not set up with Git, the program that tracks changes, so there is nothing to look at here. Set up Git in this folder to see changes here.</p>);
   if (changed.length === 0) {
     return frame(
       <>
-        <p className="nx-muted">No uncommitted changes. When an agent or you edit files in this project, the changes appear here for review.</p>
+        <p className="nx-muted">No changes yet. When the AI helper or you edit files in this project, the changes show up here so you can look at them.</p>
         <div className="nx-review__actions"><Button variant="quiet" icon="refresh" onClick={() => { setAttempt((n) => n + 1); refresh(); }}>Refresh</Button></div>
       </>
     );
@@ -84,7 +84,7 @@ export function ReviewSurface({ root, git, refresh }: { root: string; git: GitSt
     <>
       <p className="nx-review__note">{REVIEW_PHASE_NOTE}</p>
       <div className="nx-review__layout">
-        <nav className="nx-review__files" aria-label="Changed files">
+        <nav className="nx-review__files" aria-label="Files that changed">
           {groups.map((g) => (
             <section key={g.kind} className="nx-review__group" aria-labelledby={`nx-review-g-${g.kind}`}>
               <h2 id={`nx-review-g-${g.kind}`} className="nx-review__heading">{g.title} <span className="nx-id">{g.paths.length}</span></h2>
@@ -101,19 +101,19 @@ export function ReviewSurface({ root, git, refresh }: { root: string; git: GitSt
         <div className="nx-review__main">
           <div className="nx-review__actions">
             <Button onClick={() => actions.openIde(root)}>Open in Files</Button>
-            <Button onClick={() => { if (selected) { setSelection({ kind: 'file', label: selected }); focusIntent(); } }}>Ask an agent to revise</Button>
+            <Button onClick={() => { if (selected) { setSelection({ kind: 'file', label: selected }); focusIntent(); } }}>Ask the AI helper to change this</Button>
             <Button variant="quiet" icon="refresh" onClick={() => { setAttempt((n) => n + 1); refresh(); }}>Refresh</Button>
           </div>
-          {mobile ? <p className="nx-muted">Diffs are available on desktop.</p> : (
-          <div className="nx-review__diff" role="region" aria-label={selected ? `Diff of ${selected}` : 'Diff'}>
-            {!current && <p className="nx-muted" role="status">Loading diff…</p>}
+          {mobile ? <p className="nx-muted">What changed in a file shows on a wider screen. Open Nexus on a computer to see it.</p> : (
+          <div className="nx-review__diff" role="region" aria-label={selected ? `What changed in ${selected}` : 'What changed'}>
+            {!current && <p className="nx-muted" role="status">Loading what changed…</p>}
             {current?.status === 'error' && (
               <div className="nx-review__empty" role="alert">
                 <span>{current.message}</span>
                 <Button variant="quiet" icon="refresh" onClick={() => setAttempt((n) => n + 1)}>Retry</Button>
               </div>
             )}
-            {current?.status === 'binary' && <p className="nx-muted">Binary file, not shown</p>}
+            {current?.status === 'binary' && <p className="nx-muted">This file is not text (for example a picture), so it cannot be shown here.</p>}
             {current?.status === 'ready' && selected && <MonacoDiff key={selected} path={selected} original={current.head} modified={current.working} />}
           </div>
           )}

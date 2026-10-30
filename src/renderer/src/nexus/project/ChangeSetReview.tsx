@@ -11,11 +11,12 @@ import { Button } from '../ui/Button';
 import { EvidenceSection } from './EvidenceSection';
 import { useExecutionUi } from './execContext';
 import {
-  BUTTON_LABEL, DIFF_REDACTED_NOTE, acceptedText, changeSetModel, changeSetRows, classifyDiff, diffHasRedaction, headTitle, mergeModel, mergedOnBranch, mergedText, mergedTitle, reviewOf, type ChangeSetButton, type ChangeSetRow, type MergeModel
+  BUTTON_LABEL, DIFF_REDACTED_NOTE, acceptedText, changeSetModel, changeSetRows, classifyDiff, diffHasRedaction, diffSummary, headLine, headTitle, mergeModel, mergedOnBranch, mergedText, mergedTitle, reviewOf,
+  type ChangeSetButton, type ChangeSetRow, type MergeModel, type RailStep
 } from './changeSetModel';
 
 const PAGE_BYTES = 64 * 1024;
-const TOO_LARGE_TEXT = 'This change is too large to show here. Review it in your repository.';
+const TOO_LARGE_TEXT = 'These changes are too big to show here. Look at them in your own tools, or ask the AI helper to split the work into smaller pieces.';
 
 interface DiffState {
   text: string | null; error: string | null; loaded: boolean; more: (() => void) | null;
@@ -67,25 +68,26 @@ function useDiff(versionId: string): DiffState {
 
 function Diff({ d }: { d: DiffState }) {
   const lines = useMemo(() => (d.text === null ? [] : classifyDiff(d.text)), [d.text]);
-  if (!d.loaded) return <p className="nx-muted" role="status">Reading the change…</p>;
+  if (!d.loaded) return <p className="nx-muted" role="status">Loading what changed…</p>;
   return (
     <>
       {d.error && <p className="nx-muted" role="status">{d.error}</p>}
-      {d.text !== null && d.text.trim() === '' && <p className="nx-muted">The change contains no file changes to show.</p>}
+      {d.text !== null && d.text.trim() === '' && <p className="nx-muted">There are no edits to show. Ask the AI helper to try again.</p>}
       {d.text !== null && d.text.trim() !== '' && (
         <>
+          <p className="nx-cs__summary">{diffSummary(d.text, d.whole)}</p>
           {diffHasRedaction(d.text) && <p className="nx-muted" role="status">{DIFF_REDACTED_NOTE}</p>}
-          <pre className="nx-cs__diff" tabIndex={0} aria-label="Diff of the change, read only">
+          <pre className="nx-cs__diff" tabIndex={0} aria-label="What changed (read only)">
             {lines.map((l, i) => <span key={i} className="nx-cs__ln" data-k={l.kind}>{l.text}{'\n'}</span>)}
           </pre>
         </>
       )}
-      {d.more && <Button variant="quiet" onClick={d.more}>{d.error ? 'Try again' : 'Show more of the change'}</Button>}
+      {d.more && <Button variant="quiet" onClick={d.more}>{d.error ? 'Try again' : 'Show more of the changes'}</Button>}
     </>
   );
 }
 
-/** "Merge accepted work": asks the channel; the real confirmation is a native dialog in main. Shows main's answer as a sentence. */
+/** "Add to my project": asks the channel; the real confirmation is a native window from main. Shows main's answer as a sentence. */
 export function MergeBlock({ projectId, model, onDone }: { projectId: string; model: MergeModel; onDone: () => void }) {
   const [busy, setBusy] = useState(false);
   const [note, setNote] = useState<{ text: string; alert: boolean; title?: string } | null>(null);
@@ -100,14 +102,14 @@ export function MergeBlock({ projectId, model, onDone }: { projectId: string; mo
     onDone();
   };
   return (
-    <section className="nx-cs__merge" aria-label="Merge accepted work">
+    <section className="nx-cs__merge" aria-label="Add to my project">
       <p className="nx-cs__line">{model.line}</p>
       {model.button && (
         <>
           <div className="nx-passport__actions">
-            <Button variant="primary" disabled={busy} onClick={() => { void merge(); }}>{busy ? 'Waiting for your confirmation…' : model.button.label}</Button>
+            <Button variant="primary" disabled={busy} onClick={() => { void merge(); }}>{busy ? 'Waiting for you to confirm in the other window…' : model.button.label}</Button>
           </div>
-          <p className="nx-muted">Nexus asks you to confirm in a separate window. Your branch and the files git tracks move to the accepted work only if you confirm; untracked files and other branches are not touched.</p>
+          <p className="nx-muted">Nexus asks you to confirm in a separate window. Your project’s main version and its files change only if you confirm. New files you have not saved, and your other versions, are not touched.</p>
         </>
       )}
       {model.sentence && <p className="nx-muted" role="status">{model.sentence}</p>}
@@ -118,9 +120,28 @@ export function MergeBlock({ projectId, model, onDone }: { projectId: string; mo
 
 const DECISION_KEY: Record<ReviewDecision, string> = { approve: 'approve', request_changes: 'request', reject: 'reject' };
 
+/** The three steps in plain words, with the next one marked in words (never by colour alone) and what it will do. */
+function Rail({ steps }: { steps: RailStep[] }) {
+  const current = steps.find((x) => x.state === 'current');
+  return (
+    <>
+      <ol className="nx-cs__rail" aria-label="Your three steps">
+        {steps.map((x) => (
+          <li key={x.id} className="nx-cs__step" data-state={x.state} aria-current={x.state === 'current' ? 'step' : undefined}>
+            <span className="nx-cs__stepn" aria-hidden="true">{x.n}</span>
+            <span className="nx-cs__stepl">{x.label}</span>
+            <span className="nx-cs__stepw">{x.state === 'done' ? 'Done' : x.state === 'current' ? 'Next' : 'Later'}</span>
+          </li>
+        ))}
+      </ol>
+      {current && <p className="nx-muted">{current.label}: {current.help}</p>}
+    </>
+  );
+}
+
 /**
- * One change made by the agent: what it is waiting for (the headline names every blocking check), the read-only diff, your
- * decision (Approve, Request changes, Reject), Accept once approved, and Merge once accepted work is not on your branch.
+ * One set of suggested changes: where it stands (the headline), the 3-step rail (Looks good, Keep these changes, Add to my
+ * project) with one main button at a time, what changed (read only), and the checks. "Looks good" needs all of what changed loaded.
  * `withEvidence`: also list the checks (the Folio's own evidence section already does, so it asks for none).
  */
 export function ChangeSetReview({ versionId, projectId, status, name, withEvidence = false }: {
@@ -156,9 +177,9 @@ export function ChangeSetReview({ versionId, projectId, status, name, withEviden
     setBusy(null);
     if (r.ok) {
       setLocal(decision); setAsking(null); setComment('');
-      setNote({ text: decision === 'approve' ? 'Approved. Accept the change to put it on the Nexus branch.'
-        : decision === 'reject' ? 'Rejected. Nothing was accepted.'
-          : r.data.job ? 'Sent to the agent. It works on the change in the same conversation; follow it in the agent panel.' : 'Your request for changes was recorded.', alert: false });
+      setNote({ text: decision === 'approve' ? 'Looks good: done. Next: press “Keep these changes”. They are saved in Nexus’s copy, and your own files are not touched yet.'
+        : decision === 'reject' ? 'You said no to these changes. Nothing was kept.'
+          : r.data.job ? 'Sent to the AI helper. It works on the changes in the same conversation; follow it in the AI helper panel.' : 'Your request for different changes was saved.', alert: false });
     } else setNote({ text: agentFailText(r), alert: true });
     refresh();
   };
@@ -178,18 +199,19 @@ export function ChangeSetReview({ versionId, projectId, status, name, withEviden
   };
 
   return (
-    <section className="nx-cs" aria-label={name ? `Change ${name}` : 'Change made by the agent'}>
+    <section className="nx-cs" aria-label={name ? `Suggested changes: ${name}` : 'Suggested changes'}>
       <p className="nx-cs__headline">{view.headline}</p>
+      {view.rail && <Rail steps={view.rail} />}
       {view.blocking.length > 0 && (
-        <ul className="nx-cs__blocking" aria-label="Checks that are blocking this change">
-          {view.blocking.map((b) => <li key={b.id}><span>{b.label}</span> <span className="nx-xe__word">{b.word}</span></li>)}
+        <ul className="nx-cs__blocking" aria-label="Required checks that need attention">
+          {view.blocking.map((b) => <li key={b.id}><span>{b.label}</span> <span className="nx-xe__word">{b.word}</span> <span className="nx-xe__tag">Required</span></li>)}
         </ul>
       )}
-      {view.diff.head && <p className="nx-muted" title={headTitle(view.diff.head)}>The change is recorded at one head commit (hover to see it).</p>}
+      {view.diff.head && <p className="nx-muted" title={headTitle(view.diff.head)}>{headLine(view.diff.head)}</p>}
       {view.buttons.length > 0 && (
         <div className="nx-passport__actions">
           {view.buttons.map((b) => (
-            <Button key={b} variant={b === 'accept' ? 'primary' : 'secondary'} disabled={busy !== null} onClick={() => press(b)}>
+            <Button key={b} variant={b === 'accept' || b === 'approve' ? 'primary' : 'quiet'} disabled={busy !== null} onClick={() => press(b)}>
               {busy === b ? 'Working…' : BUTTON_LABEL[b]}
             </Button>
           ))}
@@ -197,29 +219,29 @@ export function ChangeSetReview({ versionId, projectId, status, name, withEviden
       )}
       {asking && (
         <div className="nx-xq__confirm">
-          <label htmlFor={commentId}>{asking === 'reject' ? 'Why are you rejecting this change?' : 'What should the agent change?'}</label>
+          <label htmlFor={commentId}>{asking === 'reject' ? 'Why are you saying no to these changes?' : 'What should the AI helper change?'}</label>
           <textarea id={commentId} ref={commentBox} className="nx-cs__comment" rows={3} maxLength={4000} value={comment} onChange={(e) => setComment(e.target.value)} />
           <div className="nx-xq__acts">
             <Button variant="primary" disabled={busy !== null || comment.trim() === ''} onClick={() => { void decide(asking, comment); }}>
-              {asking === 'reject' ? 'Reject the change' : 'Send to the agent'}
+              {asking === 'reject' ? 'Say no to these changes' : 'Send to the AI helper'}
             </Button>
             <Button variant="quiet" disabled={busy !== null} onClick={() => { setAsking(null); setComment(''); }}>Cancel</Button>
           </div>
-          {comment.trim() === '' && <p className="nx-muted">A comment is needed for this decision.</p>}
+          {comment.trim() === '' && <p className="nx-muted">Write a short note first. The AI helper reads it.</p>}
         </div>
       )}
       {view.sentences.length > 0 && <ul className="nx-xa__why">{view.sentences.map((s) => <li key={s}>{s}</li>)}</ul>}
       {note && <p className={note.alert ? 'nx-passport__note' : 'nx-muted'} role={note.alert ? 'alert' : 'status'}>{note.text}</p>}
       {view.merge && shown === 'active' && <MergeBlock projectId={projectId} model={view.merge} onDone={refresh} />}
       {withEvidence && detail.data && <EvidenceSection key={versionId} version={detail.data} kind="change_set" checked />}
-      <h3 className="nx-cs__sub">The change</h3>
+      <h3 className="nx-cs__sub">What changed</h3>
       <Diff d={diff} />
     </section>
   );
 }
 
-/** The Changes tool's section: accepted work to merge, then each change the agent made (the first one waiting for you is open).
- *  With no change set it renders nothing and reads nothing from the repository. */
+/** The Changes tool's section: kept work to add to your project, then each set of suggested changes (the first one waiting for you is open).
+ *  With none it renders nothing and reads nothing from the repository. */
 export function ChangeSets() {
   const ui = useExecutionUi();
   const projectId = ui?.projectId ?? null;
@@ -235,12 +257,12 @@ function ChangeSetList({ projectId, rows }: { projectId: string; rows: ChangeSet
   const firstWaiting = rows.find((r) => r.reviewable)?.versionId ?? null;
   const [open, setOpen] = useState<Record<string, boolean>>({});
   const merge = mergeModel(repo.data);
-  // An accepted change reads "Merged" once the accepted work is on the branch.
-  const shown = useMemo(() => rows.map((r) => (r.status === 'active' && mergedOnBranch(repo.data) ? { ...r, word: 'Merged' } : r)), [rows, repo.data]);
+  // A kept change reads "Added to your project" once the kept work is in the project's main version.
+  const shown = useMemo(() => rows.map((r) => (r.status === 'active' && mergedOnBranch(repo.data) ? { ...r, word: 'Added to your project' } : r)), [rows, repo.data]);
   return (
     <section className="nx-cs__list" aria-labelledby="nx-cs-title">
-      <h2 id="nx-cs-title" className="nx-cs__title">Changes made by the agent</h2>
-      <p className="nx-review__note">Each change was made in a separate copy of your repository. Nothing here touches your files until you merge accepted work.</p>
+      <h2 id="nx-cs-title" className="nx-cs__title">Suggested changes</h2>
+      <p className="nx-review__note">The AI helper made each suggestion in a safe copy of your project. Nothing here touches your files until you press “Add to my project”.</p>
       {merge && <MergeBlock projectId={projectId} model={merge} onDone={repo.reload} />}
       <ul className="nx-cs__rows">
         {shown.map((r) => {
@@ -248,7 +270,7 @@ function ChangeSetList({ projectId, rows }: { projectId: string; rows: ChangeSet
           return (
             <li key={r.versionId} className="nx-cs__row">
               <p className="nx-cs__rowhead">
-                <span className="nx-cs__name" title={r.name}>{r.name}</span> <span className="nx-id">v{r.versionNo}</span> <span className="nx-xe__word">{r.word}</span>
+                <span className="nx-cs__name" title={r.name}>{r.name}</span> <span className="nx-id">Version {r.versionNo}</span> <span className="nx-xe__word">{r.word}</span>
                 <Button variant="quiet" onClick={() => setOpen((o) => ({ ...o, [r.versionId]: !expanded }))} ariaLabel={`${expanded ? 'Hide' : 'Show'} ${r.name}`} ariaExpanded={expanded}>
                   {expanded ? 'Hide' : 'Show'}
                 </Button>

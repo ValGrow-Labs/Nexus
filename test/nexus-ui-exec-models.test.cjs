@@ -92,11 +92,11 @@ test('U-E1 evidence rows: JUnit counts reported by the framework, 12-character h
   val({ validatorId: 'git.head_resolves', evidence: [{ type: 'git', name: null, value: 'a'.repeat(40) }] })], { status: 'candidate' });
   const facts = v.rows.flatMap((r) => r.facts);
   const junit = facts.find((f) => f.kind === 'junit');
-  assert.deepEqual([junit.label, junit.value, junit.source], ['Test counts', '3/5 passed, 1 failed, 1 errored', 'Reported by the framework']);
+  assert.deepEqual([junit.label, junit.value, junit.source], ['Test counts', '3/5 passed, 1 failed, 1 errored', 'Reported by the test tool']);
   assert.equal(facts.find((f) => f.kind === 'hash').value, 'sha256:0123456789ab');
   assert.equal(EV.shortHash('f'.repeat(64)), 'f'.repeat(12));
   assert.equal(EV.shortHash(`sha256:${'e'.repeat(64)}`), `sha256:${'e'.repeat(12)}`);
-  assert.deepEqual([facts.find((f) => f.kind === 'http').label, facts.find((f) => f.kind === 'http').value], ['GET /health', 'Answered 200']);
+  assert.deepEqual([facts.find((f) => f.kind === 'http').label, facts.find((f) => f.kind === 'http').value], ['Answer from /health', 'Answered 200']);
   assert.equal(facts.find((f) => f.kind === 'git').value, 'a'.repeat(12));
   assert.equal(facts.find((f) => f.kind === 'exit').value, '1');
   for (const f of facts) assert.ok(f.source.length > 0, `${f.kind} names its source`);
@@ -144,16 +144,16 @@ test('U-E1 log ranges carry {jobId, offset, length}; the attempt only when the j
       error: null, createdAt: 1, startedAt: 1, finishedAt: 2, imageId: null, profile: null })) });
   assert.deepEqual(d.attemptHistory.map((a) => [a.id, a.n]), [['A1', 1], ['A2', 2]], 'the DTO sends each attempt id');
   const facts = EV.reportFacts(report);
-  assert.equal(facts.find((f) => f.name === 'container.exitCode').source, 'docker inspect State.ExitCode');
-  assert.equal(facts.find((f) => f.name === 'log.frames').source, 'run log range');
+  assert.equal(facts.find((f) => f.name === 'container.exitCode').source, 'read from Docker State.ExitCode');
+  assert.equal(facts.find((f) => f.name === 'log.frames').source, 'part of the task log');
 });
 
 test('U-E1 (fix round 1) the headline reads blocking rows only; unchecked kinds never read "Checking…"', () => {
-  assert.equal(EV.evidenceView([], { status: 'draft' }, false).headline, 'No checks for this kind');
+  assert.equal(EV.evidenceView([], { status: 'draft' }, false).headline, 'This kind of item has no checks');
   assert.equal(EV.evidenceView([], { status: 'draft' }, false).revalidate, false);
   // A failed advisory run never makes the headline "Checks passed".
   const advFailed = EV.evidenceView([val({ blocking: false, status: null, latestRun: { status: 'failed', summary: 'x', finishedAt: NOW } })], { status: 'active' });
-  assert.equal(advFailed.headline, 'No blocking checks');
+  assert.equal(advFailed.headline, 'No required checks');
   // A blocking row with no status yet reads "Checking…" only on a draft.
   assert.equal(EV.evidenceView([val({ status: null })], { status: 'candidate' }).headline, 'Some checks have not run');
   assert.equal(EV.evidenceView([val({ status: null })], { status: 'draft' }).headline, 'Checking…');
@@ -186,10 +186,10 @@ test('U-E1 a check that could not run reads "Checks could not run: <reason>" and
   assert.equal(EV.evidenceView(rows, { status: 'candidate' }).revalidate, false);
   assert.equal(EV.evidenceView([val({ status: 'failed' })], { status: 'draft' }).headline, 'Checks failed');
   assert.equal(EV.evidenceView([], { status: 'draft' }).headline, 'Checking…');
-  assert.equal(EV.evidenceView([], { status: 'active' }).headline, 'No checks recorded');
+  assert.equal(EV.evidenceView([], { status: 'active' }).headline, 'No checks saved yet');
   // An advisory row is a run result, never the status.
   const adv = EV.evidenceView([val({ validatorId: 'sde.deps.lock_matches', blocking: false, status: null, latestRun: { status: 'passed', summary: 'ok', finishedAt: NOW } })], { status: 'active' });
-  assert.equal(adv.headline, 'No blocking checks');
+  assert.equal(adv.headline, 'No required checks');
   assert.equal(adv.rows[0].word, 'Not run yet');
   assert.equal(adv.rows[0].latestRun.word, 'Passed');
   // "Checking…" on a non-draft is never shown (the B1 default validation state is "pending").
@@ -631,8 +631,8 @@ test('C7 PLACED_ACTIONS says where each lives; the diagnostic report pages and s
   assert.match(am, /Stop and Diagnose live on the dev deployment row\. A run row does not offer\n \*  Diagnose in this release\./);
   assert.doesNotMatch(src('runs/ProjectRuns.tsx'), /sde\.diagnose/, 'the comment matches the code: no Diagnose on run rows');
   const kv = src('project/kindViewers.tsx');
-  assert.equal(EV.partialReportNote(65536, 200000), 'This report is larger than one page: 65536 of 200000 bytes read. Its facts show once it is read whole.');
-  assert.equal(EV.partialReportNote(10, null), 'This report is larger than one page. Its facts show once it is read whole.');
+  assert.equal(EV.partialReportNote(65536, 200000), 'This report is too long for one page: 65536 of 200000 bytes loaded so far. Its facts show once all of it is loaded.');
+  assert.equal(EV.partialReportNote(10, null), 'This report is too long for one page. Its facts show once all of it is loaded.');
   const diag = kv.slice(kv.indexOf('function DiagnosticReport'), kv.indexOf('function Repository'));
   assert.match(diag, /if \(c\.more\) \{[\s\S]*partialReportNote\(c\.readBytes, c\.totalBytes\)[\s\S]*<Button variant="quiet" onClick=\{c\.more\}>Load more<\/Button>/);
   assert.ok(diag.indexOf('if (c.more)') < diag.indexOf('reportFacts(c.json)'), 'never "no fact" from part of a report');
@@ -899,7 +899,7 @@ test('S11 the evidence headline never says passed while a blocking check has no 
   const v = EV.evidenceView(manifestOnly, { status: 'draft' }, true, { kind: 'application', deployments: [] });
   assert.equal(v.headline, 'Manifest check passed; preview check not run yet — start a preview');
   const pending = v.rows.find((r) => r.validatorId === 'app.preview_health');
-  assert.deepEqual([pending.word, pending.status, pending.blocking, pending.summary], ['Not run yet', null, true, 'It runs on a dev deployment: start a preview to run it.']);
+  assert.deepEqual([pending.word, pending.status, pending.blocking, pending.summary], ['Not run yet', null, true, 'This check needs your app to be running: start a preview to run it.']);
   assert.equal(EV.evidenceView(manifestOnly, { status: 'draft' }, true, { kind: 'application', deployments: [{ status: 'starting', startedAt: 1 }] }).headline,
     'Checking: the dev deployment is starting');
   assert.equal(EV.evidenceView(manifestOnly, { status: 'draft' }, true, { kind: 'application', deployments: null }).headline, 'Some checks have not run');

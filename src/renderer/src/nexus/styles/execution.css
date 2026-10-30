@@ -56,6 +56,7 @@
 .nx-xe__row { display: grid; gap: 2px; padding-left: var(--nx-s2); border-left: 1px solid var(--nx-line-strong); }
 .nx-xe__head { display: flex; flex-wrap: wrap; justify-content: space-between; gap: var(--nx-s2); margin: 0; }
 .nx-xe__word { font-weight: 600; color: var(--nx-text-2); }
+.nx-xe__tag { font-size: 11px; color: var(--nx-text-3); border: 1px solid var(--nx-line-strong); border-radius: var(--nx-r-ctl); padding: 0 6px; align-self: center; }
 .nx-xe__text { margin: 0; color: var(--nx-text-2); overflow-wrap: anywhere; }
 .nx-xe__facts { display: grid; gap: 2px; margin: 0; }
 .nx-xe__facts > div { display: grid; grid-template-columns: minmax(0, 1fr); }
@@ -148,6 +149,17 @@
 .nx-cs__sub { margin: var(--nx-s2) 0 0; font: 600 12px/1.2 var(--nx-font); color: var(--nx-text-3); }
 .nx-cs__headline { margin: 0; font-weight: 650; }
 .nx-cs__line { margin: 0; font-weight: 600; }
+.nx-cs__summary { margin: 0; color: var(--nx-text-2); font-weight: 600; }
+/* The three-step rail: the step is told in words (Done / Next / Later), never by colour or weight alone. */
+.nx-cs__rail { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--nx-s2); }
+.nx-cs__step { display: grid; grid-template-columns: auto minmax(0, 1fr); column-gap: var(--nx-s2); align-items: baseline; padding: var(--nx-s2); border: 1px solid var(--nx-line); border-radius: var(--nx-r-ctl); color: var(--nx-text-3); }
+.nx-cs__step[data-state="current"] { border-color: var(--nx-ink); color: var(--nx-ink); }
+.nx-cs__step[data-state="done"] { color: var(--nx-text-2); }
+.nx-cs__stepn { grid-row: 1 / span 2; font: 600 12px/1 var(--nx-font); }
+.nx-cs__stepl { font-weight: 650; overflow-wrap: anywhere; }
+.nx-cs__stepw { font-size: 11px; }
+.nx-cs__step[data-state="current"] .nx-cs__stepw { font-weight: 650; text-decoration: underline; text-underline-offset: 2px; }
+@media (max-width: 767px) { .nx-cs__rail { grid-template-columns: minmax(0, 1fr); } }
 .nx-cs__blocking { list-style: none; margin: 0; padding: 0 0 0 var(--nx-s2); border-left: 1px solid var(--nx-line-strong); display: grid; gap: 2px; }
 .nx-cs__merge { display: grid; gap: var(--nx-s2); padding: var(--nx-s2) var(--nx-s3); border: 1px solid var(--nx-line); border-radius: var(--nx-r-obj); background: var(--nx-sunken); }
 .nx-cs__rows { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--nx-s3); }
