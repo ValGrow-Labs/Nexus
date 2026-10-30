@@ -121,3 +121,5 @@
 /* The side panel scrolls to its last item with room to spare, and the work area ends in a visible line (V9h). */
 .nx-passport { padding-bottom: calc(var(--nx-s4) + 24px); }
 .nx-bench { border-bottom: 1px solid var(--nx-divider); }
+/* When the side panel can scroll further, its bottom fades out: a half-shown last item reads as "scroll for more", not "cut off". */
+.nx-passport::after { content: ""; position: sticky; bottom: calc(-1 * var(--nx-s4) - 24px); height: 32px; margin-top: -32px; background: linear-gradient(to bottom, transparent, var(--nx-surface)); pointer-events: none; }

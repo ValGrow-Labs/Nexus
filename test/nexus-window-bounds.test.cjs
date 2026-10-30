@@ -41,3 +41,15 @@ test('main restores through the pure fit, and refits on display changes; the sid
   assert.ok(pc.includes('.nx-passport { padding-bottom: calc(var(--nx-s4) + 24px); }'));
   assert.ok(pc.includes('.nx-bench { border-bottom: 1px solid var(--nx-divider); }'));
 });
+
+test('V9i the app has a visible frame: left, right and bottom lines in the strong border colour, inset from the window edge; the side panel fades at its bottom; the work area ends in a line; scroll areas keep bottom room', () => {
+  const css = (f) => fs.readFileSync(path.join(__dirname, '..', 'src', 'renderer', 'src', 'nexus', 'styles', f), 'utf8');
+  const sh = css('shell.css');
+  assert.ok(sh.includes('.nx-shell { position: relative; box-sizing: border-box; padding: 0 8px 12px; }'));
+  assert.ok(sh.includes('bottom: 12px; border: 1px solid var(--nx-border-strong); border-top: 0; pointer-events: none;'));
+  const pc = css('project.css');
+  assert.ok(pc.includes('.nx-passport::after { content: ""; position: sticky;'));
+  assert.ok(pc.includes('.nx-bench { border-bottom: 1px solid var(--nx-divider); }'));
+  assert.ok(pc.includes('padding: var(--nx-s6) var(--nx-s6) 120px'), 'the work area keeps room under its last line');
+  assert.ok(pc.includes('.nx-passport { padding-bottom: calc(var(--nx-s4) + 24px); }'));
+});
