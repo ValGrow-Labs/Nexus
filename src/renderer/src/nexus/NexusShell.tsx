@@ -28,7 +28,8 @@ function IntentSlot() {
   }, [tick]);
   // A summoned line belongs to the route it was summoned on; leaving clears it.
   useEffect(() => { setSummonedOn((cur) => (cur === key ? cur : null)); }, [key]);
-  const docked = route.name === 'workspace' || route.name === 'project';
+  // The project page asks inside its own next-step box (inline), so only the workspace page docks the line.
+  const docked = route.name === 'workspace';
   if (docked) return <IntentLine key="docked" />;
   if (summonedOn === key) return <IntentLine key={`summoned:${key}`} summoned onClose={() => setSummonedOn(null)} />;
   return null;

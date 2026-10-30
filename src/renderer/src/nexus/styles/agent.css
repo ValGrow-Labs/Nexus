@@ -47,3 +47,6 @@
 .nx-ag__progress, .nx-ag__wait, .nx-ag__end { margin: 0; padding: var(--nx-s2) var(--nx-s3); border: 1px solid var(--nx-line-strong); border-radius: var(--nx-r-obj); background: var(--nx-surface); display: grid; gap: 2px; }
 .nx-ag__progress p, .nx-ag__wait p { margin: 0; }
 .nx-ag__wait { border-color: var(--nx-ink); }
+
+/* Inline: inside the project page's next-step box, in normal flow (no sticky bar, no outer margin). */
+.nx-intent--inline { position: static; margin: var(--nx-s2) 0 0; }

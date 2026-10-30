@@ -21,6 +21,7 @@ import { buildSpine, nodeLabel, spineLine } from './spineModel';
 import type { SpineNode } from './spineModel';
 import { useProjectGit } from './useProjectGit';
 import { Spine } from './Spine';
+import { IntentLine } from '../intent/IntentLine';
 import { ProjectHeader } from './ProjectHeader';
 import { ProgressSection } from './ProgressSection';
 import { changeSetRows } from './changeSetModel';
@@ -336,6 +337,7 @@ function Workbench({ project, tool }: { project: Project; tool: ProjectTool }) {
         <ExecutionNotice availability={availability} onSetup={execUi.openSetup} />
         <ApprovalsSection projectId={project.id} except={hasSde ? ['repo.write_refs'] : []} />
         {/* B2b: the AI helper is offered only where Software takes part: no other workspace claims to work yet. */}
+        {!hasSde && <section className="nx-ag__next" aria-label="Ask for what you want"><IntentLine inline /></section>}
         {hasSde && <AgentPanel projectId={project.id} workspaceId="sde" reviewReady={reviewReady} onReview={() => navigate({ name: 'project', id: project.id, tool: 'changes' })} />}
       </div>
       <ProgressSection>

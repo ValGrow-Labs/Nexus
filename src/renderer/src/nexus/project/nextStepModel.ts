@@ -3,7 +3,7 @@ import type { AgentPanelView } from '../agent/agentModel';
 import { CHOOSE_RUNTIME_BUTTON } from '../agent/agentModel';
 import { GLOSSARY } from '../data/glossary';
 
-export type NextStepAction = { kind: 'ask' | 'setup' | 'review'; label: string };
+export type NextStepAction = { kind: 'setup' | 'review'; label: string };
 export interface NextStep {
   tone: 'ready' | 'working' | 'waiting' | 'review' | 'setup' | 'problem';
   title: string;
@@ -39,5 +39,5 @@ export function nextStep(i: { panel: AgentPanelView; reviewReady: number; repoAp
   if (p.ending && p.ending.tone === 'failed') {
     return { tone: 'problem', title: p.ending.title, text: `${p.ending.text}${p.ending.next ? ` Next: ${lower(p.ending.next)}` : ''}`, action: null };
   }
-  return { tone: 'ready', title: 'Your project is ready', text: 'Ask the AI helper for what you want in the box at the bottom of the page.', action: { kind: 'ask', label: 'Ask the AI helper' } };
+  return { tone: 'ready', title: 'Your project is ready', text: 'Ask the AI helper for what you want in the box below.', action: null };
 }

@@ -1110,8 +1110,8 @@ test('V9e-1 one box says what is happening and the one thing to do next; a reque
   const panelOf = (o = {}) => A.agentPanelModel({ health: health(), availability: READY, sessions: [], sessionsFail: null, ...o });
   const ready = NS.nextStep({ panel: panelOf(), reviewReady: 0, repoApprovalWaiting: false });
   assert.equal(ready.tone, 'ready');
-  assert.deepEqual(ready.action, { kind: 'ask', label: 'Ask the AI helper' });
-  assert.ok(ready.text.includes('box at the bottom of the page'));
+  assert.equal(ready.action, null, 'the box below is the one control; there is no second button');
+  assert.ok(ready.text.includes('in the box below.'));
   assert.equal(NS.nextStep({ panel: panelOf(), reviewReady: 2, repoApprovalWaiting: false }).tone, 'review');
   assert.equal(NS.nextStep({ panel: panelOf(), reviewReady: 1, repoApprovalWaiting: false }).action.kind, 'review');
   const waiting = NS.nextStep({ panel: panelOf(), reviewReady: 1, repoApprovalWaiting: true });
@@ -1156,4 +1156,15 @@ test('V9f the request bar has its own row under the page and never covers conten
   const pc = fs.readFileSync(path.join(NEXUS, 'styles', 'project.css'), 'utf8');
   assert.ok(pc.includes('.nx-workbench { overflow-y: auto; }') && pc.includes('min-height: 340px; flex: 1 0 340px;'), 'the page scrolls instead of squeezing or overlapping');
   assert.ok(pc.includes('padding: var(--nx-s6) var(--nx-s6) 120px'), 'the work area keeps room under its last line');
+});
+
+test('V9g the project page has no fixed bottom bar: its request box is inside the next-step box, drawn in the flow; only the workspace page docks the line', () => {
+  const shell = fs.readFileSync(path.join(NEXUS, 'NexusShell.tsx'), 'utf8');
+  assert.ok(shell.includes("const docked = route.name === 'workspace';"));
+  const panelSrc = src('agent/AgentPanel.tsx');
+  const card = panelSrc.slice(panelSrc.indexOf('nx-ag__next'), panelSrc.indexOf('nx-ag__head'));
+  assert.ok(card.includes('<IntentLine inline />'), 'the card contains the input');
+  assert.ok(src('project/ProjectBench.tsx').includes('{!hasSde && <section className="nx-ag__next"'), 'a project without the AI helper keeps its lead-helper box, inline');
+  assert.ok(src('intent/IntentLine.tsx').includes("inline ? 'nx-intent nx-intent--inline'"));
+  assert.ok(fs.readFileSync(path.join(NEXUS, 'styles', 'agent.css'), 'utf8').includes('.nx-intent--inline { position: static;'));
 });

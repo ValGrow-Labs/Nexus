@@ -359,6 +359,6 @@ test('PH11 every sentence the panel, the log, the task list and the request box 
   assert.match(A.ISOLATION_NOTE, /Add to my project/);
   // The panel's own words.
   const tsx = src('agent/AgentPanel.tsx');
-  for (const t of ['>AI helper</h2>', 'Ask in the box at the bottom of the page', 'Save a starting point', 'Show what happened', 'Conversations with the AI helper', 'What the AI helper needs']) assert.ok(tsx.includes(t), t);
+  for (const t of ['>AI helper</h2>', 'Ask in the box above', 'Save a starting point', 'Show what happened', 'Conversations with the AI helper', 'What the AI helper needs']) assert.ok(tsx.includes(t), t);
   assert.doesNotMatch(tsx, />Agent<|Ask the agent|Take a repository snapshot|Open Setup|Show log|Hide log|Send to the agent|Message to the agent/);
 });

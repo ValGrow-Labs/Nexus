@@ -24,8 +24,9 @@ function newRequestId(): string { requestSeq += 1; return `r-${Date.now()}-${req
 
 /** One line, bound to what the user is looking at, that sends a request to an AI helper: this project's AI helper on a software
  *  project that is ready, the lead AI helper everywhere else. A label and one plain line say which. `summoned`: mounted on demand
- *  (Ctrl/Cmd+J or an "Ask" button) on a route that does not dock it, so it takes focus on mount and can close. */
-export function IntentLine({ summoned = false, onClose }: { summoned?: boolean; onClose?: () => void }) {
+ *  (Ctrl/Cmd+J or an "Ask" button) on a route that does not dock it, so it takes focus on mount and can close. `inline`: drawn in the
+ *  flow of the page (inside the project page's next-step box) instead of docked at the bottom. */
+export function IntentLine({ summoned = false, inline = false, onClose }: { summoned?: boolean; inline?: boolean; onClose?: () => void }) {
   const port = useAssistant();
   const route = useRoute();
   const projects = useStore((s) => s.projects);
@@ -145,7 +146,7 @@ export function IntentLine({ summoned = false, onClose }: { summoned?: boolean; 
   };
 
   return (
-    <form className="nx-intent" aria-label={words.ariaLabel} onSubmit={(e) => { e.preventDefault(); send(); }}>
+    <form className={inline ? 'nx-intent nx-intent--inline' : 'nx-intent'} aria-label={words.ariaLabel} onSubmit={(e) => { e.preventDefault(); send(); }}>
       <div className="nx-intent__row">
         <span className="nx-intent__mode" data-mode={mode}>{words.label}</span>
         {chip && (

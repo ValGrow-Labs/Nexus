@@ -6,7 +6,7 @@ import { usePlatform } from '../data/platformStore';
 import { GLOSSARY } from '../data/glossary';
 import { useExecutionUi } from '../project/execContext';
 import { nextStep } from '../project/nextStepModel';
-import { useNexusUi } from '../state/uiStore';
+import { IntentLine } from '../intent/IntentLine';
 import { Button } from '../ui/Button';
 import { ApprovalList } from '../project/ApprovalsSection';
 import { SessionLog } from './SessionLog';
@@ -53,12 +53,10 @@ export function AgentPanel({ projectId, workspaceId, reviewReady = 0, onReview }
   }, [running, panel.working]);
   // A request that starts working opens the panel so it is seen; the person can close it again.
   useEffect(() => { if (panel.working || repoWaiting.length > 0) setOpen(true); }, [panel.working, repoWaiting.length]);
-  const focusIntent = useNexusUi((s) => s.focusIntent);
   const step = nextStep({ panel, reviewReady, repoApprovalWaiting: repoWaiting.length > 0 });
   const press = () => {
     if (!step.action) return;
-    if (step.action.kind === 'ask') focusIntent();
-    else if (step.action.kind === 'setup') ui?.openSetup();
+    if (step.action.kind === 'setup') ui?.openSetup();
     else onReview?.();
   };
 
@@ -86,10 +84,14 @@ export function AgentPanel({ projectId, workspaceId, reviewReady = 0, onReview }
   const ending = panel.ending && repoWaiting.length === 0 && !snapshotStarted ? panel.ending : null;
   return (
     <section className="nx-ag" aria-labelledby={ids.body}>
-      <div className="nx-ag__next" data-tone={step.tone} role="status">
-        <p className="nx-ag__next-title">{step.title}</p>
-        <p className="nx-ag__next-text">{step.text}</p>
+      <div className="nx-ag__next" data-tone={step.tone}>
+        <div role="status">
+          <p className="nx-ag__next-title">{step.title}</p>
+          <p className="nx-ag__next-text">{step.text}</p>
+        </div>
         {step.action && <div className="nx-passport__actions"><Button variant="primary" onClick={press}>{step.action.label}</Button></div>}
+        {/* The one place to ask: inside the box that says what to do next. */}
+        <IntentLine inline />
       </div>
       <div className="nx-ag__head">
         <h2 id={ids.body} className="nx-xq__title">AI helper</h2>
@@ -106,7 +108,7 @@ export function AgentPanel({ projectId, workspaceId, reviewReady = 0, onReview }
               {ui && <li><Button variant={panel.chooseRuntime ? 'primary' : 'quiet'} onClick={ui.openSetup}>{panel.chooseRuntime ? CHOOSE_RUNTIME_BUTTON : GLOSSARY.getReady.name}</Button></li>}
             </ul>
           )}
-          {panel.kind === 'ready' && <p className="nx-muted">{panel.lead} Ask in the box at the bottom of the page.</p>}
+          {panel.kind === 'ready' && <p className="nx-muted">{panel.lead} Ask in the box above.</p>}
           {/* While it works: what it is doing, for how long, that you can leave, and what happens next. */}
           {panel.progress && (
             <div className="nx-ag__progress" aria-label="Progress of the AI helper">
