@@ -96,7 +96,7 @@ function assertNoKey(w, name, key = w.key, o = {}) {
     }
     assert.ok(/^Bearer \S+$/.test(String(r.headers.authorization)), `${name}: the auth header carries a bearer value`);
   }
-  if (key === w.key) for (const r of w.api.requests) assert.equal(r.headers.authorization, `Bearer ${key}`, `${name}: the key is the provider's auth header`);
+  if (key === w.key && o.mixed !== true) for (const r of w.api.requests) assert.equal(r.headers.authorization, `Bearer ${key}`, `${name}: the key is the provider's auth header`);
   const all = everything(w);
   for (const k of keys) {
     assert.ok(!all.includes(k), `${name}: the key is in a row, a log or a file`);

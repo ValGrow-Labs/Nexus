@@ -505,11 +505,22 @@ async function flowWorld(o = {}) {
       if (caps) throw new Error('the real-CLI world grants the default caps only (never raised, never lowered by the driver)');
       return w.x.ok('nexus:agent:consent', { op: 'grant', runtime: 'cli-agent' });
     }
-    nx.agentProbe.refresh();
-    await w.until(() => !nx.agentProbe.cache.isStale(), 'the runtime check');
+    if (hm) await w.probeAgain(); else {
+      nx.agentProbe.refresh();
+      await w.until(() => !nx.agentProbe.cache.isStale(), 'the runtime check');
+    }
     return w.x.ok('nexus:agent:consent', { op: 'grant', ...(lm ? { runtime: 'local-model', model: o.model } : hm ? { runtime: 'hosted-model', provider: o.provider, model: o.model } : {}), ...(caps ? { caps } : {}) });
   };
   if (hm) {
+    /** A fresh runtime check, waited for (a result recorded AFTER this call: after a revoke the cache may hold the other runtime's entry only). */
+    w.probeAgain = async () => {
+      clock.advance(1000);
+      const since = clock.now;
+      let done = false;
+      nx.agentProbe.refresh();
+      nx.agentProbe.cache.whenRecorded(since, 120_000).then(() => { done = true; }, () => { done = true; });
+      await w.until(() => done, 'the runtime check');
+    };
     /** Waits until the probe has listed the providers (the key store only stores a key for a listed provider). */
     w.providersKnown = async () => {
       if (hostedKeys.list().ok) return;
@@ -519,8 +530,7 @@ async function flowWorld(o = {}) {
     /** Grants the local-model runtime (the world was made with `alsoLocal`); the hosted permission must have been revoked first. */
     w.consentLocal = async () => {
       if (!al) throw new Error('the world has no alsoLocal runtime');
-      nx.agentProbe.refresh();
-      await w.until(() => !nx.agentProbe.cache.isStale(), 'the runtime check');
+      await w.probeAgain();
       return w.x.ok('nexus:agent:consent', { op: 'grant', runtime: 'local-model', model: al.model });
     };
     /** Stores the user's key for a provider (default: the chosen one) through the real key store; returns the store's answer. */
