@@ -151,7 +151,7 @@ test('LS5 the picker rows: one per runtime, labels from the probe, a model list 
   const rows = X.runtimeChoices(view([opt(), localOpt()]));
   assert.deepEqual(rows.map((r) => r.label), ['Test Engine', 'Local model (Test)']);
   const [cli, local] = rows;
-  assert.deepEqual([cli.models, cli.model, cli.action.op, cli.action.label, cli.action.disabled, cli.destination], [null, null, 'grant', 'Use this runtime', false, 'cli.example.com:443']);
+  assert.deepEqual([cli.models, cli.model, cli.action.op, cli.action.label, cli.action.disabled, cli.destination], [null, null, 'grant', 'Use this AI service', false, 'cli.example.com:443']);
   assert.deepEqual(local.models, [{ name: 'coder:7b', label: 'coder:7b', disabled: false }, { name: 'plain:1b', label: 'plain:1b (cannot use tools)', disabled: true }]);
   assert.equal(local.action.disabled, true, 'no model is chosen yet');
   assert.equal(local.text, 'No local model is chosen yet. Pick one from the model list under Agent runtime.');
@@ -159,13 +159,13 @@ test('LS5 the picker rows: one per runtime, labels from the probe, a model list 
   // Picking a model that can use tools readies the button; one that cannot does not.
   const picked = X.runtimeChoices(view([opt(), localOpt()]), { 'local-model': 'coder:7b' })[1];
   assert.deepEqual([picked.model, picked.action.disabled, picked.state], ['coder:7b', false, 'ok']);
-  assert.equal(picked.text, 'The local model server is running and the chosen model can use tools.');
+  assert.equal(picked.text, 'The program that runs AI on this computer is working, and the chosen model can use tools.');
   assert.equal(X.runtimeChoices(view([opt(), localOpt()]), { 'local-model': 'plain:1b' })[1].action.disabled, true);
   assert.equal(X.runtimeChoices(view([opt(), localOpt()]), { 'local-model': 'unknown:1b' })[1].model, null, 'a name the list does not hold is ignored');
   // With a permission live the button switches; the runtime in use has none.
   const live = X.runtimeChoices(view([opt({ selected: true }), localOpt({ model: 'coder:7b', problem: null })], true));
   assert.deepEqual([live[0].action, live[0].word, live[0].text.startsWith('In use')], [null, 'In use', false]);
-  assert.deepEqual([live[1].action.op, live[1].action.label, live[1].action.disabled], ['switch', 'Switch to this runtime', false]);
+  assert.deepEqual([live[1].action.op, live[1].action.label, live[1].action.disabled], ['switch', 'Switch to this AI service', false]);
   // A local-only list still shows the picker (it has models to choose from).
   assert.equal(X.runtimeChoices(view([localOpt()])).length, 1);
 });
@@ -192,19 +192,19 @@ const agentRow = (o = {}) => ({ state: 'ready', label: 'Local model (Test)', ver
 
 test('LS6 the setup rows of the local kind say what is true of it (no program, no sign-in, no proxy); every other kind\'s rows are as before', () => {
   const rows = X.agentSetupRows(agentRow(), { hosts: ['127.0.0.1:11434'] });
-  assert.deepEqual([rows[0].label, rows[0].state, rows[0].text], ['Local model (Test)', 'ok', 'The local model server is running and the chosen model can use tools (version 0.5.0).']);
-  assert.match(rows[1].text, /^Not granted\. Granting lets Nexus use the local model only at 127\.0\.0\.1:11434\./);
+  assert.deepEqual([rows[0].label, rows[0].state, rows[0].text], ['Local model (Test)', 'ok', 'The program that runs AI on this computer is working, and the chosen model can use tools (version 0.5.0).']);
+  assert.match(rows[1].text, /^Not allowed yet\. Giving permission lets Nexus use the AI on this computer only at 127\.0\.0\.1:11434\./);
   assert.equal(rows[1].action, X.LOCAL_MODEL_DISCLOSURE);
-  assert.doesNotMatch(rows.map((r) => `${r.text} ${r.action ?? ''}`).join(' '), /signed in|proxy|program/i);
+  assert.doesNotMatch(rows.map((r) => `${r.text} ${r.action ?? ''}`).join(' '), /signed in|proxy|agent program|your AI program/i, 'no sign-in, no proxy and no installed assistant program on the local row');
   assert.equal(X.agentSetupRows(agentRow({ state: 'not_installed' }))[0].text, E.AGENT_REASON_TEXT.local_model_server_down);
   assert.equal(X.agentSetupRows(agentRow({ problem: 'model_no_tools' }))[0].text, E.AGENT_REASON_TEXT.local_model_no_tools);
   const live = X.agentSetupRows(agentRow({ consent: { live: true, caps: null, hostsCount: 1, grantedAt: 1 } }), { hosts: ['127.0.0.1:11434'], fmt: () => '10:00' });
-  assert.match(live[1].text, /^Granted at 10:00\. Nexus may use the local model only at 127\.0\.0\.1:11434\./);
-  assert.deepEqual(live[1].consent, { op: 'revoke', label: 'Revoke permission' });
+  assert.match(live[1].text, /^Allowed at 10:00\. Your AI helper may use the AI on this computer only at 127\.0\.0\.1:11434\./);
+  assert.deepEqual(live[1].consent, { op: 'revoke', label: 'Take permission back' });
   // Without `kind` (every other runtime) the rows are the ones they always were.
   const cli = X.agentSetupRows(agentRow({ kind: undefined, label: 'Acme Agent' }), { hosts: ['cli.example.com:443'] });
-  assert.equal(cli[0].text, 'The agent program is installed and signed in (version 0.5.0).');
-  assert.match(cli[1].text, /^Not granted\. Granting lets Nexus’s proxy allow the agent only cli\.example\.com:443\. Agent turns need it\./);
+  assert.equal(cli[0].text, 'Your AI program is installed and signed in (version 0.5.0).');
+  assert.match(cli[1].text, /^Not allowed yet\. Giving permission lets your AI helper reach only cli\.example\.com:443\. Your AI helper needs it\./);
   assert.equal(cli[1].action, X.AGENT_STATE_DISCLOSURE);
 });
 

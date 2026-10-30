@@ -245,7 +245,7 @@ const pick = (o, chosen = {}, prov = {}, live = false, last = null) => X.runtime
 
 test('HS6 the hosted row: provider and model preselected from the probe (first provider with a usable model), the button needs a saved key, a model without tools cannot be picked', () => {
   const c = pick(hostedOpt());
-  assert.deepEqual([c.provider, c.model, c.models, c.action.disabled, c.action.op, c.action.label], ['alpha', 'a-big', null, false, 'grant', 'Use this runtime']);
+  assert.deepEqual([c.provider, c.model, c.models, c.action.disabled, c.action.op, c.action.label], ['alpha', 'a-big', null, false, 'grant', 'Use this AI service']);
   assert.deepEqual(c.providers.map((p) => [p.id, p.keyPresent, p.destination]), [['alpha', true, 'alpha.example.com'], ['beta', false, 'beta.example.com']]);
   assert.deepEqual(c.providers[0].models, [{ name: 'a-big', label: 'a-big', disabled: false }, { name: 'a-plain', label: 'a-plain (cannot use tools)', disabled: true }]);
   assert.equal(c.destination, 'alpha.example.com:443, beta.example.com:443', 'the row names both hosts a permission covers');
@@ -253,7 +253,8 @@ test('HS6 the hosted row: provider and model preselected from the probe (first p
   // Another provider with no key: needs attention, the sentence, a button to Settings, and no way to use it yet.
   const b = pick(hostedOpt(), {}, { 'hosted-model': 'beta' });
   assert.deepEqual([b.provider, b.model, b.word, b.action.disabled, b.keyHelp.settings], ['beta', 'b-fast', 'Needs attention', true, true]);
-  assert.match(b.keyHelp.text, /^Add your API key in Settings first\. Create a free key in the provider’s console/);
+  assert.ok(b.keyHelp.text.startsWith(`${E.AGENT_REASON_TEXT.hosted_key_missing} To get a free access key, open the website of the AI service`), 'the missing-key sentence, then how to get a free access key');
+  assert.match(b.keyHelp.text, /Settings > Agents & Models > access keys/, 'the full path to the keys is stated');
   assert.doesNotMatch(b.keyHelp.text, /https?:|www\./, 'no address in code: the person finds the provider\'s own page');
   // A picked model that cannot use tools, or that the provider does not list, is ignored.
   assert.equal(pick(hostedOpt(), { 'hosted-model': 'a-plain' }).model, 'a-big');
@@ -267,7 +268,7 @@ test('HS6 the hosted row: provider and model preselected from the probe (first p
 
 test('HS6b in use, rejected, remembered: the runtime in use says "In use" once, a rejected key says so with a Settings button, and the memory keeps the provider across a revoke', () => {
   const inUse = pick(hostedOpt({ selected: true, provider: 'alpha', model: 'a-big', problem: null }), {}, {}, true);
-  assert.deepEqual([inUse.word, inUse.action, inUse.text], ['In use', null, 'A model provider, a model and your API key are set up.']);
+  assert.deepEqual([inUse.word, inUse.action, inUse.text], ['In use', null, 'An AI service, a model and your access key are set up.']);
   const rej = pick(hostedOpt({ selected: true, provider: 'alpha', model: 'a-big', problem: 'key_rejected' }), {}, {}, true);
   assert.deepEqual([rej.word, rej.state, rej.text, rej.keyHelp.text], ['Needs attention', 'problem', `In use. ${E.AGENT_REASON_TEXT.hosted_key_rejected}`, E.AGENT_REASON_TEXT.hosted_key_rejected]);
   assert.equal(rej.keyHelp.settings, true);
@@ -282,7 +283,7 @@ test('HS6b in use, rejected, remembered: the runtime in use says "In use" once, 
   X.runtimeMemory.rememberInUse('hosted-model', 'b-fast'); X.runtimeMemory.rememberProvider('hosted-model', 'beta');
   const after = X.runtimeChoices(view([opt(), hostedOpt({ providers: provView(true, true) })], false), X.runtimeMemory.models(), X.runtimeMemory.kind(), X.runtimeMemory.providers())[1];
   assert.deepEqual([after.provider, after.model, after.action.op, after.action.disabled], ['beta', 'b-fast', 'grant', false]);
-  assert.match(after.text, /It was the one in use before the permission ended\./);
+  assert.match(after.text, /It was in use before the permission was taken back\./);
   X.runtimeMemory.clear();
   assert.deepEqual(X.runtimeMemory.providers(), {});
   // Switching: with another runtime live the button switches.
@@ -297,14 +298,18 @@ test('HS6c the setup rows and the agent panel word the hosted problems; the perm
     consent: { live: false, caps: null, hostsCount: 0, grantedAt: null }, usageToday: { usdCents: 0, turns: 0, estimated: false }, ...o });
   const hosts = ['alpha.example.com:443', 'beta.example.com:443'];
   const rows = X.agentSetupRows(agentRow(), { hosts });
-  assert.deepEqual([rows[0].state, rows[0].text], ['ok', 'A model provider, a model and your API key are set up.']);
-  assert.match(rows[1].text, /Granting lets Nexus’s proxy allow the agent only alpha\.example\.com:443, beta\.example\.com:443\./);
+  assert.deepEqual([rows[0].state, rows[0].text], ['ok', 'An AI service, a model and your access key are set up.']);
+  assert.match(rows[1].text, /Giving permission lets your AI helper reach only alpha\.example\.com:443, beta\.example\.com:443\./);
+  assert.match(rows[1].text, /Limits: up to \$2\.00 per request, \$10\.00 per day\./, 'the two limits that matter, in plain words');
+  assert.equal(rows[1].label, 'Internet permission');
   assert.equal(rows[1].action, X.HOSTED_MODEL_DISCLOSURE);
-  assert.match(X.HOSTED_MODEL_DISCLOSURE, /only the providers’ hosts you grant/);
+  assert.match(X.HOSTED_MODEL_DISCLOSURE, /allows only that service’s addresses/);
   assert.match(X.HOSTED_MODEL_DISCLOSURE, /never shown again/);
+  assert.equal(X.HOSTED_MODEL_DISCLOSURE.split('. ').length, 2, 'the disclosure is two short sentences');
+  assert.match(rows[1].more, /Every command the AI helper runs goes into a safe space with no internet/, 'the honest limits sit behind More details');
   assert.doesNotMatch(rows.map((r) => `${r.text} ${r.action ?? ''}`).join(' '), /signed in|program/i);
   assert.equal(X.agentSetupRows(agentRow({ problem: 'key_missing' }))[0].text, E.AGENT_REASON_TEXT.hosted_key_missing);
-  assert.match(X.agentSetupRows(agentRow({ problem: 'key_rejected' }))[0].action, /Open Settings/);
+  assert.match(X.agentSetupRows(agentRow({ problem: 'key_rejected' }))[0].action, /Open Settings > Agents & Models > access keys/);
   assert.equal(X.agentSetupRows(agentRow({ problem: 'provider_not_chosen' }))[0].text, E.AGENT_REASON_TEXT.hosted_provider_not_chosen);
   const map = { provider_not_chosen: 'hosted_provider_not_chosen', key_missing: 'hosted_key_missing', key_rejected: 'hosted_key_rejected', model_unavailable: 'hosted_model_unavailable' };
   for (const [problem, reason] of Object.entries(map)) assert.equal(X.LOCAL_PROBLEM_TEXT[problem], ENV.AGENT_REASON_MESSAGES[reason], problem);
@@ -322,7 +327,13 @@ test('HS7 the Settings model: a row per probe provider, "Saved" or "Not set", a 
   const list = { ok: true, providers: [{ id: 'alpha', label: 'Alpha (free key)', present: true }, { id: 'beta', label: 'Beta (free key)', present: false }] };
   const rows = K.keyRows(list, { beta: `  ${KEY} ` });
   assert.deepEqual(rows.map((r) => [r.id, r.word, r.canDelete, r.canSave, r.problem]), [['alpha', 'Saved', true, false, null], ['beta', 'Not set', false, true, null]]);
+  // Three states, each with one plain line: not set / saved / refused (a refused save says so until a key is saved).
+  const refusedRows = K.keyRows(list, {}, { beta: S.KEY_REFUSAL_TEXT.bad_key, alpha: 'x' });
+  assert.deepEqual(refusedRows.map((r) => [r.word, r.refusal !== null]), [['Saved', true], ['Refused', true]], 'a key already saved stays Saved');
+  assert.deepEqual(rows.map((r) => r.line), ['Saved on this computer. Paste a new key below to replace it.', 'No key yet. Paste one below and press Save.']);
+  assert.equal(refusedRows[1].line, 'Not saved. Check the key and try again.');
   assert.equal(rows[0].placeholder, 'Saved. Paste a new key to replace it');
+  assert.equal(rows[1].placeholder, 'Paste your key here');
   assert.equal(K.keyRows(list, { beta: 'short' })[1].problem, K.KEY_SHAPE_TEXT);
   assert.equal(K.keyRows(list, { beta: 'short' })[1].canSave, false);
   assert.equal(K.keyRows(list, { beta: 'has a space inside it' })[1].canSave, false);
@@ -332,19 +343,27 @@ test('HS7 the Settings model: a row per probe provider, "Saved" or "Not set", a 
   assert.equal(K.keysNotice(null), K.KEYS_WAITING);
   assert.equal(K.keysNotice({ ok: false, reason: 'not_allowed', message: S.KEY_REFUSAL_TEXT.not_allowed }), S.KEY_REFUSAL_TEXT.not_allowed);
   assert.equal(K.keysNotice(list), null);
-  assert.equal(K.KEYS_TITLE, 'AI provider keys');
-  assert.match(K.KEYS_INTRO, /Create a free key in the provider’s console/);
-  assert.match(K.KEYS_SAFETY, /encrypted/);
+  assert.equal(K.KEYS_TITLE, 'Access keys');
+  assert.equal(K.KEYS_PATH, 'Settings > Agents & Models > access keys');
+  assert.match(K.KEYS_INTRO, /A secret code that lets Nexus use an AI service for you/);
+  assert.match(K.KEYS_INTRO, /free/);
+  assert.equal(K.KEYS_STEPS.length, 3, 'how to get a free key, in three plain steps (text only)');
+  assert.match(K.KEYS_STEPS.join(' '), /sign up for free/);
+  assert.match(K.KEYS_SAFETY, /locked on this computer/);
   assert.match(K.KEYS_SAFETY, /never shown again/);
   const comp = read('src/renderer/src/components/HostedKeysSettings.tsx');
   assert.match(comp, /type="password"/);
   assert.match(comp, /autoComplete="off"/);
   assert.match(comp, /window\.cth\.hostedKeySet\(\{ provider: id, key: row\.draft \}\)/);
   assert.match(comp, /setDrafts\(\(d\) => \(\{ \.\.\.d, \[id\]: '' \}\)\)/, 'the typed text leaves the field once sent');
-  assert.match(read('src/renderer/src/components/SettingsModal.tsx'), /<AiEnginesSettings config=\{config\} \/>[\s\S]{0,200}<HostedKeysSettings \/>/);
+  // The access keys come first in Agents & Models ("Add my key" lands there), above the default model and the engines.
+  assert.match(read('src/renderer/src/components/SettingsModal.tsx'), /<HostedKeysSettings \/>[\s\S]{0,600}Default agent model[\s\S]*<AiEnginesSettings config=\{config\} \/>/);
+  assert.match(comp, /requestKeysFocus/, 'the block scrolls itself into view and takes the cursor when it was asked for');
+  assert.match(comp, /scrollIntoView/);
   // The sheet opens Settings (and closes itself first) and only from the hosted row's key help.
   const sheet = read('src/renderer/src/nexus/components/ExecutionSetupSheet.tsx');
-  assert.match(sheet, /onClose\(\); shell\.openSettings\('Agents & Models'\)/);
+  assert.match(sheet, /onClose\(\); requestKeysFocus\(\); shell\.openSettings\('Agents & Models'\)/);
+  assert.match(sheet, /\{c\.keyHelp\.settings && shell && <Button onClick=\{addKey\}>Add my key<\/Button>\}/, 'the key help button is "Add my key" and uses the same landing');
 });
 
 // ---------- HS8: neutral copy ----------

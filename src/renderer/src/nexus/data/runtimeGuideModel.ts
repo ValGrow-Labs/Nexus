@@ -1,4 +1,4 @@
-// Pure: the first-run guide "Choose how Nexus builds for you", from what main last read (#51's runtimes) and the picker's rows.
+// Pure: the first-run guide "Choose your AI helper" (step 2 of "Your first build"), from what main last read (#51's runtimes) and the picker's rows.
 // No React, so tests load it directly. It is shown while NO runtime permission is granted, in the execution setup sheet; the agent
 // panel points to it with one sentence and one button.
 //
@@ -8,17 +8,19 @@
 // - no vendor, provider or address is named in this code: the provider labels come from the probe's providers list, the program's
 //   own label from the probe's label; the words about how to get a key never name a website;
 // - every state is one plain sentence (never a reason code); a way ends in an action only when there is one to take: "Add my key"
-//   (opens Settings) while a key is needed, the existing use/pick action once the runtime is ready.
+//   (opens Settings at the access keys) while a key is needed, the existing use/pick action once the AI service is ready;
+// - words: AI helper, AI service, access key, Free online AI / AI on this computer / Your own plan (the glossary's names).
 import type { AgentConsentView, AgentRuntimeOptionView } from '@shared/nexus/ipc';
 import { LOCAL_MODEL_KIND } from '@shared/nexus/localModel';
 import { HOSTED_MODEL_KIND } from '@shared/nexus/hostedModel';
 import { AGENT_REASON_TEXT } from './errorCopy';
-import { LOCAL_PROBLEM_TEXT, type RuntimeChoice } from './executionModel';
+import { KEYS_PATH, LOCAL_PROBLEM_TEXT, type RuntimeChoice } from './executionModel';
+import { termName } from './glossary';
 
-export const GUIDE_TITLE = 'Choose how Nexus builds for you';
-export const GUIDE_LEAD = 'Nexus needs an AI model to do the building. Pick one way below. The first two are free, and you do not need a paid plan.';
-export const GUIDE_READING = 'Nexus is reading what is available on this computer.';
-export const GUIDE_NONE_YET = 'Nothing is chosen yet, so Nexus will not run an agent until you choose.';
+export const GUIDE_TITLE = 'Choose your AI helper';
+export const GUIDE_LEAD = 'Nexus needs an AI service to do the work. Pick one way below. The first two are free, and you do not need a paid plan.';
+export const GUIDE_READING = 'Nexus is looking at what is available on this computer.';
+export const GUIDE_NONE_YET = 'Nothing is chosen yet, so your AI helper will not work until you choose.';
 
 export type GuideWayId = 'hosted' | 'local' | 'program';
 export type GuideWayState = 'ready' | 'needs_key' | 'key_rejected' | 'server_down' | 'no_model' | 'model_problem' | 'not_installed' | 'not_signed_in'
@@ -35,6 +37,10 @@ export interface GuideWay {
   free: boolean;
   /** What this way is, in plain words. */
   lead: string;
+  /** What it costs, in one plain line. */
+  cost: string;
+  /** "Is this safe?": where the key and the requests go (a closed fold); null when there is nothing to add. */
+  safety: string | null;
   state: GuideWayState;
   /** The status word (never colour alone). */
   word: string;
@@ -67,37 +73,38 @@ export function guideShown(view: Pick<AgentConsentView, 'consent'> & Partial<Pic
 }
 
 const HOSTED_STEPS = [
-  'Open the provider’s console in your browser and sign up for a free account. This takes a few minutes.',
-  'Create a free key there and copy it.',
-  'Press Add my key, paste it under AI provider keys in Settings and save it. Nexus stores it encrypted and never shows it again.',
-  'Come back here, pick the provider and a model, then use it.'
+  'Open the website of an AI service that gives free access keys, and sign up for free.',
+  'Create an access key there and copy it.',
+  `Press “Add my key”. Settings opens at ${KEYS_PATH}. Paste the key there and press Save.`,
+  'Come back here, pick the AI service and a model, then press “Use this AI service”.'
 ];
 const LOCAL_STEPS = [
-  'Install a local model server on this computer.',
+  'Install a free program that runs AI models on this computer.',
   'Start it.',
-  'Download a model that can use tools.',
+  'Download a model that can use tools. Look for the word “tools” in the model’s description.',
   'Press Check again.'
 ];
 const LOCAL_MODEL_STEPS = [
-  'Download a model that can use tools into the local model server.',
+  'Download a model that can use tools into the program that runs AI models.',
   'Press Check again.'
 ];
 
-const NO_MODEL_TEXT = 'The local model server is running, but it has no model installed yet.';
-const PICK_MODEL_TEXT = 'The local model server is running. Pick a model from the list below.';
-const HOSTED_READY_TEXT = 'A key is saved. Pick a provider and a model below, then use it.';
-const HOSTED_NEEDS_KEY_TEXT = 'No key is saved yet.';
+const NO_MODEL_TEXT = 'The program that runs AI on this computer is working, but it has no model yet.';
+const PICK_MODEL_TEXT = 'The program that runs AI on this computer is working. Pick a model from the list below.';
+const HOSTED_READY_TEXT = 'Your access key is saved. Pick an AI service and a model below, then press the button.';
+const HOSTED_NEEDS_KEY_TEXT = 'You have not added an access key yet.';
+const HOSTED_SAFETY = 'Your access key stays locked on this computer and goes only to the AI service it belongs to. Your AI helper’s requests are sent over the internet to that service.';
 
 function hostedWay(opt: AgentRuntimeOptionView | undefined, choice: RuntimeChoice | null): GuideWay {
-  const base = { id: 'hosted' as const, title: 'Free online AI (needs a free key)', free: true,
-    lead: 'Free online AI services give you a key at no cost. It takes a few minutes in the provider’s own console: sign up, create a key, copy it, then paste it into Settings. '
-      + 'The key stays on this computer, encrypted, and is sent only to the provider it belongs to. Agent work is sent over the internet to that provider.',
+  const base = { id: 'hosted' as const, title: `${termName('freeOnlineAi')} (needs a free access key)`, free: true,
+    lead: 'A free AI service on the internet. You create an access key for it yourself, which takes a few minutes.',
+    cost: 'Free. The service may limit how much you can use.', safety: HOSTED_SAFETY,
     choice, secondary: null as GuideAction | null, controls: false };
   const providers = opt && Array.isArray(opt.providers) ? opt.providers : [];
   const labels = providers.map((p) => p.label);
   if (!opt || providers.length === 0) {
     return { ...base, kind: opt?.kind ?? null, state: 'unchecked', word: 'Not checked', providers: labels, steps: [],
-      status: 'Nexus has not read the list of free providers yet. Press Check again in a moment.', action: null };
+      status: 'Nexus has not read the list of free AI services yet. Press Check again in a moment.', action: null };
   }
   if (opt.state !== 'ready') {
     return { ...base, kind: opt.kind, state: 'unchecked', word: 'Not checked', providers: labels, steps: [],
@@ -105,33 +112,34 @@ function hostedWay(opt: AgentRuntimeOptionView | undefined, choice: RuntimeChoic
   }
   const anyKey = providers.some((p) => p.keyPresent === true);
   if (opt.problem === 'key_rejected') {
-    return { ...base, kind: opt.kind, state: 'key_rejected', word: 'Key rejected', providers: labels, status: AGENT_REASON_TEXT.hosted_key_rejected, steps: [],
+    return { ...base, kind: opt.kind, state: 'key_rejected', word: 'Key refused', providers: labels, status: AGENT_REASON_TEXT.hosted_key_rejected, steps: [],
       action: { op: 'add-key', label: 'Enter my key again', disabled: false } };
   }
   if (!anyKey) {
-    return { ...base, kind: opt.kind, state: 'needs_key', word: 'Needs a key', providers: labels, status: HOSTED_NEEDS_KEY_TEXT, steps: HOSTED_STEPS,
+    return { ...base, kind: opt.kind, state: 'needs_key', word: 'Needs an access key', providers: labels, status: HOSTED_NEEDS_KEY_TEXT, steps: HOSTED_STEPS,
       action: { op: 'add-key', label: ADD_KEY, disabled: false } };
   }
   const usable = choice !== null && choice.action !== null && choice.action.disabled !== true;
   if (usable) {
     return { ...base, kind: opt.kind, state: 'ready', word: 'Ready', providers: labels, status: HOSTED_READY_TEXT, steps: [],
-      controls: true, action: { op: 'use', label: choice!.action!.label, disabled: false }, secondary: { op: 'add-key', label: 'Add or change a key', disabled: false } };
+      controls: true, action: { op: 'use', label: choice!.action!.label, disabled: false }, secondary: { op: 'add-key', label: 'Add or change my key', disabled: false } };
   }
   // A key is saved, but not for the provider that is picked (or no model is picked): say which providers have one; the provider list is in the option.
   const keyed = providers.filter((p) => p.keyPresent === true).map((p) => p.label);
-  return { ...base, kind: opt.kind, state: 'needs_key', word: 'Needs a key', providers: labels, steps: [], controls: true,
-    status: `A key is saved for ${keyed.join(' and ')}. Pick ${keyed.length === 1 ? 'that provider' : 'one of them'} below, or add a key for the one you want.`,
+  return { ...base, kind: opt.kind, state: 'needs_key', word: 'Needs an access key', providers: labels, steps: [], controls: true,
+    status: `Your access key is saved for ${keyed.join(' and ')}. Pick ${keyed.length === 1 ? 'that service' : 'one of them'} below, or add a key for the one you want.`,
     action: { op: 'add-key', label: ADD_KEY, disabled: false } };
 }
 
 function localWay(opt: AgentRuntimeOptionView | undefined, choice: RuntimeChoice | null): GuideWay {
-  const base = { id: 'local' as const, title: 'On this computer (free, private)', free: true,
-    lead: 'Runs an AI model on your own computer, so nothing leaves it and it costs nothing. It needs a local model server installed and running, and at least one model that can use tools downloaded into it. '
-      + 'Bigger models are better at building and need a faster computer.',
+  const base = { id: 'local' as const, title: `${termName('aiOnThisComputer')} (free, private)`, free: true,
+    lead: 'Runs an AI on your own computer, so nothing leaves it. It needs a free program that runs AI models, and at least one model that can use tools. '
+      + 'Bigger models build better but need a faster computer.',
+    cost: 'Free. It can be slow on an older computer.', safety: null as string | null,
     providers: [] as string[], choice, secondary: null as GuideAction | null, controls: false };
   if (!opt) {
     return { ...base, kind: null, state: 'unchecked', word: 'Not checked', steps: [], action: null,
-      status: 'Nexus has not found out whether a local model server is available. Press Check again in a moment.' };
+      status: 'Nexus has not found out whether a program that runs AI is available here. Press Check again in a moment.' };
   }
   if (opt.state === 'not_installed') {
     return { ...base, kind: opt.kind, state: 'server_down', word: 'Not running', status: AGENT_REASON_TEXT.local_model_server_down, steps: LOCAL_STEPS, action: null };
@@ -146,7 +154,7 @@ function localWay(opt: AgentRuntimeOptionView | undefined, choice: RuntimeChoice
     return { ...base, kind: opt.kind, state: 'no_model', word: 'Needs a model', status: NO_MODEL_TEXT, steps: LOCAL_MODEL_STEPS, action: null };
   }
   if (choice !== null && choice.action !== null && choice.action.disabled !== true) {
-    return { ...base, kind: opt.kind, state: 'ready', word: 'Ready', status: 'The local model server is running and the chosen model can use tools.', steps: [], controls: true,
+    return { ...base, kind: opt.kind, state: 'ready', word: 'Ready', status: 'The program that runs AI on this computer is working, and the chosen model can use tools.', steps: [], controls: true,
       action: { op: 'use', label: choice.action.label, disabled: false } };
   }
   if (opt.problem === 'model_not_chosen' || (opt.problem === null && choice !== null && choice.model === null)) {
@@ -157,20 +165,21 @@ function localWay(opt: AgentRuntimeOptionView | undefined, choice: RuntimeChoice
 }
 
 function programWay(opt: AgentRuntimeOptionView | undefined, choice: RuntimeChoice | null): GuideWay {
-  const base = { id: 'program' as const, title: 'A plan you already pay for (optional)', free: false,
-    lead: 'If you already use an AI assistant program on this computer and are signed in to your own plan with it, Nexus can use it. '
+  const base = { id: 'program' as const, title: `${termName('yourOwnPlan')} (optional)`, free: false,
+    lead: 'If you already pay for an AI assistant and are signed in to it on this computer, Nexus can use it. '
       + 'Nexus never installs it and never signs in for you. Skip this if you do not have one: the two free ways above work without it.',
+    cost: 'Uses the plan you already pay for.', safety: null as string | null,
     providers: [] as string[], choice, secondary: null as GuideAction | null, controls: false };
   if (!opt) {
     return { ...base, kind: null, state: 'unchecked', word: 'Not checked', steps: [], action: null,
-      status: 'Nexus has not checked for an assistant program yet. Press Check again in a moment.' };
+      status: 'Nexus has not checked for your AI assistant yet. Press Check again in a moment.' };
   }
-  const label = typeof opt.label === 'string' && opt.label !== '' ? opt.label : 'The assistant program';
+  const label = typeof opt.label === 'string' && opt.label !== '' ? opt.label : 'Your AI assistant';
   switch (opt.state) {
     case 'ready':
       if (opt.signedIn === 'yes') {
         return { ...base, kind: opt.kind, state: 'ready', word: 'Ready', status: `${label} is installed and signed in.`, steps: [],
-          action: { op: 'use', label: choice && choice.action ? choice.action.label : 'Use this runtime', disabled: choice !== null && choice.action !== null && choice.action.disabled === true } };
+          action: { op: 'use', label: choice && choice.action ? choice.action.label : 'Use this AI service', disabled: choice !== null && choice.action !== null && choice.action.disabled === true } };
       }
       return { ...base, kind: opt.kind, state: 'not_signed_in', word: 'Not confirmed', steps: ['Sign in with it yourself, then press Check again.'], action: null,
         status: `${label} is installed, but Nexus could not confirm that it is signed in.` };

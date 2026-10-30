@@ -306,13 +306,13 @@ test('UA6 the agent\'s messages are labelled display only, and a tool call shows
 test('UA7 every unmet prerequisite is a sentence, never a button that would be refused; missing permission reads exactly the brief sentence', () => {
   const panel = (h, availability = READY, extra = {}) => A.agentPanelModel({ health: h, availability, sessions: [], sessionsFail: null, ...extra });
   const noConsent = panel(health({ agent: agentView({ consent: { live: false, caps: null, hostsCount: 1, grantedAt: null } }) }));
-  // Track D (first-run): with no runtime permission the panel points to the guide "Choose how Nexus builds for you" with one sentence (and
+  // Track D (first-run): with no runtime permission the panel points to the guide "Choose your AI helper" with one sentence (and
   // the panel's one button); it no longer says "network permission" first, and never leads with the state of a program that may not be wanted.
   assert.deepEqual(noConsent.blockers, [A.CHOOSE_RUNTIME_TEXT]);
   assert.equal(noConsent.chooseRuntime, true);
   assert.equal(noConsent.canAsk, false); assert.equal(noConsent.setup, true); assert.equal(noConsent.kind, 'setup');
   assert.equal(A.CONSENT_MISSING_TEXT, 'The AI helper needs your internet permission before it can work. Open “Get this computer ready” to allow it.', 'the sentence for a refused start is the plain-words one');
-  assert.equal(A.CHOOSE_RUNTIME_BUTTON, 'Choose how Nexus builds for you');
+  assert.equal(A.CHOOSE_RUNTIME_BUTTON, 'Choose your AI helper');
   assert.doesNotMatch(A.CHOOSE_RUNTIME_TEXT, VENDOR);
   // Even a program that is not installed does not lead the panel while nothing is chosen: the guide speaks for it.
   const noProgram = panel(health({ agent: agentView({ state: 'not_installed', consent: { live: false, caps: null, hostsCount: 0, grantedAt: null } }) }));
@@ -360,26 +360,29 @@ test('UA7 every unmet prerequisite is a sentence, never a button that would be r
   // The setup row: the disclosure appears once, on the permission row, in every state.
   for (const a of [agentView(), agentView({ consent: { live: false, caps: null, hostsCount: 1, grantedAt: null } }), agentView({ state: 'not_installed', consent: { live: false, caps: null, hostsCount: 1, grantedAt: null } })]) {
     const rows = X.agentSetupRows(a, { hosts: ['api.example.test:443'] });
-    const all = rows.map((r) => `${r.text} ${r.action ?? ''}`).join('\n');
-    assert.equal(all.split('keeps its own state files').length - 1, 1, 'disclosed exactly once');
-    assert.match(all, /sign-in, settings and log files\) in your own user folder/);
-    assert.match(all, /Nexus never reads, copies or stores the sign-in/);
-    // Round 4 (final review C3): the agent program runs on the host as the user; its own network is steered by a proxy setting, not enforced.
-    assert.match(all, /The agent program runs on this computer as you/);
-    assert.match(all, /sent through Nexus’s proxy, which allows only the destination you grant \(this is a setting the program follows, not a firewall\)/);
-    assert.match(all, /Every command it runs goes into a sandbox with no network/);
-    assert.match(all, /rule of the agent program, not an operating-system wall/);
+    const all = rows.map((r) => `${r.text} ${r.action ?? ''} ${r.more ?? ''}`).join('\n');
+    assert.equal(all.split('runs on this computer as you').length - 1, 1, 'disclosed exactly once');
+    assert.match(all, /keeps its own sign-in and settings in your user folder/);
+    assert.match(all, /Nexus never reads, copies or stores your sign-in/);
+    // Round 4 (final review C3): the AI program runs on the host as the user; its own network is steered by a proxy setting, not enforced.
+    // The two short sentences are on the row; the honest limits sit behind its "More details".
+    assert.match(all, /Your AI program runs on this computer as you/);
+    assert.match(all, /Its online requests go through Nexus, which allows only the address you approve/);
+    assert.match(all, /The address rule is a setting the program follows, not a firewall/);
+    assert.match(all, /every command it runs goes into a safe space with no internet/);
+    assert.match(all, /the program’s own rule, not a wall your computer enforces/);
+    assert.equal(X.AGENT_STATE_DISCLOSURE.split('. ').length, 2, 'the visible disclosure is two short sentences');
     assert.doesNotMatch(all, /runs in a sandbox with no other network|and nothing else/, 'the old, untrue claims are gone');
   }
   const grant = X.agentSetupRows(agentView({ consent: { live: false, caps: null, hostsCount: 1, grantedAt: null } }), { hosts: ['api.example.test:443'] });
-  assert.deepEqual(grant.find((r) => r.id === 'agent-consent').consent, { op: 'grant', label: 'Grant permission' });
+  assert.deepEqual(grant.find((r) => r.id === 'agent-consent').consent, { op: 'grant', label: 'Give permission' });
   // The user sees the destination before granting; without it there is no Grant button, only a sentence.
   const unknownHosts = X.agentSetupRows(agentView({ consent: { live: false, caps: null, hostsCount: 1, grantedAt: null } }));
   assert.equal(unknownHosts.find((r) => r.id === 'agent-consent').consent, undefined);
   assert.equal(X.agentSetupRows(agentView(), { hosts: ['api.example.test:443'] }).find((r) => r.id === 'agent-consent').consent.op, 'revoke');
-  // The agent rows never hold back "Jobs can run on this computer."
+  // The AI helper rows never hold back "Tasks can run on this computer."
   const rows = X.setupSheet(health({ agent: agentView({ state: 'not_installed' }) }));
-  assert.equal(X.setupLead(READY, rows), 'Jobs can run on this computer.');
+  assert.equal(X.setupLead(READY, rows), 'Tasks can run on this computer.');
   assert.ok(rows.some((r) => r.id === 'agent' && r.state === 'problem'));
   // A HealthView without the agent row (an older answer) still gives the B2a rows.
   const bare = health(); delete bare.agent;
@@ -556,15 +559,17 @@ test('F3 #51 get never waits: an answer with no destination yet is asked again (
   const landed = view({ state: 'ready' }, { hosts: ['api.example.test:443'], hostsCount: 1 });
   assert.equal(X.consentRereadDelay(landed, 0), null);
   assert.deepEqual(X.consentHostsOf(landed), ['api.example.test:443']);
-  assert.deepEqual(X.agentSetupRows(landed, { hosts: X.consentHostsOf(landed) }).find((r) => r.id === 'agent-consent').consent, { op: 'grant', label: 'Grant permission' });
+  assert.deepEqual(X.agentSetupRows(landed, { hosts: X.consentHostsOf(landed) }).find((r) => r.id === 'agent-consent').consent, { op: 'grant', label: 'Give permission' });
   assert.equal(X.agentSetupRows(view({ state: 'ready' })).find((r) => r.id === 'agent-consent').consent, undefined, 'before the destination is known there is no Grant');
   // Settled "cannot be granted" and a live permission are not asked again.
   for (const state of ['not_installed', 'not_signed_in', 'version_unsupported']) assert.equal(X.consentRereadDelay(view({ state }), 0), null, state);
   assert.equal(X.consentRereadDelay(view({ state: 'ready' }, { live: true }), 0), null);
   assert.equal(X.consentRereadDelay(null, 0), null);
   // Not granted: the D-B4 ceilings are shown on the row before the user grants.
-  const text = X.agentSetupRows(landed, { hosts: X.consentHostsOf(landed) }).find((r) => r.id === 'agent-consent').text;
-  assert.match(text, /Limits if you grant it: up to \$2\.00 per turn and \$10\.00 per day, 6 turns an hour, 1 at a time, 400k tokens, 200 tool calls, 30 minutes and 20 child jobs per turn/, 'all eight D-B4 caps');
+  const consentRow = X.agentSetupRows(landed, { hosts: X.consentHostsOf(landed) }).find((r) => r.id === 'agent-consent');
+  assert.match(consentRow.text, /Limits: up to \$2\.00 per request, \$10\.00 per day\./, 'the two limits that matter, in plain words');
+  assert.doesNotMatch(consentRow.text, /token|tool call|child job|turns an hour/, 'no engineering words on the row itself');
+  assert.match(consentRow.more, /Other limits: 6 requests an hour and 1 at a time\. Each request is also limited to about 400k tokens \(a way of counting text\), 200 uses of tools, 30 minutes and 20 extra tasks\./, 'all eight D-B4 caps, in plain words behind More details');
   // Source pins: the hook looks again by that policy; the sheet takes only the destinations from #51 and reads it after the health re-read.
   const hooks = src('data/useAgents.ts');
   assert.match(hooks, /consentRereadDelay\(r\.data, tries\)/);
@@ -623,11 +628,12 @@ test('R4-C1 a session main keeps `running` with no live turn reads "Ready for yo
 test('R4-I1 the program is "signed in" only when the view says so; an unreadable sign-in is said so', () => {
   for (const signedIn of ['unknown', 'no']) {
     const r = X.agentSetupRows(agentView({ signedIn })).find((x) => x.id === 'agent');
-    assert.match(r.text, /Nexus could not confirm that the agent program is signed in\./, signedIn);
+    assert.match(r.text, /Nexus could not confirm that you are signed in\./, signedIn);
     assert.doesNotMatch(r.text, /installed and signed in/);
     assert.notEqual(r.state, 'ok');
   }
   assert.match(X.agentSetupRows(agentView({ signedIn: 'yes' })).find((x) => x.id === 'agent').text, /installed and signed in/);
+  assert.match(X.agentSetupRows(agentView({ signedIn: 'yes' })).find((x) => x.id === 'agent').text, /^Your AI program is installed and signed in/);
   const p = A.agentPanelModel({ health: health({ agent: agentView({ signedIn: 'unknown' }) }), availability: READY, sessions: [], sessionsFail: null });
   assert.equal(p.note, 'Nexus could not confirm that the agent program is signed in.');
 });
@@ -724,12 +730,13 @@ test('R4-minors copy and hygiene: merge copy, no raw ids, hashed intent keys, pl
   assert.doesNotMatch(EV.validatorLabel('sec.secret_scan'), /holds no key or secret/);
   assert.match(EV.validatorLabel('sec.secret_scan'), /common kinds of secret keys/, 'the scan is named for what it looks for: common kinds only');
   assert.equal(EV.validatorLine('sec.secret_scan', 'passed'), 'No common secret keys found');
-  const live = X.agentSetupRows(agentView(), { hosts: ['api.example.test:443'] }).find((r) => r.id === 'agent-consent').text;
-  assert.match(live, /400k tokens, 200 tool calls, 30 minutes and 20 child jobs per turn/);
+  const liveRow = X.agentSetupRows(agentView(), { hosts: ['api.example.test:443'] }).find((r) => r.id === 'agent-consent');
+  const live = `${liveRow.text} ${liveRow.more ?? ''}`;
+  assert.match(live, /about 400k tokens \(a way of counting text\), 200 uses of tools, 30 minutes and 20 extra tasks/);
   assert.doesNotMatch(live, /and nothing else/);
   // The once-per-project approval and its activity row.
   const row = AM.approvalRow({ id: 'a', projectId: 'p', jobId: null, reason: 'repo.write_refs', summary: 's', status: 'pending', request: {}, requestedAt: NOW, expiresAt: NOW + 60000, decidedAt: null, decision: null, consumedAt: null, imageBuild: null }, NOW);
-  assert.equal(row.title, 'Let Nexus write hidden refs in this repository');
+  assert.equal(row.title, 'Let Nexus keep hidden Nexus notes in your project');
   const ctx = { names: new Map(), versionNos: new Map(), workspaceLabel: (x) => x, now: NOW };
   const act = (action, details) => ACT.activityText({ seq: 1, ts: NOW, action, status: 'succeeded', actorKind: 'user', onBehalfOfUser: false, entityType: 'x', entityId: null, projectId: 'p', workspaceId: null, artifactId: null, versionId: null, details }, ctx);
   assert.equal(act('approval.request', { reason: 'repo.write_refs' }), 'Approval asked: let Nexus write hidden refs in this repository');
@@ -930,7 +937,7 @@ test('V9-3 the runtime in use says "In use" once: the word carries it, the text 
   const rows = X.runtimeChoices(v9view([v9opt({ selected: true }), v9local({ model: 'coder:7b', problem: null })], true));
   assert.equal(rows[0].word, 'In use');
   assert.ok(!rows[0].text.startsWith('In use'));
-  assert.equal(rows[0].text, 'The agent program is installed and signed in.');
+  assert.equal(rows[0].text, 'Your AI program is installed and signed in.');
 });
 
 test('V9-4 the picker is remembered for the session: the model picked and the runtime last in use survive a revoke and a reopened sheet; a revoke never leaves a Grant button that would pick the program', () => {
@@ -943,15 +950,15 @@ test('V9-4 the picker is remembered for the session: the model picked and the ru
   // After the revoke (and a fresh sheet): the model is still picked, the runtime is named as the last one, its button grants it with that model.
   const after = X.runtimeChoices(v9view([v9opt(), v9local()], false), X.runtimeMemory.models(), X.runtimeMemory.kind());
   assert.deepEqual([after[1].model, after[1].action.op, after[1].action.disabled], ['coder:7b', 'grant', false]);
-  assert.ok(after[1].text.includes('It was the one in use before the permission ended.'));
-  assert.ok(!after[0].text.includes('before the permission ended'));
+  assert.ok(after[1].text.includes('It was in use before the permission was taken back.'));
+  assert.ok(!after[0].text.includes('before the permission was taken back'));
   // The permission row of the default runtime loses its Grant button while the picker is shown and nothing is live; Revoke is untouched.
-  const rows = [{ id: 'agent-consent', label: 'Agent network permission', state: 'problem', word: 'Needs attention', text: 'Not granted. Granting lets x.', action: null, prepare: null, consent: { op: 'grant', label: 'Grant permission' } }];
+  const rows = [{ id: 'agent-consent', label: 'Internet permission', state: 'problem', word: 'Needs attention', text: 'Not allowed yet. Giving permission lets x.', action: null, prepare: null, consent: { op: 'grant', label: 'Give permission' } }];
   const fixed = X.pickerPermissionRows(rows, { picker: true, live: false });
   assert.equal(fixed[0].consent, undefined);
-  assert.ok(fixed[0].text.includes('Use a runtime under Agent runtime'));
+  assert.ok(fixed[0].text.includes('Press “Use this AI service” on a service below'));
   assert.equal(X.pickerPermissionRows(rows, { picker: false, live: false })[0].consent.op, 'grant', 'no picker: the row is as it was');
-  const revoke = [{ ...rows[0], consent: { op: 'revoke', label: 'Revoke permission' } }];
+  const revoke = [{ ...rows[0], consent: { op: 'revoke', label: 'Take permission back' } }];
   assert.equal(X.pickerPermissionRows(revoke, { picker: true, live: true })[0].consent.op, 'revoke');
   X.runtimeMemory.clear();
   assert.equal(X.runtimeMemory.kind(), null);
@@ -1036,8 +1043,8 @@ test('V9d-2 a turn waiting for the repository-write approval says so in the pane
   assert.ok(panelSrc.includes('<ApprovalList approvals={repoWaiting}'));
   const ap = src('project/ApprovalsSection.tsx');
   assert.ok(ap.includes('except?: readonly string[]'));
-  assert.ok(ap.includes("'Yes, approve once'"));
-  assert.ok(ap.includes('<span>Approve once</span>'), 'the first step keeps its label');
+  assert.ok(ap.includes("'Yes, allow once'"));
+  assert.ok(ap.includes('<span>Allow once</span>'), 'the first step keeps its label');
 });
 
 test('V9d-3 a merged change reads "Merged" (the repository status holds no accepted work waiting), a change not yet merged reads "Accepted" with its next step, and the repository head is the checked-out commit, not a hidden ref', () => {

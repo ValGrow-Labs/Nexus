@@ -230,14 +230,14 @@ test('HA1 no number without a source: rail numbers are sub-phase names or counts
   }
   // The setup sheet's numbers come from the health view itself.
   const rows = X.setupSheet(health({ disk: { dataHomeFreeBytes: 18 * GIB, requiredBytes: 30 * GIB, recommendedBytes: 40 * GIB, leaseFloorBytes: 5 * GIB, gate: 'below_required' } }));
-  assert.equal(rows.find((r) => r.id === 'disk').text, 'Free disk is 18 GB; preparing images and the execution checks need 30 GB (40 GB recommended)');
+  assert.equal(rows.find((r) => r.id === 'disk').text, 'You have 18 GB free. Getting the safe-space kits ready and running checks needs 30 GB (40 GB is better).');
   // Final review C2: the gate's states, as ruled. Below 30 GB: ready with the advisory; below the floor: setup.
   assert.equal(STATES['disk below the gate'].kind, 'ready');
-  assert.deepEqual(STATES['disk below the gate'].advisories, ['Free disk is 18 GB; preparing images and the execution checks need 30 GB (40 GB recommended).']);
+  assert.deepEqual(STATES['disk below the gate'].advisories, ['You have 18 GB free. Getting the safe-space kits ready and running checks needs 30 GB (40 GB is better).']);
   assert.deepEqual([STATES['disk below the lease floor'].kind, STATES['disk below the lease floor'].problems], ['setup', ['disk_low']]);
   const missing = X.setupSheet(health({ images: [{ profile: 'sde-node', present: false, matches: false }],
     disk: { dataHomeFreeBytes: 18 * GIB, requiredBytes: 30 * GIB, recommendedBytes: 40 * GIB, leaseFloorBytes: 5 * GIB, gate: 'below_required' } }));
-  assert.equal(missing.find((r) => r.id === 'image:sde-node').prepare, null, 'below the gate no image can be prepared');
+  assert.equal(missing.find((r) => r.id === 'image:sde-node').prepare, null, 'below the gate no safe-space kit can be prepared');
 });
 
 // ---------- HA-B2b ----------

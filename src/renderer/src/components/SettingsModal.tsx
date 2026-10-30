@@ -1247,6 +1247,11 @@ export function SettingsModal({ config, onClose, initialSection }: SettingsModal
 
                   {activeSection === 'Agents & Models' && (
                     <>
+                      {/* Access keys come first: "Add my key" in Get this computer ready lands here (HostedKeysSettings scrolls itself into view). */}
+                      <HostedKeysSettings />
+
+                      <div style={{ height: 1, background: 'var(--cth-ink-300)' }} />
+
                       <div>
                         <div style={{
                           fontFamily: 'var(--cth-font-display)', fontSize: 8, lineHeight: '12px',
@@ -1280,10 +1285,6 @@ export function SettingsModal({ config, onClose, initialSection }: SettingsModal
                       <div style={{ height: 1, background: 'var(--cth-ink-300)' }} />
 
                       <AiEnginesSettings config={config} />
-
-                      <div style={{ height: 1, background: 'var(--cth-ink-300)' }} />
-
-                      <HostedKeysSettings />
 
                       <div style={{ height: 1, background: 'var(--cth-ink-300)' }} />
 

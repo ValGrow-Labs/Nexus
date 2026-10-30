@@ -188,3 +188,28 @@
 .nx-xg__controls { display: grid; gap: var(--nx-s2); }
 .nx-xg__controls .nx-xs__action { grid-column: auto; }
 .nx-xg__buttons { display: flex; flex-wrap: wrap; gap: var(--nx-s2); }
+
+/* Get this computer ready: the three steps of "Your first build" (the exact numbers sit behind "More details", closed). */
+.nx-fb { display: grid; gap: var(--nx-s2); }
+.nx-fb__steps { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--nx-s3); }
+.nx-fb__step { display: grid; gap: var(--nx-s2); padding: var(--nx-s3); border: 1px solid var(--nx-line); border-left: 3px solid var(--nx-line); border-radius: var(--nx-r-obj); background: var(--nx-surface); }
+.nx-fb__step[data-state="next"] { border-left-color: var(--nx-ink); border-color: var(--nx-line-strong); }
+.nx-fb__step[data-state="waiting"] { color: var(--nx-text-3); }
+.nx-fb__head { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--nx-s2); margin: 0; }
+.nx-fb__num { display: inline-grid; place-items: center; width: 22px; height: 22px; border: 1px solid var(--nx-line-strong); border-radius: 50%; font: 600 12px/1 var(--nx-font); }
+.nx-fb__title { font: 700 14px/1.3 var(--nx-font-display); color: var(--nx-ink); }
+.nx-fb__step[data-state="waiting"] .nx-fb__title { color: var(--nx-text-2); }
+.nx-fb__line { margin: 0; color: var(--nx-text-2); overflow-wrap: anywhere; }
+.nx-fb__items { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--nx-s2); }
+.nx-fb__item { display: grid; grid-template-columns: 150px minmax(0, 1fr); gap: 2px var(--nx-s3); padding: var(--nx-s2) 0 var(--nx-s2) var(--nx-s3); border-left: 3px solid var(--nx-line); }
+.nx-fb__item[data-state="problem"] { border-left-color: var(--nx-ink); }
+.nx-fb__what, .nx-fb__say { grid-column: 2; overflow-wrap: anywhere; }
+.nx-fb__more, .nx-fb__ahead, .nx-xq__more, .nx-xs__fold { color: var(--nx-text-2); }
+.nx-fb__more > summary, .nx-fb__ahead > summary, .nx-xq__more > summary, .nx-xs__fold > summary { cursor: pointer; font-weight: 600; }
+.nx-fb__more[open] > summary, .nx-fb__ahead[open] > summary { margin-bottom: var(--nx-s2); }
+.nx-xs__fold { grid-column: 2; }
+.nx-xs__fold p { margin: var(--nx-s1) 0 0; overflow-wrap: anywhere; }
+@media (max-width: 767px) {
+  .nx-fb__item { grid-template-columns: minmax(0, 1fr); }
+  .nx-fb__what, .nx-fb__say, .nx-xs__fold { grid-column: 1; }
+}

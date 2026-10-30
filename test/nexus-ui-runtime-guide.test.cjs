@@ -1,5 +1,5 @@
 'use strict';
-// Track D: the first-run guide "Choose how Nexus builds for you" (the pure model, through load-ts) and source pins on where it is shown
+// Track D: the first-run guide "Choose your AI helper" (step 2 of "Your first build" in "Get this computer ready") (the pure model, through load-ts) and source pins on where it is shown
 // (the execution setup sheet) and on the agent panel's pointer to it. Plain node, no jsdom. Free first; no vendor, provider or address in
 // Nexus-owned code: the provider labels and the program's label are the probe's own (here: invented test labels).
 const test = require('node:test');
@@ -32,11 +32,11 @@ test('RG1 the guide is shown only while no permission is granted (and agent work
   assert.equal(G.runtimeGuide(view([opt(), local(), hosted()], true), []), null, 'a live permission: the picker, not the guide');
   assert.equal(G.runtimeGuide(view([opt(), local(), hosted()], false, { state: 'off' }), []), null, 'agent work off: nothing to choose');
   const g = guideOf(view([opt(), local(), hosted()]));
-  assert.equal(g.title, 'Choose how Nexus builds for you');
+  assert.equal(g.title, 'Choose your AI helper');
   assert.deepEqual(g.ways.map((w) => w.id), ['hosted', 'local', 'program'], 'free ways first, the paid one last, whatever order the probe listed them');
   assert.deepEqual(g.ways.map((w) => w.free), [true, true, false]);
-  assert.match(g.ways[0].title, /^Free online AI \(needs a free key\)$/);
-  assert.match(g.ways[1].title, /^On this computer \(free, private\)$/);
+  assert.match(g.ways[0].title, /^Free online AI \(needs a free access key\)$/);
+  assert.match(g.ways[1].title, /^AI on this computer \(free, private\)$/);
   assert.match(g.ways[2].title, /optional/i);
   // Before anything was read: the same three ways, all "not checked", and a line that Nexus is reading.
   const waiting = G.runtimeGuide(null, []);
@@ -49,7 +49,7 @@ test('RG1 the guide is shown only while no permission is granted (and agent work
 test('RG2 free online AI: no key -> "Add my key"; a key saved -> the picker\'s use action with its controls; labels come from the probe', () => {
   const none = way(guideOf(view([opt(), local(), hosted()])), 'hosted');
   assert.equal(none.state, 'needs_key');
-  assert.equal(none.word, 'Needs a key');
+  assert.equal(none.word, 'Needs an access key');
   assert.deepEqual(none.providers, ['Provider One', 'Provider Two'], 'the providers are the probe\'s list, in its order');
   assert.deepEqual(none.action, { op: 'add-key', label: 'Add my key', disabled: false });
   assert.equal(none.controls, false, 'no key: nothing to pick yet');
@@ -57,14 +57,17 @@ test('RG2 free online AI: no key -> "Add my key"; a key saved -> the picker\'s u
   assert.match(none.lead, /key/);
   assert.equal(none.steps.length, 4);
   assert.match(none.steps.join(' '), /Add my key/);
-  assert.match(none.status, /No key is saved yet/);
+  assert.match(none.status, /You have not added an access key yet/);
+  assert.match(none.steps.join(' '), /Settings > Agents & Models > access keys/, 'the full path to the keys is stated in the steps');
+  assert.match(none.cost, /^Free\./);
+  assert.match(none.safety, /locked on this computer/);
   // A key for one provider: the guide offers it (the picker preselects that provider and its first tool-capable model).
   const hv = withKey('one')(hosted());
   const ready = way(guideOf(view([opt(), local(), hv])), 'hosted');
   assert.equal(ready.state, 'ready');
   assert.equal(ready.word, 'Ready');
-  assert.deepEqual(ready.action, { op: 'use', label: 'Use this runtime', disabled: false });
-  assert.deepEqual(ready.secondary, { op: 'add-key', label: 'Add or change a key', disabled: false });
+  assert.deepEqual(ready.action, { op: 'use', label: 'Use this AI service', disabled: false });
+  assert.deepEqual(ready.secondary, { op: 'add-key', label: 'Add or change my key', disabled: false });
   assert.equal(ready.controls, true);
   assert.equal(ready.choice.kind, 'hosted-model');
   assert.equal(ready.choice.provider, 'one');
@@ -75,7 +78,7 @@ test('RG2 free online AI: no key -> "Add my key"; a key saved -> the picker\'s u
   assert.equal(wrong.state, 'needs_key');
   assert.equal(wrong.action.op, 'add-key');
   assert.equal(wrong.controls, true, 'the provider list is on the card so the keyed provider can be picked');
-  assert.match(wrong.status, /^A key is saved for Provider Two. Pick that provider below/);
+  assert.match(wrong.status, /^Your access key is saved for Provider Two. Pick that service below/);
   // Picking the provider that has the key makes it ready.
   const pickedTwo = way(guideOf(otherKey, { providers: { 'hosted-model': 'two' } }), 'hosted');
   assert.deepEqual([pickedTwo.state, pickedTwo.action.op, pickedTwo.choice.provider], ['ready', 'use', 'two']);
@@ -85,7 +88,7 @@ test('RG2 free online AI: no key -> "Add my key"; a key saved -> the picker\'s u
   assert.equal(way(guideOf(view([opt(), local()])), 'hosted').state, 'unchecked', 'not reported at all');
   // A rejected key says so and offers to enter it again.
   const rej = way(guideOf(view([opt(), local(), withKey('one')(hosted({ problem: 'key_rejected' }))])), 'hosted');
-  assert.deepEqual([rej.state, rej.status, rej.action.label], ['key_rejected', E.AGENT_REASON_TEXT.hosted_key_rejected, 'Enter my key again']);
+  assert.deepEqual([rej.state, rej.word, rej.status, rej.action.label], ['key_rejected', 'Key refused', E.AGENT_REASON_TEXT.hosted_key_rejected, 'Enter my key again']);
   // The runtime itself not ready: the picker's sentence, not a button.
   const down = way(guideOf(view([opt(), local(), hosted({ state: 'unavailable' })])), 'hosted');
   assert.deepEqual([down.state, down.action], ['unchecked', null]);
@@ -96,10 +99,10 @@ test('RG3 on this computer: server not running / model missing / ready, each a p
   const down = g({ state: 'not_installed', models: null, problem: null });
   assert.deepEqual([down.state, down.word, down.status, down.action], ['server_down', 'Not running', E.AGENT_REASON_TEXT.local_model_server_down, null]);
   assert.equal(down.steps.length, 4);
-  assert.match(down.steps.join(' '), /Install a local model server/);
+  assert.match(down.steps.join(' '), /Install a free program that runs AI models/);
   assert.match(down.steps.join(' '), /model that can use tools/);
   const none = g({ models: [], problem: 'model_missing' });
-  assert.deepEqual([none.state, none.status, none.action], ['no_model', 'The local model server is running, but it has no model installed yet.', null]);
+  assert.deepEqual([none.state, none.status, none.action], ['no_model', 'The program that runs AI on this computer is working, but it has no model yet.', null]);
   assert.ok(none.steps.length >= 1);
   const unsup = g({ state: 'version_unsupported', models: [{ name: 'plain:1b', tools: false }], problem: 'model_no_tools' });
   assert.deepEqual([unsup.state, unsup.status, unsup.action], ['model_problem', E.AGENT_REASON_TEXT.local_model_no_tools, null]);
@@ -111,7 +114,7 @@ test('RG3 on this computer: server not running / model missing / ready, each a p
   // A model picked in the card makes it ready, and the card ends in the picker's use action.
   const v = view([opt(), local(), hosted()]);
   const picked = way(guideOf(v, { models: { 'local-model': 'coder:7b' } }), 'local');
-  assert.deepEqual([picked.state, picked.word, picked.action], ['ready', 'Ready', { op: 'use', label: 'Use this runtime', disabled: false }]);
+  assert.deepEqual([picked.state, picked.word, picked.action], ['ready', 'Ready', { op: 'use', label: 'Use this AI service', disabled: false }]);
   assert.equal(picked.choice.model, 'coder:7b');
   assert.deepEqual(picked.steps, []);
   // Not reported: not checked.
@@ -122,7 +125,7 @@ test('RG4 a plan you already have: ready only when the probe says installed AND 
   const g = (o) => way(guideOf(view([opt(o), local(), hosted()])), 'program');
   const ready = g({});
   assert.deepEqual([ready.state, ready.word, ready.status], ['ready', 'Ready', 'Test Engine is installed and signed in.']);
-  assert.deepEqual(ready.action, { op: 'use', label: 'Use this runtime', disabled: false });
+  assert.deepEqual(ready.action, { op: 'use', label: 'Use this AI service', disabled: false });
   const absent = g({ state: 'not_installed' });
   assert.deepEqual([absent.state, absent.status, absent.action], ['not_installed', 'Test Engine is not installed on this computer.', null]);
   const out = g({ state: 'not_signed_in', signedIn: 'no' });
@@ -149,7 +152,7 @@ test('RG5 every sentence of the guide is plain: no vendor, provider, address, co
   ];
   for (const v of states) {
     const g = guideOf(v);
-    const text = [g.title, g.lead, g.note, ...g.ways.flatMap((w) => [w.title, w.lead, w.word, w.status, ...w.steps, w.action?.label, w.secondary?.label])].filter(Boolean).join('\n');
+    const text = [g.title, g.lead, g.note, ...g.ways.flatMap((w) => [w.title, w.lead, w.cost, w.safety, w.word, w.status, ...w.steps, w.action?.label, w.secondary?.label])].filter(Boolean).join('\n');
     // The probe-labelled ones ("Test Engine", "Provider One") are test data; everything else must be clean.
     assert.doesNotMatch(text, VENDOR);
     assert.doesNotMatch(text, HOSTLIKE);
@@ -196,7 +199,7 @@ test('RG7 source pins: the sheet shows the guide while nothing is granted, the p
   assert.match(sheet, /\{guide && \(\s*<section aria-labelledby="nx-xs-guide" className="nx-xg">/);
   assert.match(sheet, /guide\.ways\.map\(\(way\) =>/);
   // The way's button: add a key opens Settings on Agents & Models (the sheet closes first); use goes through the existing grant (picker row or default).
-  assert.match(sheet, /const addKey = \(\) => \{ if \(shell\) \{ onClose\(\); shell\.openSettings\('Agents & Models'\); \} \};/);
+  assert.match(sheet, /const addKey = \(\) => \{ if \(shell\) \{ onClose\(\); requestKeysFocus\(\); shell\.openSettings\('Agents & Models'\); \} \};/, 'Add my key closes the sheet, asks the keys block to take focus, and opens Settings on it');
   assert.match(sheet, /else if \(way\.choice\) void useRuntime\(way\.choice\);\s*else void changeConsent\('grant'\);/);
   // One set of provider/model controls, used by the picker (with the key help) and by the guide (without: the guide has its own words).
   assert.equal((sheet.match(/const runtimeControls = \(/g) || []).length, 1, 'defined once');
@@ -204,7 +207,7 @@ test('RG7 source pins: the sheet shows the guide while nothing is granted, the p
   assert.match(sheet, /runtimeControls\(c, true\)/);
   assert.match(sheet, /runtimeControls\(way\.choice, false\)/);
   // The guide lives above the program rows; both the sheet and the model hold no vendor word.
-  assert.ok(sheet.indexOf('nx-xs-guide') < sheet.indexOf('aria-label="Execution setup"'));
+  assert.ok(sheet.indexOf('nx-xs-guide') < sheet.indexOf('aria-label="Computer details"'), 'the guide comes before the numbers behind More details');
   for (const f of ['src/renderer/src/nexus/components/ExecutionSetupSheet.tsx', 'src/renderer/src/nexus/data/runtimeGuideModel.ts', 'src/renderer/src/nexus/agent/agentModel.ts', 'src/renderer/src/nexus/agent/AgentPanel.tsx']) {
     assert.deepEqual(read(f).split('\n').filter((l) => VENDOR.test(l)), [], f);
   }
