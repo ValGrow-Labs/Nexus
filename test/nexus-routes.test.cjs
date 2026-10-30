@@ -43,7 +43,7 @@ test('ids are URL-decoded and round-trip through formatRoute', () => {
 
 test('routeTitle gives a human page label', () => {
   assert.equal(routeTitle({ name: 'home' }), 'Home');
-  assert.equal(routeTitle({ name: 'workspace', id: 'ml' }), 'ML workspace');
+  assert.equal(routeTitle({ name: 'workspace', id: 'ml' }), 'Machine learning workspace');
   assert.equal(routeTitle({ name: 'agents' }), 'Agents');
 });
 
@@ -66,8 +66,8 @@ test('formatRoute: bench is the default and is omitted', () => {
 });
 
 test('routeTitle: workspace titles come from the registry', () => {
-  assert.equal(routeTitle({ name: 'workspace', id: 'ml' }), 'ML workspace');
-  assert.equal(routeTitle({ name: 'project', id: 'x', tool: 'changes' }), 'Changes');
+  assert.equal(routeTitle({ name: 'workspace', id: 'ml' }), 'Machine learning workspace');
+  assert.equal(routeTitle({ name: 'project', id: 'x', tool: 'changes' }), 'Suggested changes');
 });
 
 // ---------- Task 12: artifacts and handoffs take an optional record id ----------
@@ -83,8 +83,8 @@ test('#/artifacts/<id> and #/handoffs/<id> round-trip', () => {
   }
   assert.equal(formatRoute({ name: 'artifacts', id: ID }), `#/artifacts/${ID}`);
   assert.equal(formatRoute({ name: 'artifacts' }), '#/artifacts');
-  assert.equal(routeTitle({ name: 'artifacts' }), 'Artifacts');
-  assert.equal(routeTitle({ name: 'artifacts', id: ID }), 'Artifact');
+  assert.equal(routeTitle({ name: 'artifacts' }), 'Saved items');
+  assert.equal(routeTitle({ name: 'artifacts', id: ID }), 'Saved item');
   assert.equal(routeTitle({ name: 'handoffs', id: ID }), 'Handoff');
 });
 

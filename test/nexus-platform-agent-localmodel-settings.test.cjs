@@ -154,7 +154,7 @@ test('LS5 the picker rows: one per runtime, labels from the probe, a model list 
   assert.deepEqual([cli.models, cli.model, cli.action.op, cli.action.label, cli.action.disabled, cli.destination], [null, null, 'grant', 'Use this AI service', false, 'cli.example.com:443']);
   assert.deepEqual(local.models, [{ name: 'coder:7b', label: 'coder:7b', disabled: false }, { name: 'plain:1b', label: 'plain:1b (cannot use tools)', disabled: true }]);
   assert.equal(local.action.disabled, true, 'no model is chosen yet');
-  assert.equal(local.text, 'No local model is chosen yet. Pick one from the model list under Agent runtime.');
+  assert.equal(local.text, 'No AI model is chosen yet. Pick one from the list under AI on this computer.');
   assert.equal(local.state, 'problem');
   // Picking a model that can use tools readies the button; one that cannot does not.
   const picked = X.runtimeChoices(view([opt(), localOpt()]), { 'local-model': 'coder:7b' })[1];

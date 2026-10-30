@@ -20,7 +20,7 @@ test('name and label prefixes rank first', () => {
 
 test('vocabulary finds the environment that works with a thing', () => {
   assert.equal(matchEntries(E, 'dashboards')[0].id, 'data');
-  assert.equal(matchEntries(E, 'checkpoint')[0].id, 'dl');
+  assert.equal(matchEntries(E, 'saved versions')[0].id, 'dl');
 });
 
 test('matching is case-insensitive and ignores surrounding space', () => {

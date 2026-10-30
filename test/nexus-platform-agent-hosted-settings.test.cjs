@@ -229,9 +229,9 @@ test('HS5 the six hosted reasons have one plain sentence in main and the rendere
     assert.doesNotMatch(ENV.AGENT_REASON_MESSAGES[k], /hosted_|_/, 'no code in the sentence');
   }
   assert.equal(E.AGENT_REASON_TEXT.hosted_key_missing, 'Add your access key in Settings first.');
-  // A failed hosted turn reads as its sentence in the run list (the renderer's failure text falls back to the reason copy).
+  // A failed hosted turn reads as its sentence in the run list (the renderer's failure text falls back to the reason copy; a headline has no trailing period, the next step is shown apart).
   const J = loadTs('src/renderer/src/nexus/runs/jobRunModel.ts');
-  for (const k of H.HOSTED_MODEL_REASONS) assert.equal(J.agentTurnHeadline({ state: 'failed', outcome: k, phase: null, headline: 'failed', cancelRequested: false }), E.AGENT_REASON_TEXT[k], k);
+  for (const k of H.HOSTED_MODEL_REASONS) assert.equal(J.agentTurnHeadline({ state: 'failed', outcome: k, phase: null, headline: 'failed', cancelRequested: false }), E.AGENT_REASON_TEXT[k].replace(/\.$/, ''), k);
 });
 
 // ---------- HS6: the picker ----------

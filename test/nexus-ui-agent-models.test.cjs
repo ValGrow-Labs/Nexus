@@ -201,8 +201,8 @@ test('UA4 Merge appears only when accepted work is not on the branch, and is a s
   assert.equal(ok.sentence, null);
   const dirty = CS.mergeModel(repo({ acceptedNotMerged: 1, dirty: true, canFastForward: false, reason: 'tree_dirty' }));
   assert.equal(dirty.button, null);
-  assert.match(dirty.sentence, /uncommitted changes to tracked files/);
-  assert.match(dirty.sentence, /untracked files do not block/i);
+  assert.match(dirty.sentence, /changes that are not saved in its history yet/);
+  assert.match(dirty.sentence, /new files do not block/i);
   // Even if main said it could fast-forward, a dirty tree never gives the button.
   assert.equal(CS.mergeModel(repo({ acceptedNotMerged: 1, dirty: true, canFastForward: true, reason: null })).button, null);
   for (const reason of ['branch_mismatch', 'not_fast_forward', 'git_missing', 'runner_unavailable', 'weird_code']) {
@@ -466,14 +466,14 @@ test('carry: a consent revoke row reads revoked, a grant row reads given; an unk
   const row = (action, details, status = 'succeeded') => ({ seq: 1, ts: NOW, action, status, actorKind: 'user', onBehalfOfUser: false, entityType: 'x', entityId: null, projectId: 'p',
     workspaceId: null, artifactId: null, versionId: null, details });
   assert.ok(ACT.ACTIVITY_DETAIL_ALLOW.includes('op'));
-  assert.match(ACT.activityText(row('agent.consent', { op: 'grant' }), ctx), /given network permission/);
-  assert.equal(ACT.activityText(row('agent.consent', { op: 'revoke' }), ctx), "The agent's network permission was revoked");
-  assert.equal(ACT.activityText(row('agent.consent', {}), ctx), "The agent's network permission was changed");
-  assert.equal(ACT.activityText(row('agent.consent', { op: 'sudo' }), ctx), "The agent's network permission was changed");
+  assert.match(ACT.activityText(row('agent.consent', { op: 'grant' }), ctx), /given internet permission/);
+  assert.equal(ACT.activityText(row('agent.consent', { op: 'revoke' }), ctx), "The AI helper's internet permission was taken back");
+  assert.equal(ACT.activityText(row('agent.consent', {}), ctx), "The AI helper's internet permission was changed");
+  assert.equal(ACT.activityText(row('agent.consent', { op: 'sudo' }), ctx), "The AI helper's internet permission was changed");
   assert.ok(ACT.ACTIVITY_ACTIONS.includes('auth.denied'));
   for (const status of ['denied', 'failed', 'succeeded']) {
     const t = ACT.activityText(row('auth.denied', { reason: 'out_of_scope', requested: 'x' }, status), ctx);
-    assert.equal(t, 'The agent asked for something its permission does not cover, so it was refused');
+    assert.equal(t, 'The AI helper asked for something its permission does not cover, so it was refused');
     assert.doesNotMatch(t, /auth\.denied|out_of_scope/);
   }
 });
@@ -752,8 +752,8 @@ test('R4-minors copy and hygiene: merge copy, no raw ids, hashed intent keys, pl
   assert.equal(row.title, 'Let Nexus keep hidden Nexus notes in your project');
   const ctx = { names: new Map(), versionNos: new Map(), workspaceLabel: (x) => x, now: NOW };
   const act = (action, details) => ACT.activityText({ seq: 1, ts: NOW, action, status: 'succeeded', actorKind: 'user', onBehalfOfUser: false, entityType: 'x', entityId: null, projectId: 'p', workspaceId: null, artifactId: null, versionId: null, details }, ctx);
-  assert.equal(act('approval.request', { reason: 'repo.write_refs' }), 'Approval asked: let Nexus write hidden refs in this repository');
-  assert.equal(act('approval.respond', { reason: 'repo.write_refs', decision: 'once' }), 'Nexus was allowed to write hidden refs in this repository');
+  assert.equal(act('approval.request', { reason: 'repo.write_refs' }), 'Asked for your OK: keep hidden Nexus notes in your project');
+  assert.equal(act('approval.respond', { reason: 'repo.write_refs', decision: 'once' }), 'Allowed once: Nexus may keep hidden Nexus notes in your project');
   // A failed read of the conversations (not "agent work is off") is a sentence; the toggles say whether they are expanded.
   const failed = A.agentPanelModel({ health: health(), availability: READY, sessions: null, sessionsFail: { code: 'internal' } });
   assert.match(failed.readError, /could not be completed/);
