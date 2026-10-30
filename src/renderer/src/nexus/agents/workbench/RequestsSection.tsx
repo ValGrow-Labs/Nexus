@@ -18,7 +18,7 @@ export function RequestsSection({ draft, onDraft }: { draft: RequestDraft; onDra
   const agents = visibleAgents(allAgents, hint);
   const leadId = leadAgentId(allAgents, hint);
   const others = agents.filter((a) => a.id !== leadId && !a.isGod);
-  const labelOf = (id: string): string => display.get(id)?.label ?? 'Agent';
+  const labelOf = (id: string): string => display.get(id)?.label ?? 'AI helper';
   const [sending, setSending] = useState(false);
   const [result, setResult] = useState<string | null>(null);
   const clearTimer = useRef<ReturnType<typeof setTimeout> | null>(null);

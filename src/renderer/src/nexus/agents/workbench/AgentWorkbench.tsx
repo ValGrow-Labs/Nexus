@@ -40,7 +40,7 @@ function WorkbenchFrame({ agent, fullscreen, onPtyStream }: {
   const liveAgents = useStore((s) => s.agents);
   const isLead = leadAgentId(liveAgents, hint) === agent.id;
   const info = display.get(agent.id);
-  const label = info?.label ?? 'Agent';
+  const label = info?.label ?? 'AI helper';
   const role = displayDescription(agent, isLead) || info?.role || '';
 
   const showHistory = useStore(triggerHistoryVisible);

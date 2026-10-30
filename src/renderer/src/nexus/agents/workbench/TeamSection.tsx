@@ -52,7 +52,7 @@ export function TeamSection() {
   const agents = visibleAgents(allAgents, hint);
   const leadId = leadAgentId(allAgents, hint);
   const ordered = [...agents].sort((a, b) => Number(b.id === leadId) - Number(a.id === leadId));
-  const labelOf = (a: Agent): string => display.get(a.id)?.label ?? 'Agent';
+  const labelOf = (a: Agent): string => display.get(a.id)?.label ?? 'AI helper';
 
   const telemetry = useFleetTelemetry();
   const roster = useFleetRoster();
