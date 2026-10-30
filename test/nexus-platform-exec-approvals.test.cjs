@@ -111,7 +111,7 @@ test('A1 a dependency install waits in awaiting_approval with one pending approv
   assert.equal(act[0].attempt_n, 1); assert.equal(act[0].project_id, 'p-ledger'); assert.equal(act[0].workspace_id, 'sde');
   assert.deepEqual(JSON.parse(act[0].details_json), { reason: 'egress.deps', recipeId: 'sde.deps.node', recipeVersion: '1', profile: 'sde-node',
     registries: ['registry.npmjs.org'], lockfile: { sha256: LOCK }, request: { sha256: ap.request_sha256 }, expiresAt: ap.expires_at });
-  assert.equal(ACT.activityText(actView(act[0]), ACT_CTX), 'Approval asked: network access for one dependency install');
+  assert.equal(ACT.activityText(actView(act[0]), ACT_CTX), 'Asked for your OK: download the add-ons your project needs');
   // The view names no principal and shows the request's known fields.
   const view = w.nx.approvals.list(w.me, { projectId: 'p-ledger' }).approvals[0];
   assert.equal(view.id, ap.id); assert.deepEqual(view.request.registries, ['registry.npmjs.org']); assert.equal(view.request.lockfileSha256, LOCK);
@@ -928,7 +928,7 @@ test('AR1 approval answers, expiry and image builds write their activity rows wi
   const r1 = acts(w, 'approval.respond', approvalOf(w, d1.id).id)[0];
   assert.equal(r1.actor_kind, 'user'); assert.equal(r1.actor_id, w.me.id); assert.equal(r1.job_id, d1.id); assert.equal(r1.attempt_n, 1);
   assert.deepEqual(JSON.parse(r1.details_json), { reason: 'egress.deps', decision: 'once', consumedBy: { jobId: d1.id, attemptN: 1 }, effect: 'started' });
-  assert.equal(ACT.activityText(actView(r1), ACT_CTX), 'Network access approved once, for one dependency install');
+  assert.equal(ACT.activityText(actView(r1), ACT_CTX), 'Allowed once: download the add-ons your project needs');
   // once while the slots are full: waiting:slots
   const builds = [0, 1].map(() => w.exec.start(w.me, w.req('sde.build.run')).job); w.exec.tick(w.now());
   assert.ok(builds.every((b) => w.jobState(b.id) === 'leased'));
@@ -938,7 +938,7 @@ test('AR1 approval answers, expiry and image builds write their activity rows wi
   w.nx.approvals.respond(w.me, approvalOf(w, d3.id).id, 'deny');
   const r3 = acts(w, 'approval.respond', approvalOf(w, d3.id).id)[0];
   assert.deepEqual(JSON.parse(r3.details_json), { reason: 'egress.deps', decision: 'deny', consumedBy: null, effect: 'job_failed_denied' });
-  assert.equal(ACT.activityText(actView(r3), ACT_CTX), 'Approval denied');
+  assert.equal(ACT.activityText(actView(r3), ACT_CTX), 'The request for your OK was turned down');
   // once when the plan cannot be built (the project folder is gone): failed:<code>
   w.exec.cancel(w.me, builds[0].id);
   gate.ok = false;
@@ -953,7 +953,7 @@ test('AR1 approval answers, expiry and image builds write their activity rows wi
   assert.equal(ex.actor_kind, 'system'); assert.equal(ex.job_id, d4.id);
   assert.deepEqual(JSON.parse(ex.details_json), { approvalId: approvalOf(w, d4.id).id, reason: 'egress.deps', expiredAt: approvalOf(w, d4.id).expires_at,
     job: { outcome: 'denied', error: 'approval_expired' } });
-  assert.equal(ACT.activityText(actView(ex), ACT_CTX), 'Approval request expired: it was not answered within 15 minutes');
+  assert.equal(ACT.activityText(actView(ex), ACT_CTX), 'The request for your OK ran out: it was not answered within 15 minutes');
   // Image: request (the user), answer, start (the deciding user, for the requester), finish (the system).
   const { approval } = w.nx.approvals.requestImage(w.me, 'sde-node', 'img-ar1');
   const rq = acts(w, 'approval.request', approval.id)[0];
@@ -962,7 +962,7 @@ test('AR1 approval answers, expiry and image builds write their activity rows wi
   assert.deepEqual(JSON.parse(rq.details_json), { reason: 'image.prepare', profileId: 'sde-node', context: { sha256: CTX.contextSha256 },
     base: { sha256: CTX.baseDigest.slice(7) }, estimatedBytes: CTX.estimatedBytes, freeBytesNow: 45 * GIB, request: { sha256: rqRow.request_sha256 },
     expiresAt: rqRow.expires_at });
-  assert.equal(ACT.activityText(actView(rq), ACT_CTX), 'Approval asked: prepare a sandbox image');
+  assert.equal(ACT.activityText(actView(rq), ACT_CTX), 'Asked for your OK: prepare a safe-space kit');
   w.nx.approvals.respond(w.me, approval.id, 'once');
   const b = w.db.prepare('SELECT * FROM image_builds WHERE approval_id = ?').get(approval.id);
   assert.deepEqual(JSON.parse(acts(w, 'approval.respond', approval.id)[0].details_json), { reason: 'image.prepare', decision: 'once', profileId: 'sde-node', buildId: b.id });
@@ -976,8 +976,8 @@ test('AR1 approval answers, expiry and image builds write their activity rows wi
   assert.equal(fin.actor_kind, 'system'); assert.equal(fin.status, 'succeeded');
   assert.deepEqual(JSON.parse(fin.details_json), { buildId: b.id, profileId: 'sde-node', status: 'succeeded', image: { sha256: 'e6'.repeat(32) },
     sizeBytes: 2 * GIB, error: null, durationMs: 90_000 });
-  assert.equal(ACT.activityText(actView(fin), ACT_CTX), 'Sandbox image prepared');
-  assert.equal(ACT.activityText(actView(st), ACT_CTX), 'Sandbox image preparation started');
+  assert.equal(ACT.activityText(actView(fin), ACT_CTX), 'Safe-space kit prepared');
+  assert.equal(ACT.activityText(actView(st), ACT_CTX), 'Preparing a safe-space kit started');
   for (const t of recordTexts(w)) assert.ok(!hasProviderKey(t), t.slice(0, 120));
   healthy(w); w.close();
 });
@@ -992,14 +992,14 @@ test('AR1 dev deployments write deployment.start, deployment.transition and depl
   assert.deepEqual(JSON.parse(start.details_json), { deploymentId: d.id, jobId: j.id, attemptN: 1, subjectVersionId: app, buildVersionId: build,
     profile: 'sde-node', image: { sha256: w.IMAGE['sde-node'].slice(7) }, forwarderImage: { sha256: w.IMAGE['nexus-fwd'].slice(7) },
     environment: 'local-preview', bindAddress: '127.0.0.1', lifetimeMs: 2 * 60 * MIN });
-  assert.equal(ACT.activityText(actView(start), ACT_CTX), 'Dev deployment started, reachable from this computer only');
+  assert.equal(ACT.activityText(actView(start), ACT_CTX), 'Test run of your app started. Only this computer can reach it');
   const a = provisionService(w, r, j.id, 49300);
   probe(w, r, a, 503); probe(w, r, a, 200);
   const healthyRow = acts(w, 'deployment.transition', d.id)[0];
   const check = w.latest(app, 'app.preview_health');
   assert.deepEqual(JSON.parse(healthyRow.details_json), { deploymentId: d.id, from: 'starting', to: 'healthy', reason: null, hostPort: 49300,
     healthyEver: true, lastProbeStatus: 200, check: { id: check.id, status: 'passed' } });
-  assert.equal(ACT.activityText(actView(healthyRow), ACT_CTX), 'Dev deployment answered its health check');
+  assert.equal(ACT.activityText(actView(healthyRow), ACT_CTX), 'Your app answered the app check');
   probe(w, r, a, 500); probe(w, r, a, 500); probe(w, r, a, 500);
   const unhealthy = acts(w, 'deployment.transition', d.id)[1];
   assert.deepEqual(JSON.parse(unhealthy.details_json), { deploymentId: d.id, from: 'healthy', to: 'unhealthy', reason: null, hostPort: 49300,
@@ -1008,7 +1008,7 @@ test('AR1 dev deployments write deployment.start, deployment.transition and depl
   const stop = acts(w, 'deployment.stop', d.id)[0];
   assert.equal(stop.actor_kind, 'user'); assert.equal(stop.actor_id, w.me.id);
   assert.deepEqual(JSON.parse(stop.details_json), { deploymentId: d.id, from: 'unhealthy', to: 'stopped', reason: 'user', job: 'completes_on_exit', hostPort: 49300 });
-  assert.equal(ACT.activityText(actView(stop), ACT_CTX), 'Dev deployment stopped; its job finishes when the app has exited');
+  assert.equal(ACT.activityText(actView(stop), ACT_CTX), 'Test run of your app stopped; its task ends once the app has stopped');
   // One live dev deployment per version (B2a stabilization): the stopped app exits, so its job ends, before the next.
   r.report({ op: 'attempt.exited', attemptId: a.id, exit: { code: 0, oomKilled: false, finishedAt: w.now() }, outputs: [], parsed: [], logBytes: 10 });
   assert.equal(w.jobState(j.id), 'completed');
@@ -1018,7 +1018,7 @@ test('AR1 dev deployments write deployment.start, deployment.transition and depl
   for (let i = 0; i < 13; i++) probe(w, r, a2, 503);
   const failed = acts(w, 'deployment.transition', dep(w, j2.id).id).pop();
   assert.equal(JSON.parse(failed.details_json).reason, 'probe_failed'); assert.equal(JSON.parse(failed.details_json).check.status, 'failed');
-  assert.equal(ACT.activityText(actView(failed), ACT_CTX), 'Dev deployment failed: it did not answer its health check within 60 seconds');
+  assert.equal(ACT.activityText(actView(failed), ACT_CTX), 'Test run of your app failed: it did not answer the app check within 60 seconds');
   for (const t of recordTexts(w)) assert.ok(!hasProviderKey(t), t.slice(0, 120));
   healthy(w); w.close();
 });
@@ -1109,7 +1109,7 @@ test('M2 a dev deployment ends with its true cause: a refused preflight, a runne
   provisionService(w, r, j1.id, 49320); provisionService(w, r, j2.id, 49320, 'f');
   assert.equal(reasonOf(j2), 'preflight_failed'); assert.equal(dep(w, j2.id).stop_reason, 'preflight_failed', 'the true cause on the row');
   assert.equal(ACT.activityText(actView(acts(w, 'deployment.transition', dep(w, j2.id).id).pop()), ACT_CTX),
-    'Dev deployment failed: its sandbox did not pass the safety checks');
+    'Test run of your app failed: its safe space did not pass the safety checks');
   // A runner refusal.
   const j3 = preview(w, v3); w.exec.tick(w.now());
   r.report({ op: 'attempt.refused', attemptId: w.liveAttempt(j3.id).id, reason: 'docker_stopped' });
@@ -1342,7 +1342,7 @@ test('F2 deployments.stop_reason holds the true cause: the v9 CHECK takes refuse
   assert.equal(JSON.parse(acts(w, 'deployment.transition', dep(w, j.id).id).pop().details_json).reason, 'runner_lost');
   assert.equal(endCause('failed', 'exit_not_reported', true), 'exit_not_reported');
   assert.equal(ACT.activityText(actView({ ...acts(w, 'deployment.transition', dep(w, j.id).id).pop(),
-    details_json: JSON.stringify({ to: 'failed', reason: 'exit_not_reported' }) }), ACT_CTX), 'Dev deployment failed: its exit was never reported');
+    details_json: JSON.stringify({ to: 'failed', reason: 'exit_not_reported' }) }), ACT_CTX), 'Test run of your app failed: Nexus never heard that it had stopped');
   healthy(w); w.close();
 });
 
@@ -1359,7 +1359,7 @@ test('N1 cancelling a healthy preview job records deployment.transition (cancel)
   const t = acts(w, 'deployment.transition', d.id).pop();
   assert.equal(t.actor_id, w.me.id);
   assert.equal(JSON.parse(t.details_json).to, 'stopped'); assert.equal(JSON.parse(t.details_json).reason, 'cancel');
-  assert.equal(ACT.activityText(actView(t), ACT_CTX), 'Dev deployment stopped with its job');
+  assert.equal(ACT.activityText(actView(t), ACT_CTX), 'Test run of your app stopped with its task');
   // A user's stop of a deployment is still deployment.stop with reason user.
   const j2 = preview(w, app); w.exec.tick(w.now());
   const a2 = provisionService(w, r, j2.id, 49361, 'f'); probe(w, r, a2, 200);

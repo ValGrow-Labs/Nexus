@@ -495,7 +495,7 @@ test('every write channel error path answers its code through the envelope and w
   fs.writeFileSync(path.join(e.root, 'linked.txt'), 'shared\n');
   fs.linkSync(path.join(e.root, 'linked.txt'), path.join(plain, 'other-name.txt'));
   const hard = await e.refused('nexus:artifact:saveTextFile', textArgs('linked.txt'), 'invalid', { reason: 'path_refused' });
-  assert.match(hard.message, /hard links/);
+  assert.match(hard.message, /linked file that is also stored under other names/);
   await why('nexus:artifact:saveTextFile', textArgs('README.md', { artifactId: relDraft.artifact.id }), 'invalid', 'kind_mismatch');
 
   // --- markReady / promote / discard ---

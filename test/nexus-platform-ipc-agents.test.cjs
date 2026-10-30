@@ -841,7 +841,7 @@ test('IA10 the activity rows the agent flows write have keys and sentences: none
   for (const [i, row] of rows.entries()) {
     const text = ACT.activityText(view('agent.consent', { op: JSON.parse(row.details_json).op }), ctx);
     assert.doesNotMatch(text, /^Recorded|agent\.consent/);
-    if (i === 0) assert.match(text, /given network permission/);
+    if (i === 0) assert.match(text, /given internet permission/);
   }
   for (const action of ['agent.consent', 'token.mint', 'token.revoke', 'repo.worktree', 'review.decide', 'mcp.call', 'context_redacted', 'changeset.accept', 'changeset.rollback', 'repo.merge']) {
     assert.ok(ACT.ACTIVITY_ACTIONS.includes(action), `${action} is a listed action`);

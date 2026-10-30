@@ -173,7 +173,8 @@ test('E2E-B2b-2 python: a dirty tree refuses the merge with a sentence, the user
   const st = await w.okd('nexus:repo:status', w.PROJECT);
   assert.deepEqual([st.canFastForward, st.reason, st.dirty], [false, 'tree_dirty', true]);
   const r = await w.refusedd('nexus:repo:mergeAccepted', [w.PROJECT, { branch: status.branch, expectedAcceptedHead: status.acceptedHead }], 'tree_dirty');
-  assert.match(r.message, /tracked/i, 'the sentence says only tracked files count');
+  assert.match(r.message, /not saved in its history yet/i, 'the sentence says only files already saved in the history count');
+  assert.match(r.message, /new files do not block/i);
   assert.equal(w.dialogs.length, 0, 'no dialog was shown for a merge that cannot happen');
   assert.deepEqual(w.userState(), dirty, 'the user\'s files, index and branch are byte-identical after the refusal');
   assert.equal(w.db.prepare('SELECT COUNT(*) n FROM repo_merges').get().n, 0);

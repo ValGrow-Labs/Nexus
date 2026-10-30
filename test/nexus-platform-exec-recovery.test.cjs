@@ -968,23 +968,23 @@ test('D11 every recovery decision reads as a sentence; none says completed', () 
   assert.ok(ACT.ACTIVITY_ACTIONS.includes('exec.recover'));
   // finalize is said before the result is known (a non-zero exit too): it never reads as success.
   assert.doesNotMatch(say({ decision: 'finalize' }), /finish|success|succeed|complete|done|passed/i);
-  assert.equal(say({ decision: 'fail', status: 'oom' }), 'Job failed: it ran out of memory while the app was closed');
-  assert.equal(say({ decision: 'fail', status: 'nonzero_exit' }), 'Job failed: it exited with an error while the app was closed');
-  assert.equal(say({ decision: 'fail', status: 'invalid_output' }), 'Job failed: it stopped while the app was closed without the outputs it needs');
-  assert.equal(say({ decision: 'fail' }), 'Job failed: it stopped while the app was closed');
+  assert.equal(say({ decision: 'fail', status: 'oom' }), 'Task failed: it ran out of memory while the app was closed');
+  assert.equal(say({ decision: 'fail', status: 'nonzero_exit' }), 'Task failed: it stopped with an error while the app was closed');
+  assert.equal(say({ decision: 'fail', status: 'invalid_output' }), 'Task failed: it stopped while the app was closed without the results it needs');
+  assert.equal(say({ decision: 'fail' }), 'Task failed: it stopped while the app was closed');
   assert.match(say({ decision: 'exit_lost' }), /failed/);
   // Rows written by a real phase A read through the model.
   const w = execWorld({ realIngest: true }); w.attach();
   const j = w.exec.start(w.me, w.req('sde.build.run')).job; w.exec.tick(w.now());
   restart(w);
   const row = recoverActs(w, j.id)[0];
-  assert.equal(ACT.activityText(actView(row), ACT_CTX), 'Job queued again after a restart: it had not started yet');
+  assert.equal(ACT.activityText(actView(row), ACT_CTX), 'Task queued again after a restart: it had not started yet');
   assert.equal(actView(row).details.decision, 'requeue', 'the decision survives the IPC mapping');
   // Each decision keeps its own words; one this build does not know reads neutrally, never "recovered".
-  assert.equal(say({ decision: 'interrupt' }), 'Job interrupted by a restart');
-  assert.match(say({ decision: 'fail', status: 'something_new' }), /^Job failed/);
+  assert.equal(say({ decision: 'interrupt' }), 'Task interrupted by a restart');
+  assert.match(say({ decision: 'fail', status: 'something_new' }), /^Task failed/);
   assert.equal(say({ decision: 'brand_new' }), ACT.RECOVER_NEUTRAL);
-  assert.equal(say({}), 'Restart recovery recorded a decision');
+  assert.equal(say({}), 'After a restart, Nexus recorded what to do with a task');
   assert.doesNotMatch(ACT.RECOVER_NEUTRAL, /recovered|complet|success/i);
   assert.equal(row.on_behalf_of, w.me.id);
   healthy(w); w.close();

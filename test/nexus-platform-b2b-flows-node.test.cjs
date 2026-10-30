@@ -361,7 +361,7 @@ test('E2E-B2b-2 node: consent missing refuses a start with a sentence, and nothi
   assert.equal(r.ok, false);
   assert.equal(r.reason, 'consent_missing');
   assert.equal(r.message, AGENT_REASON_MESSAGES.consent_missing);
-  assert.match(r.message, /network permission/);
+  assert.match(r.message, /internet permission/);
   noLeak(r);
   assert.equal(w.db.prepare("SELECT COUNT(*) n FROM jobs WHERE kind = 'agent.run'").get().n, 0);
   assert.equal(w.db.prepare('SELECT COUNT(*) n FROM agent_sessions').get().n, 0);
