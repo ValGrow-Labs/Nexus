@@ -104,7 +104,7 @@ test('I-E3 at v8 every gated channel answers execution_unavailable with each sub
     for (const ch of GATED) {
       const r = await x.call(ch, ...args[ch]);
       assert.deepEqual([r.ok, r.code, r.reason, r.subReason], [false, 'platform_unavailable', 'execution_unavailable', sub], `${ch} ${sub}`);
-      assert.equal(r.message, 'Running work is not available on this database.');
+      assert.equal(r.message, 'Running tasks is not available right now.');
     }
     const domains = await x.ok('nexus:domains:list');
     assert.equal(domains.length, DOMAINS.length);

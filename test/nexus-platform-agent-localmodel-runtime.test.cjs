@@ -472,7 +472,7 @@ test('LM10 the local runtime\'s "unsupported" health (no model can use tools) re
   const v = await w.x.ok('nexus:agent:consent', { op: 'get' });
   const row = v.runtimes.find((r) => r.kind === 'local-model');
   assert.deepEqual([row.state, row.problem], ['version_unsupported', 'model_no_tools']);
-  assert.match(AGENT_REASON_MESSAGES.local_model_no_tools, /cannot use tools/, 'main envelope carries the sentence for that reason');
+  assert.match(AGENT_REASON_MESSAGES.local_model_no_tools, /cannot take actions such as reading and changing files/, 'main envelope carries the sentence for that reason');
   // The vendor runtime's "unsupported" is untouched: still a program version.
   const c = await world();
   await grant(c);

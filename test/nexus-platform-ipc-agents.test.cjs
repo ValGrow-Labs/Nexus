@@ -143,7 +143,7 @@ test('IA2 with v10 off the ten channels answer platform_unavailable / agents_una
     for (const ch of NEXUS_AGENT_CHANNELS) {
       const r = await w.x.call(ch, ...args[ch]);
       assert.deepEqual([r.ok, r.code, r.reason, r.subReason], [false, 'platform_unavailable', 'agents_unavailable', sub], `${ch} ${sub}`);
-      assert.equal(r.message, 'Agent work is not available on this database.');
+      assert.equal(r.message, 'The AI helper is not available on this computer right now.');
       noLeak(r, ch);
     }
   }
@@ -424,7 +424,7 @@ test('IA5 + IA4 start: a re-sent intent answers the same session and job; views 
   const w = world();
   // Refusals first, each with its sentence and nothing created.
   const noConsent = await w.x.refused('nexus:agent:start', [startArgs()], 'unavailable', { reason: 'consent_missing' });
-  assert.equal(noConsent.message, 'Agent turns need your network permission. Open Setup to grant it.');
+  assert.equal(noConsent.message, 'The AI helper needs your internet permission before it can work. Open “Get this computer ready” to allow it.');
   assert.doesNotMatch(noConsent.message, /anthropic|api\./);
   assert.equal(w.db.prepare("SELECT COUNT(*) n FROM jobs WHERE kind = 'agent.run'").get().n, 0);
   w.st.runtimes = [okRuntime({ health: { ok: false, reason: 'not_authenticated', detail: 'x' }, signedIn: 'no' })];
@@ -591,8 +591,8 @@ test('E1 every refusal of the accept, merge and review flows reaches the rendere
       assert.ok(!('expected' in (r.detail ?? {})));
     }
   }
-  assert.match(REASON_MESSAGES.tree_dirty, /tracked files/);
-  assert.match(REASON_MESSAGES.tree_dirty, /untracked/);
+  assert.match(REASON_MESSAGES.tree_dirty, /changes that are not saved in its history yet/);
+  assert.match(REASON_MESSAGES.tree_dirty, /New files do not block this/);
   // A refusal the map does not know keeps its scrubbed text, never a path.
   thrown.err = new PlatformError('unavailable', RAW, { reason: 'git_failed' });
   const u = await w.x.call('nexus:repo:mergeAccepted', PROJECT, { branch: 'main', expectedAcceptedHead: BASE });
@@ -946,7 +946,7 @@ test('S3 #43 answers closed SessionView rows; #50 is single-flight per project: 
   const first = w.x.call('nexus:repo:mergeAccepted', ...margs);
   await new Promise((r) => setImmediate(r));
   const second = await w.x.refused('nexus:repo:mergeAccepted', margs, 'conflict', { reason: 'merge_pending' });
-  assert.equal(second.message, 'The merge is still running. Ask again in a moment.');
+  assert.equal(second.message, 'Nexus is still adding these changes to your project. Try again in a moment.');
   assert.equal(w.confirms.length, 0, 'no dialog was opened');
   release();
   const done = await first;
@@ -983,7 +983,8 @@ test('M2 the merge window fails closed: with no live window to parent it nothing
 
 test('PR1 promote and rollback of a change set are refused on every user path (the IPC channel and the service); the version is unchanged; other kinds still promote; the accept path\'s own promotion still works', async () => {
   const w = world();
-  const SENTENCE = 'A change set is accepted through review, not made current directly.';
+  const SENTENCE = 'Suggested changes cannot be set as the current version directly. Look them over and keep them instead.';
+  const SERVICE_SENTENCE = 'A change set is accepted through review, not made current directly.'; // the service's own message (the channel answers the plain one above)
   const cs = addChangeSet(w, { status: 'candidate' });
   const row = (id) => w.db.prepare('SELECT status, promoted_by, promoted_at FROM artifact_versions WHERE id = ?').get(id);
   const current = (id) => w.db.prepare('SELECT current_version_id FROM artifacts WHERE id = (SELECT artifact_id FROM artifact_versions WHERE id = ?)').get(id).current_version_id;
@@ -993,7 +994,7 @@ test('PR1 promote and rollback of a change set are refused on every user path (t
   const r = await w.x.refused('nexus:version:promote', [cs, null], 'illegal_transition', { reason: 'change_set_not_promotable' });
   assert.equal(r.message, SENTENCE);
   // The service.
-  assert.throws(() => w.nx.artifacts.promote(w.me, cs, null), (e) => e instanceof PlatformError && e.code === 'illegal_transition' && e.detail.reason === 'change_set_not_promotable' && e.message === SENTENCE);
+  assert.throws(() => w.nx.artifacts.promote(w.me, cs, null), (e) => e instanceof PlatformError && e.code === 'illegal_transition' && e.detail.reason === 'change_set_not_promotable' && e.message === SERVICE_SENTENCE);
   // A rollback target: a change set that was accepted and is deprecated now (promoted before) is refused the same way.
   w.db.prepare("UPDATE artifact_versions SET status = 'deprecated', promoted_at = ?, promoted_by = 'user:local' WHERE id = ?").run(w.clock.t, cs);
   const old = row(cs);

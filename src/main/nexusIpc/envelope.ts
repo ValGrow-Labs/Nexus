@@ -45,39 +45,38 @@ export const DETAIL_KEYS: readonly NexusErrorDetailKey[] = Object.freeze([
 export const EXECUTION_SUB_REASONS: readonly string[] = Object.freeze([
   'held', 'auto_held', 'backup_failed', 'failed', 'shape', 'not_enabled', 'v8_unavailable', 'registry_invalid', 'not_started'
 ]);
-export const EXECUTION_UNAVAILABLE_MESSAGE = 'Running work is not available on this database.';
+export const EXECUTION_UNAVAILABLE_MESSAGE = 'Running tasks is not available right now.';
 /** B2b: the same sub-reasons say why the agents part (schema v10) is off. */
 export const AGENTS_SUB_REASONS: readonly string[] = EXECUTION_SUB_REASONS;
-export const AGENTS_UNAVAILABLE_MESSAGE = 'Agent work is not available on this database.';
+export const AGENTS_UNAVAILABLE_MESSAGE = 'The AI helper is not available on this computer right now.';
 
 /** The fixed sentence of each setup:* answer (an action this machine cannot run now). */
 export const SETUP_MESSAGES: Readonly<Record<string, string>> = Object.freeze({
-  docker_missing: 'Docker is not installed, so this cannot run on this computer yet.',
+  docker_missing: 'Docker, a free program, is not installed, so this cannot run on this computer yet. Install Docker Desktop, then try again.',
   docker_stopped: 'Docker is not running. Start Docker Desktop and try again.',
-  docker_memory_low: 'Docker has too little memory for this. Give Docker more memory in its settings.',
-  image_missing: 'A sandbox image this needs is not prepared yet.',
-  image_mismatch: 'A sandbox image this needs does not match the pinned version. Prepare it again.',
-  disk_low: 'There is not enough free disk space for this.',
-  runner_unavailable: 'The execution runner is not available right now.',
-  git_missing: 'Git is not installed, so this cannot run on this computer yet.'
+  docker_memory_low: 'Docker does not have enough memory for this. Open Docker Desktop, give it more memory in its settings, then try again.',
+  image_missing: 'The safe-space kit this needs has not been downloaded yet. Open “Get this computer ready” to download it.',
+  image_mismatch: 'The safe-space kit on this computer is not the version Nexus expects. Download it again in “Get this computer ready”.',
+  disk_low: 'There is not enough free space on your disk for this. Free some space, then try again.',
+  runner_unavailable: 'The part of Nexus that runs tasks is not available right now. Try again in a moment.',
+  git_missing: 'Git, a free program, is not installed, so this cannot run on this computer yet. Install it, then try again.'
 });
 const SETUP_RE = /^setup:([a-z][a-z0-9_]{0,31})$/;
 
 /** Plain sentences for the service reasons a person can act on. Keyed by detail.reason. */
 export const REASON_MESSAGES: Readonly<Record<string, string>> = Object.freeze({
-  path_refused: 'That file cannot be saved. Paths outside the project folder are refused, and so are files with several '
-    + 'hard links (as pnpm stores and some backup tools create them).',
-  file_not_found: 'That file was not found in the project folder.',
-  too_large: 'That file is too large to save as an artifact.',
-  not_text: 'That file is not plain text, so it cannot be saved as a text artifact.',
-  secret_in_content: 'That file looks like it holds a secret, so it was not saved.',
-  sensitive_name: 'Files of that kind (keys, credentials, environment files, anything under .git) are never saved.',
-  project_folder_unavailable: 'The project folder is not available, so nothing was read.',
-  not_a_repository: 'The project folder is not a git repository.',
-  not_a_commit: 'That commit was not found in the project repository.',
-  kind_mismatch: 'That artifact holds a different kind of content.',
-  secret_in_metadata: 'The name or details look like they hold a secret, so nothing was saved.',
-  produced_by_job: 'A draft made by a job or an agent session is finished by the engine, not marked ready by hand.'
+  path_refused: 'That file cannot be saved. It is outside the project folder, or it is a linked file that is also stored under other names (some backup and package tools make these).',
+  file_not_found: "That file was not found in this project's folder.",
+  too_large: 'That file is too large to save.',
+  not_text: 'Only plain text files can be saved here, and that file is not one.',
+  secret_in_content: 'That file looks like it contains a password or secret key, so it was not saved.',
+  sensitive_name: "Nexus never saves files that usually hold secrets, such as keys, passwords and environment settings files, or anything inside a project's hidden git folder.",
+  project_folder_unavailable: "Nexus cannot open this project's folder, so nothing was read. Check that the folder is still there.",
+  not_a_repository: "This project's folder is not tracked with git yet. Nexus needs git, a free tool that remembers changes, to read it.",
+  not_a_commit: "That saved version was not found in this project's history.",
+  kind_mismatch: 'That saved item holds a different kind of content.',
+  secret_in_metadata: 'The name or details look like they contain a password or secret key, so nothing was saved.',
+  produced_by_job: 'This item is made by a task or the AI helper, and Nexus finishes it itself. You cannot mark it ready by hand.'
 });
 
 
@@ -88,64 +87,64 @@ export const REASON_MESSAGES: Readonly<Record<string, string>> = Object.freeze({
  */
 export const AGENT_REASON_MESSAGES: Readonly<Record<string, string>> = Object.freeze({
   agents_unavailable: AGENTS_UNAVAILABLE_MESSAGE,
-  runtime_unknown: 'The agent has not been checked on this computer yet. Open Setup and check again.',
-  runtime_not_installed: 'The agent program is not installed on this computer.',
-  runtime_not_authenticated: 'The agent program is not signed in. Sign in with it, then check again in Setup.',
-  runtime_version_unsupported: 'The installed agent program is not a version Nexus supports.',
-  runtime_error: 'The agent could not be checked. Open Setup and check again.',
-  runtime_mismatch: 'The agent program installed is not the one that was given permission.',
-  local_model_not_chosen: 'No local model is chosen yet. Pick one from the model list under Agent runtime.',
-  local_model_endpoint: 'The local model address is not on this computer, or is not the one that was given permission. Check it in Setup.',
-  local_model_missing: 'The chosen local model is not installed on this computer. Choose another in Setup.',
-  local_model_no_tools: 'The chosen local model cannot use tools, which agent turns need. Choose another in Setup.',
-  local_model_server_down: 'The local model server is not running on this computer. Start it, then check again in Setup.',
-  hosted_provider_not_chosen: 'No model provider is chosen yet. Pick a provider and a model under Agent runtime.',
-  hosted_key_missing: 'Add your API key in Settings first.',
-  hosted_key_rejected: 'The provider did not accept your API key. Check it in Settings and enter it again.',
-  hosted_rate_limited: 'The provider is asking for fewer requests right now. Wait a minute, then send your message again.',
-  hosted_quota_exhausted: 'The free allowance with this provider is used up for now. Try again later or choose another provider.',
-  hosted_model_unavailable: 'The chosen model is not available from this provider. Choose another model in Setup.',
-  bad_provider: 'That runtime does not offer that provider.',
-  turn_live: 'The agent is working on a turn. Stop it or wait for it to finish before switching the runtime.',
-  bad_model: 'That runtime does not take a model.',
-  consent_missing: 'Agent turns need your network permission. Open Setup to grant it.',
-  consent_mismatch: 'The permission on record does not match what the agent needs. Revoke it and grant it again in Setup.',
-  consent_live: 'A permission is already granted. Revoke it first to change it.',
-  budget_exhausted: 'The agent has used its budget for today.',
-  rate_limited: 'The agent has started too many turns this hour. Try again later.',
-  turn_running: 'The agent is still working on the last message.',
+  runtime_unknown: 'The AI helper has not been checked on this computer yet. Open “Get this computer ready” and check again.',
+  runtime_not_installed: 'The program for your own plan is not installed on this computer. Install it, then check again.',
+  runtime_not_authenticated: 'The program for your own plan is not signed in. Sign in with it, then check again in “Get this computer ready”.',
+  runtime_version_unsupported: 'The installed program for your own plan is a version Nexus does not support. Install a supported version, then check again.',
+  runtime_error: 'Nexus could not check the AI helper. Open “Get this computer ready” and check again.',
+  runtime_mismatch: 'The program for your own plan has changed since you allowed it. Take the internet permission back and allow it again in “Get this computer ready”.',
+  local_model_not_chosen: 'No AI model is chosen yet. Pick one from the list under AI on this computer.',
+  local_model_endpoint: 'The address for AI on this computer does not point to this computer, or it is not the one you allowed. Check it in “Get this computer ready”.',
+  local_model_missing: 'The AI model you chose is not installed on this computer. Choose another one in “Get this computer ready”.',
+  local_model_no_tools: 'The AI model you chose cannot take actions such as reading and changing files, which the AI helper needs. Choose another model in “Get this computer ready”.',
+  local_model_server_down: 'The program that runs AI on this computer is not running. Start it, then check again in “Get this computer ready”.',
+  hosted_provider_not_chosen: 'No online AI service is chosen yet. Choose a service and a model under Free online AI.',
+  hosted_key_missing: 'Add your access key in Settings first.',
+  hosted_key_rejected: 'The AI service did not accept your access key. Check it in Settings and enter it again.',
+  hosted_rate_limited: 'The AI service is asking for fewer requests right now. Wait a minute, then send your message again.',
+  hosted_quota_exhausted: 'The free allowance with this AI service is used up for now. Try again later or choose another AI service.',
+  hosted_model_unavailable: 'The model you chose is not available from this AI service. Choose another model in “Get this computer ready”.',
+  bad_provider: 'That AI service does not offer that choice.',
+  turn_live: 'The AI helper is working on a request. Stop it or wait for it to finish before you switch the AI service.',
+  bad_model: 'That AI service does not take a model choice.',
+  consent_missing: 'The AI helper needs your internet permission before it can work. Open “Get this computer ready” to allow it.',
+  consent_mismatch: 'Your internet permission no longer matches what the AI helper needs. Take it back and allow it again in “Get this computer ready”.',
+  consent_live: 'An internet permission is already allowed. Take it back first if you want to change it.',
+  budget_exhausted: 'The AI helper has used up its limit for today. Try again later.',
+  rate_limited: 'The AI helper has started too many requests this hour. Try again later.',
+  turn_running: 'The AI helper is still working on your last message. Wait for it to finish.',
   session_ended: 'That conversation has ended. Start a new one.',
-  no_turn: 'No agent turn is running in that conversation.',
-  secret_in_message: 'The message looks like it holds a secret, so nothing was started.',
-  message_too_long: 'The message is too long.',
+  no_turn: 'The AI helper is not working on anything in that conversation.',
+  secret_in_message: 'The message looks like it contains a password or secret key, so nothing was started. Remove it and try again.',
+  message_too_long: 'The message is too long. Shorten it and try again.',
   unknown_skill: 'That skill is not available.',
-  secret_in_comment: 'The comment looks like it holds a secret, so nothing was recorded.',
-  comment_required: 'Say what should change: this decision needs a comment.',
-  comment_too_long: 'The comment is too long.',
-  not_a_change_set: 'Only a change made by the agent can be reviewed or accepted.',
-  not_candidate: 'This change is no longer waiting for a decision.',
-  not_approved: 'This change has no approving review yet.',
-  change_set_not_promotable: 'A change set is accepted through review, not made current directly.',
-  ref_moved: 'The accepted branch moved while you were deciding, so nothing was accepted. Look at the change again.',
-  merge_conflict: 'The change does not merge cleanly onto the accepted work, so it was not accepted.',
-  accept_rolled_back: 'The accept could not be recorded, so the accepted branch was put back as it was. The change is still waiting for you.',
-  integration_unexpected: 'The accepted work is not what Nexus recorded (it was changed outside Nexus, or an earlier accept did not finish), so nothing was done.',
-  tree_dirty: 'Your working tree has uncommitted changes to tracked files, so nothing was merged. New, untracked files do not block a merge.',
-  branch_mismatch: 'Another branch is checked out than the one the accepted work is for, so nothing was merged.',
-  not_fast_forward: 'Your branch has moved on, so the accepted work is no longer a fast-forward. Nothing was merged.',
-  nothing_to_merge: 'Your branch already has all the accepted work.',
-  base_moved: 'The ground this change was made on has moved; ask the agent to redo it on your current code.',
-  integration_diverged: 'Your branch and the accepted work have both moved on, so Nexus cannot start from your latest code. Merge the accepted work in your own tools, then ask again.',
-  preview_incomplete: "Part of this change is hidden or too large to show here, so it can't be approved from Nexus. Review it in your own tools, or ask the agent to rewrite it.",
-  not_cancellable: 'Nexus is recording this step, so it cannot be stopped from here. It finishes on its own.',
-  cancelled: 'The merge was cancelled; nothing was changed.',
-  accept_pending: 'The accept is still running. Ask again in a moment.',
-  merge_pending: 'The merge is still running. Ask again in a moment.',
+  secret_in_comment: 'The comment looks like it contains a password or secret key, so nothing was saved. Remove it and try again.',
+  comment_required: 'Say what should change. This choice needs a comment.',
+  comment_too_long: 'The comment is too long. Shorten it and try again.',
+  not_a_change_set: 'Only suggested changes from the AI helper can be looked over and kept.',
+  not_candidate: 'These suggested changes are no longer waiting for your decision.',
+  not_approved: 'You have not marked these suggested changes “Looks good” yet.',
+  change_set_not_promotable: 'Suggested changes cannot be set as the current version directly. Look them over and keep them instead.',
+  ref_moved: 'Something changed in Nexus while you were deciding, so nothing was kept. Open the suggested changes and look again.',
+  merge_conflict: 'These changes do not fit together with the changes you kept earlier, so they were not kept.',
+  accept_rolled_back: 'Keeping the changes did not finish, so Nexus put its saved copy back the way it was. The suggested changes are still waiting for you. Try again.',
+  integration_unexpected: "Nexus's saved copy is not what Nexus recorded. It may have been changed outside Nexus, or an earlier step did not finish. Nothing was done, to keep your work safe.",
+  tree_dirty: "Some of your project's files have changes that are not saved in its history yet, so nothing was added. Save or undo those changes, then try again. New files do not block this.",
+  branch_mismatch: 'Your project is switched to a different version than the one these changes were made for, so nothing was added.',
+  not_fast_forward: 'Your project has changed since the AI helper started, so these changes cannot be added cleanly. Nothing was added.',
+  nothing_to_merge: 'Your project already has all the changes you kept.',
+  base_moved: 'Your project changed after the AI helper started. Ask the AI helper to do the work again on your latest project.',
+  integration_diverged: "Your project and Nexus's saved copy have both changed in different ways, so the AI helper cannot start from your latest project. Nothing was changed. The safe next step is to ask a developer to bring the two together, then ask again.",
+  preview_incomplete: 'Part of these changes is hidden or too large to show here, so you cannot mark them “Looks good” in Nexus. Ask the AI helper to make them again in a simpler way.',
+  not_cancellable: 'Nexus is saving this step, so it cannot be stopped now. It will finish on its own.',
+  cancelled: 'You cancelled, so nothing was added to your project.',
+  accept_pending: 'Nexus is still keeping these changes. Try again in a moment.',
+  merge_pending: 'Nexus is still adding these changes to your project. Try again in a moment.',
   no_such_part: 'There is nothing of that kind to show for this item.',
-  no_commit: 'This change does not record the commits needed to show it.',
-  runner_unavailable: 'The part of Nexus that reads your repository is not available right now.',
-  branch_unknown: "Nexus has not recorded the repository's branch yet. Take a repository snapshot first.",
-  git_missing: 'Git is not installed on this computer.'
+  no_commit: 'Nexus did not save what it needs to show these changes.',
+  runner_unavailable: 'The part of Nexus that reads your project is not available right now. Try again in a moment.',
+  branch_unknown: 'Nexus has not saved a starting point for this project yet. Save one first.',
+  git_missing: 'Git, a free program Nexus needs, is not installed on this computer. Install it, then try again.'
 });
 
 export function ok<T>(data: T, truncated?: boolean): NexusOk<T> {
@@ -173,7 +172,7 @@ export function scrubMessage(text: string): string {
 const REASON_RE = /^[a-z][a-z0-9_]{0,39}$/;
 /** The SQLite result codes of a held lock (immediateTx's detail.sqliteCode). */
 const SQLITE_BUSY_RE = /^SQLITE_(BUSY|LOCKED)(_|$)/;
-export const BUSY_MESSAGE = 'The database is busy. Try again in a moment.';
+export const BUSY_MESSAGE = 'Nexus is busy right now. Try again in a moment.';
 
 function safeDetail(d: Record<string, unknown> | undefined): NexusFail['detail'] {
   if (!d || typeof d !== 'object') return undefined;
@@ -222,7 +221,7 @@ export function fail(e: unknown, channel: string, log: (l: string) => void): Nex
       const setup = e.code === 'unavailable' && raw && typeof raw.reason === 'string' ? SETUP_RE.exec(raw.reason) : null;
       if (setup) {
         const out: NexusFail = { ok: false, code: 'unavailable', reason: `setup:${setup[1]}`,
-          message: Object.prototype.hasOwnProperty.call(SETUP_MESSAGES, setup[1]) ? SETUP_MESSAGES[setup[1]] : 'That cannot run on this computer right now.' };
+          message: Object.prototype.hasOwnProperty.call(SETUP_MESSAGES, setup[1]) ? SETUP_MESSAGES[setup[1]] : 'This cannot run on this computer yet.' };
         const detail = safeDetail({ ...raw, setup: setup[1] });
         if (detail) out.detail = detail;
         return out;
@@ -230,7 +229,7 @@ export function fail(e: unknown, channel: string, log: (l: string) => void): Nex
       const reason = raw && typeof raw.reason === 'string' && REASON_RE.test(raw.reason) ? raw.reason : undefined;
       const known = reason === undefined ? undefined : Object.prototype.hasOwnProperty.call(REASON_MESSAGES, reason) ? REASON_MESSAGES[reason]
         : Object.prototype.hasOwnProperty.call(AGENT_REASON_MESSAGES, reason) ? AGENT_REASON_MESSAGES[reason] : undefined;
-      const out: NexusFail = { ok: false, code: e.code as NexusErrorCode, message: known ?? (scrubMessage(e.message) || 'The request was refused.') };
+      const out: NexusFail = { ok: false, code: e.code as NexusErrorCode, message: known ?? (scrubMessage(e.message) || 'Nexus could not do that.') };
       if (reason !== undefined) out.reason = reason;
       const detail = safeDetail(raw);
       if (detail) out.detail = detail;
@@ -257,8 +256,8 @@ export function unavailable(reason: string, subReason?: string | null): NexusFai
     return { ok: false, code: 'platform_unavailable', message: AGENTS_UNAVAILABLE_MESSAGE, reason, subReason: sub };
   }
   const out: NexusFail = reason === 'handoffs_unavailable'
-    ? { ok: false, code: 'platform_unavailable', message: 'Handoffs are not available on this database.', reason }
-    : { ok: false, code: 'platform_unavailable', message: 'The Nexus platform is not available.', reason };
+    ? { ok: false, code: 'platform_unavailable', message: 'Handoffs are not available on this computer right now.', reason }
+    : { ok: false, code: 'platform_unavailable', message: "Some of Nexus's saved information is not available right now.", reason };
   if (reason === 'handoffs_unavailable' && typeof subReason === 'string' && REASON_RE.test(subReason)) out.subReason = subReason;
   return out;
 }

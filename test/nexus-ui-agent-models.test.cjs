@@ -84,11 +84,11 @@ test('UA1 every reason main words has one sentence in the renderer, word for wor
   // An unknown reason never shows its code; the owed undo is said after the sentence.
   const unknown = A.agentFailText({ code: 'conflict', reason: 'brand_new_reason_x' });
   assert.doesNotMatch(unknown, /brand_new_reason_x|brand new reason x/);
-  assert.match(A.agentFailText({ code: 'conflict', reason: 'accept_rolled_back', detail: { rollbackOwed: true } }), /still owes an undo/);
+  assert.match(A.agentFailText({ code: 'conflict', reason: 'accept_rolled_back', detail: { rollbackOwed: true } }), /still has to undo a step that did not finish/);
   assert.doesNotMatch(A.agentFailText({ code: 'conflict', reason: 'ref_moved', detail: { current: SHA, rollbackOwed: false } }), new RegExp(SHA));
   // Agent work off reads a sentence, never "agents_unavailable".
   const off = E.errorCopy('platform_unavailable', 'agents_unavailable', 'not_enabled');
-  assert.match(off.text, /^Agent work is not available because it is not turned on in this build/);
+  assert.match(off.text, /^The AI helper is not available because it is not turned on in this version of the app/);
   assert.equal(off.kind, 'execution_unavailable');
   assert.doesNotMatch(E.errorCopy('platform_unavailable', 'agents_unavailable', 'weird').text, /agents_unavailable|weird/);
   // The reasons B2a and B1 word are untouched.
@@ -311,7 +311,7 @@ test('UA7 every unmet prerequisite is a sentence, never a button that would be r
   assert.deepEqual(noConsent.blockers, [A.CHOOSE_RUNTIME_TEXT]);
   assert.equal(noConsent.chooseRuntime, true);
   assert.equal(noConsent.canAsk, false); assert.equal(noConsent.setup, true); assert.equal(noConsent.kind, 'setup');
-  assert.equal(A.CONSENT_MISSING_TEXT, 'Agent turns need your network permission. Open Setup to grant it.', 'the sentence for a refused start is unchanged');
+  assert.equal(A.CONSENT_MISSING_TEXT, 'The AI helper needs your internet permission before it can work. Open “Get this computer ready” to allow it.', 'the sentence for a refused start is the plain-words one');
   assert.equal(A.CHOOSE_RUNTIME_BUTTON, 'Choose how Nexus builds for you');
   assert.doesNotMatch(A.CHOOSE_RUNTIME_TEXT, VENDOR);
   // Even a program that is not installed does not lead the panel while nothing is chosen: the guide speaks for it.
@@ -319,8 +319,8 @@ test('UA7 every unmet prerequisite is a sentence, never a button that would be r
   assert.deepEqual(noProgram.blockers, [A.CHOOSE_RUNTIME_TEXT]);
   assert.equal(panel(health()).chooseRuntime, false, 'a live permission: no guide');
   const cases = [
-    [{ state: 'not_installed' }, /not installed/], [{ state: 'not_signed_in', signedIn: 'no' }, /not signed in/], [{ state: 'version_unsupported' }, /not a version Nexus supports/],
-    [{ state: 'unavailable' }, /could not be checked/]
+    [{ state: 'not_installed' }, /not installed/], [{ state: 'not_signed_in', signedIn: 'no' }, /not signed in/], [{ state: 'version_unsupported' }, /a version Nexus does not support/],
+    [{ state: 'unavailable' }, /Nexus could not check the AI helper/]
     // (Never probed and no permission yet is the guide's case, above.)
   ];
   for (const [o, re] of cases) {
@@ -332,7 +332,7 @@ test('UA7 every unmet prerequisite is a sentence, never a button that would be r
     assert.ok(!p.blockers.includes(A.CONSENT_MISSING_TEXT));
   }
   const budget = panel(health({ agent: agentView({ usageToday: { usdCents: 1000, turns: 5, estimated: false } }) }));
-  assert.deepEqual(budget.blockers, ['The agent has used its budget for today.']);
+  assert.deepEqual(budget.blockers, ['The AI helper has used up its limit for today. Try again later.']);
   const docker = panel(health(), { kind: 'setup', problems: ['docker_stopped'], profiles: [], text: 'Jobs cannot run on this computer yet: Docker is not running. Open the setup to see what to do.' });
   assert.match(docker.blockers[0], /Docker is not running/);
   assert.equal(docker.canAsk, false);
@@ -343,7 +343,7 @@ test('UA7 every unmet prerequisite is a sentence, never a button that would be r
   // Agent work off: one sentence, nothing to set up.
   const off = A.agentPanelModel({ health: health(), availability: READY, sessions: null, sessionsFail: { code: 'platform_unavailable', reason: 'agents_unavailable', subReason: 'not_enabled' } });
   assert.equal(off.kind, 'off'); assert.equal(off.canAsk, false); assert.equal(off.setup, false);
-  assert.match(off.lead, /^Agent work is not available because/);
+  assert.match(off.lead, /^The AI helper is not available because/);
   // The panel's sessions: Working / Waiting for you, and a queued turn says what it waits for.
   const s = A.agentPanelModel({ health: health(), availability: READY, sessionsFail: null,
     sessions: [session({ id: 'S1', status: 'running', liveJobId: 'J1', updatedAt: 2 }), session({ id: 'S2', status: 'awaiting_approval', liveJobId: 'J2', updatedAt: 1 }), session({ id: 'S3', status: 'open', updatedAt: 3 })],
@@ -638,7 +638,7 @@ test('R4-I2 agent work off is its own state: one sentence, no check-again advice
   const agentRows = rows.filter((r) => r.id.startsWith('agent'));
   assert.deepEqual(agentRows.map((r) => r.id), ['agent']);
   assert.equal(agentRows[0].text, E.AGENT_OFF_TEXT);
-  assert.equal(E.AGENT_OFF_TEXT, 'Agent work is not available because it is not turned on in this build.');
+  assert.equal(E.AGENT_OFF_TEXT, 'The AI helper is not available because it is not turned on in this version of the app.');
   assert.equal(agentRows[0].word, 'Not available');
   assert.equal(agentRows[0].consent, undefined);
   assert.doesNotMatch(`${agentRows[0].text} ${agentRows[0].action ?? ''}`, /check again|Check again|Not granted/);
@@ -672,7 +672,7 @@ test('R4-I4 failed-turn outcomes each read their own sentence', () => {
   const f = (outcome) => R.jobRun(job({ state: 'failed', outcome, headline: 'failed', error: { code: outcome, message: 'raw runtime text' } })).headline;
   assert.equal(f('worktree_guard'), 'The agent was stopped: it changed something outside its working copy; nothing was collected');
   assert.equal(f('consent_mismatch'), E.AGENT_REASON_TEXT.consent_mismatch.replace(/\.$/, ''));
-  assert.match(f('consent_mismatch'), /Revoke it and grant it again in Setup/);
+  assert.match(f('consent_mismatch'), /Take it back and allow it again in “Get this computer ready”/);
   assert.equal(f('proxy_failed'), 'The agent’s network proxy could not start; check again in Setup');
   assert.equal(f('runtime_unknown'), E.AGENT_REASON_TEXT.runtime_unknown.replace(/\.$/, ''));
   assert.equal(f('some_new_word'), 'The agent’s turn failed');
@@ -813,11 +813,11 @@ test('R6 binary_file: no Approve, its own fixed sentence; Request changes and Re
 test('R6 agent work off says what is true: build, database, held or execution; an older answer reads as the build', () => {
   const off = (offReason) => agentView({ state: 'off', offReason, label: null, version: null, consent: { live: false, caps: null, hostsCount: 0, grantedAt: null } });
   const text = (offReason, h = {}) => X.setupSheet(health({ agent: off(offReason), ...h })).find((r) => r.id === 'agent').text;
-  assert.equal(text('build'), 'Agent work is not available because it is not turned on in this build.');
-  assert.equal(text(undefined), 'Agent work is not available because it is not turned on in this build.');
-  assert.equal(text('database'), 'Agent work needs the newer database format, which is not applied on this computer yet.');
-  assert.equal(text('held'), 'Agent work is paused on this computer: the database upgrade it needs is on hold.');
-  assert.equal(text('execution'), 'Agent work needs running jobs, which are not available right now.');
+  assert.equal(text('build'), 'The AI helper is not available because it is not turned on in this version of the app.');
+  assert.equal(text(undefined), 'The AI helper is not available because it is not turned on in this version of the app.');
+  assert.equal(text('database'), "The AI helper needs an update to Nexus's saved information, and that update has not been applied on this computer yet.");
+  assert.equal(text('held'), 'The AI helper is paused on this computer because an update it needs is on hold.');
+  assert.equal(text('execution'), 'The AI helper needs to run tasks, and that is not available right now.');
   assert.equal(text('execution', { db: { version: 9, platform: true, handoffs: true, execution: false, subReason: 'held' } }), E.agentsNotice('held'));
   assert.equal(new Set(['build', 'database', 'held', 'execution'].map((r) => text(r))).size, 4);
   for (const r of ['build', 'database', 'held', 'execution']) assert.doesNotMatch(text(r), /check again|Check again|_/i);
@@ -900,7 +900,7 @@ test('R7-3 new closed reasons: unsafe_characters has its own sentence, an unfami
 });
 
 test('R7-3 the accept refusal base_moved reads main\'s sentence (mirrored word for word), never its code', () => {
-  const s = 'The ground this change was made on has moved; ask the agent to redo it on your current code.';
+  const s = 'Your project changed after the AI helper started. Ask the AI helper to do the work again on your latest project.';
   assert.equal(E.AGENT_REASON_TEXT.base_moved, s);
   assert.equal(A.agentFailText({ code: 'conflict', reason: 'base_moved' }), s);
   assert.equal(E.errorCopy('conflict', 'base_moved').text, s);
@@ -920,7 +920,7 @@ const v9local = (o = {}) => v9opt({ kind: 'local-model', label: 'Local model (Te
 const v9view = (runtimes, live = false) => ({ runtimes, consent: { live, caps: null, hostsCount: 0, grantedAt: null, hosts: [] } });
 
 test('V9-2 the not-chosen sentence points at the model list (the person is in Setup when they read it), main and renderer word it the same', () => {
-  const s = 'No local model is chosen yet. Pick one from the model list under Agent runtime.';
+  const s = 'No AI model is chosen yet. Pick one from the list under AI on this computer.';
   assert.equal(E.AGENT_REASON_TEXT.local_model_not_chosen, s);
   assert.equal(ENV.AGENT_REASON_MESSAGES.local_model_not_chosen, s);
   assert.ok(!s.includes('in Setup'));
@@ -1009,17 +1009,17 @@ const SPINE = loadTs('src/renderer/src/nexus/project/spineModel.ts');
 
 test('V9d-1 a failed turn says why, with the fixed sentence for its reason (never the runtime text), and the panel offers the snapshot when that is the way forward', () => {
   const failed = (outcome, createdAt = 2, extra = {}) => ({ state: 'failed', phase: null, headline: 'failed', outcome, cancelRequested: false, createdAt, error: { code: outcome, message: 'RAW internal text' }, ...extra });
-  assert.equal(J.agentTurnHeadline(failed('branch_unknown')), "Nexus has not recorded the repository's branch yet. Take a repository snapshot first.");
-  assert.equal(J.agentTurnHeadline(failed('git_missing')), 'Git is not installed on this computer.');
+  assert.equal(J.agentTurnHeadline(failed('branch_unknown')), 'Nexus has not saved a starting point for this project yet. Save one first.');
+  assert.equal(J.agentTurnHeadline(failed('git_missing')), 'Git, a free program Nexus needs, is not installed on this computer. Install it, then try again.');
   assert.match(J.agentTurnHeadline(failed('denied')), /you denied the approval/);
   assert.match(J.agentTurnHeadline(failed('expired')), /not answered in time/);
   assert.equal(J.agentTurnHeadline(failed('some_unknown_code')), 'The agent’s turn failed', 'a reason without copy stays the plain sentence');
   assert.equal(J.agentTurnHeadline(failed('runtime_auth')), 'The agent could not sign in. Open Setup to check it', 'the earlier wording is unchanged');
   const panel = (jobs) => A.agentPanelModel({ health: health(), availability: READY, sessions: [], sessionsFail: null, jobs: new Map(jobs.map((j, n) => [`J${n}`, j])) });
   const p = panel([failed('branch_unknown')]);
-  assert.deepEqual(p.failure, { text: "Nexus has not recorded the repository's branch yet. Take a repository snapshot first.", snapshot: true });
+  assert.deepEqual(p.failure, { text: 'Nexus has not saved a starting point for this project yet. Save one first.', snapshot: true });
   assert.doesNotMatch(JSON.stringify(p.failure), /RAW internal text/);
-  assert.deepEqual(panel([failed('git_missing')]).failure, { text: 'Git is not installed on this computer.', snapshot: false });
+  assert.deepEqual(panel([failed('git_missing')]).failure, { text: 'Git, a free program Nexus needs, is not installed on this computer. Install it, then try again.', snapshot: false });
   assert.equal(panel([failed('branch_unknown', 1), { ...failed('branch_unknown'), state: 'completed', outcome: 'completed', createdAt: 5 }]).failure, null, 'only the newest turn is shown, and only when it failed');
   assert.equal(panel([]).failure, null);
   const panelSrc = src('agent/AgentPanel.tsx');

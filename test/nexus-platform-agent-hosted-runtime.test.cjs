@@ -238,7 +238,7 @@ test('HB3 a start is refused with the fixed sentence when no key is saved for th
   const w = await world();
   await grantH(w, { provider: 'beta', model: 'b-fast' });
   assert.throws(() => w.start(), (e) => e.code === 'unavailable' && e.detail.reason === 'hosted_key_missing');
-  assert.equal(AGENT_REASON_MESSAGES.hosted_key_missing, 'Add your API key in Settings first.');
+  assert.equal(AGENT_REASON_MESSAGES.hosted_key_missing, 'Add your access key in Settings first.');
   assert.equal(w.keys.set('beta', KEY_B).ok, true);
   assert.equal(w.start().job.state, 'queued');
   // The model the user chose must still be offered (the probe changed under them).

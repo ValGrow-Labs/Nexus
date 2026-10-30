@@ -215,7 +215,7 @@ test('U-A1 available actions are buttons; unavailable ones are sentences with th
   const v = AM.actionBar(list, { workspaceId: 'sde', availability: READY, version: null });
   assert.deepEqual(v.buttons.map((b) => [b.actionId, b.inline]), [['sde.requirement.write', true]]);
   assert.deepEqual(v.sentences.map((s) => [s.actionId, s.setup]), [['sde.repository.snapshot', true], ['sde.build.run', false]]);
-  assert.equal(v.sentences[0].text, 'Take a repository snapshot: Git is not installed, so this cannot run on this computer yet.');
+  assert.equal(v.sentences[0].text, 'Take a repository snapshot: Git, a free program, is not installed, so this cannot run on this computer yet. Install it, then try again.');
   assert.equal(v.sentences[1].text, 'Build: needs a ready version from the Repository step first.');
   const all = JSON.stringify(v);
   assert.doesNotMatch(all, /Later|sde\.future/, 'a FUTURE action is not present at all');
@@ -401,7 +401,7 @@ test('the setup sentences are main\'s, word for word', () => {
   assert.deepEqual({ ...E.SETUP_TEXT }, { ...SETUP_MESSAGES });
   assert.equal(E.execFailText({ code: 'unavailable', reason: 'setup:docker_stopped' }), SETUP_MESSAGES.docker_stopped);
   // errorCopy itself keeps the generic sentence for `unavailable` (AR2 in nexus-platform-exec-approvals pins it).
-  assert.equal(E.errorCopy('unavailable', 'setup:disk_low').text, 'That cannot run on this computer right now. Check the setup notes for what it needs.');
+  assert.equal(E.errorCopy('unavailable', 'setup:disk_low').text, 'This cannot run on this computer yet. Open “Get this computer ready” to see what is missing.');
   assert.equal(E.errorCopy('invalid', 'queue_full').text, E.EXEC_REASON_TEXT.queue_full);
 });
 
@@ -977,7 +977,7 @@ test('S15 no second "Start a dev deployment" while one of that version is starti
   const svc = fs.readFileSync(path.join(ROOT, 'src', 'main', 'nexus', 'exec', 'executionService.ts'), 'utf8');
   assert.match(svc, /if \(!hasPrior && this\.previewLive\(recipe\.id, appIn\.versionId\)\) \{\r?\n\s*throw new PlatformError\('conflict', 'a dev deployment of this application version is already live', \{ reason: 'deployment_live' \}\);/);
   assert.equal(E.execFailText({ code: 'conflict', reason: 'deployment_live' }),
-    'A dev deployment of this application version is already starting or running. Stop it before you start another.');
+    'A test run of this app is already starting or running. Stop it before you start another.');
   const bar = src('project/ActionBar.tsx');
   assert.match(bar, /const liveDeployment = version \? liveDeploymentOf\(\{ versionId: version\.id, buildVersionId: version\.buildId \?\? null \}, deployments\.data \?\? \[\], jobs\.data \?\? \[\]\) : null;/);
   assert.match(bar, /version: version \? \{ kind: version\.kind, status: version\.status \} : null, liveDeployment \}\);/);

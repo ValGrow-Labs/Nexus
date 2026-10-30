@@ -51,13 +51,16 @@ test('R8 every platform-unavailable reason has a notice; busy is "try again", no
     plain(c.text, r);
     assert.equal(c.kind, 'unavailable', r);
     assert.equal(c.retry, false, r);
-    assert.match(c.text, /grouped by their detected domain/, r);
+    assert.match(c.text, /grouped by their kind of work/, r);
+    assert.doesNotMatch(c.text, /database|domain|upgrade|schema/i, `${r}: no technical word`);
   }
   assert.equal(E.unavailableNotice('held'),
-    'Workspace data is not available because the database upgrade is held. Projects are grouped by their detected domain until it runs.');
+    "Some of Nexus's saved information is not ready because an update to it is on hold. Projects are grouped by their kind of work for now. Try restarting the app.");
   // True at startup and mid-session alike.
   assert.equal(E.unavailableNotice('startup_failed'),
-    'Workspace data is not available because the workspace database could not be read. Projects are grouped by their detected domain until it runs.');
+    "Some of Nexus's saved information is not ready because Nexus could not read it. Projects are grouped by their kind of work for now. Try restarting the app.");
+  // A newer app already changed the saved information: restarting cannot help, updating can.
+  assert.match(E.unavailableNotice('newer_schema'), /Update this app/);
   assert.doesNotMatch(E.unavailableNotice('startup_failed'), /did not start/);
   const busy = E.errorCopy('platform_unavailable', 'busy');
   assert.deepEqual([busy.kind, busy.retry], ['busy', true]);
@@ -100,6 +103,54 @@ test('R8b every reason main words (REASON_MESSAGES) reads the same in the render
     assert.equal(E.errorCopy('invalid', k).text, REASON_MESSAGES[k], k);
   }
   assert.match(E.REASON_TEXT.path_refused, /outside the project folder/);
-  assert.match(E.REASON_TEXT.path_refused, /hard links/);
+  assert.match(E.REASON_TEXT.path_refused, /linked file that is also stored under other names/);
   assert.equal(E.BUSY_TEXT, BUSY_MESSAGE);
+});
+
+/** Words a newcomer should never meet in a fixed sentence: git internals and the old agent/runtime/sandbox vocabulary. */
+const JARGON = /\b(branch(es)?|worktree|fast-forward|working tree|uncommitted|untracked|tracked files|hidden refs?|repository|snapshot|commit(s)?|merge[ds]?|runtime|sandbox|artifacts?|change sets?|API key|pnpm|hard links?|database|domain|registry|proxy|egress|probe|execution runner|dev deployment|jobs?)\b/i;
+
+test('R8c plain words: every fixed sentence (agent, review, accept, setup, run) is one plain line with no git or internal words', () => {
+  const { AGENT_REASON_MESSAGES, SETUP_MESSAGES, EXECUTION_UNAVAILABLE_MESSAGE, AGENTS_UNAVAILABLE_MESSAGE } = loadTs('src/main/nexusIpc/envelope.ts');
+  const tables = { AGENT_REASON_TEXT: E.AGENT_REASON_TEXT, SETUP_TEXT: E.SETUP_TEXT, EXEC_REASON_TEXT: E.EXEC_REASON_TEXT,
+    AGENT_OFF_REASON_TEXT: E.AGENT_OFF_REASON_TEXT, AGENT_REASON_MESSAGES, SETUP_MESSAGES };
+  for (const [name, table] of Object.entries(tables)) {
+    for (const [k, v] of Object.entries(table)) {
+      plain(v, `${name}.${k}`);
+      assert.doesNotMatch(v, JARGON, `${name}.${k}: ${v}`);
+    }
+  }
+  for (const v of [E.ROLLBACK_OWED_TEXT, E.AGENT_OFF_TEXT, E.AGENT_ACTION_OFF_TEXT, E.BUSY_TEXT, EXECUTION_UNAVAILABLE_MESSAGE, AGENTS_UNAVAILABLE_MESSAGE]) {
+    plain(v, v);
+    assert.doesNotMatch(v, JARGON, v);
+  }
+  for (const s of E.EXECUTION_SUB_REASONS) { const t = E.executionNotice(s); plain(t, s); assert.doesNotMatch(t, JARGON, t); }
+  for (const s of E.HANDOFFS_SUB_REASONS) { const t = E.handoffsNotice(s); plain(t, s); assert.doesNotMatch(t, JARGON, t); }
+  for (const s of E.EXECUTION_SUB_REASONS) { const t = E.agentsNotice(s); plain(t, s); assert.doesNotMatch(t, JARGON, t); }
+  for (const s of E.UNAVAILABLE_REASONS) { const t = E.unavailableNotice(s); plain(t, s); assert.doesNotMatch(t, JARGON, t); }
+});
+
+test('R8c main and renderer word the agent and setup sentences the same, word for word', () => {
+  const { AGENT_REASON_MESSAGES, SETUP_MESSAGES } = loadTs('src/main/nexusIpc/envelope.ts');
+  for (const [k, v] of Object.entries(AGENT_REASON_MESSAGES)) assert.equal(E.AGENT_REASON_TEXT[k], v, k);
+  for (const [k, v] of Object.entries(SETUP_MESSAGES)) assert.equal(E.SETUP_TEXT[k], v, k);
+  assert.deepEqual(Object.keys(E.SETUP_TEXT).sort(), Object.keys(SETUP_MESSAGES).sort());
+});
+
+test('R8c the hard cases say what happened and the safe next step in plain words', () => {
+  // Diverged: no "merge in your own tools"; nothing was changed; someone who knows the project's history combines the two.
+  assert.match(E.AGENT_REASON_TEXT.integration_diverged, /Nothing was changed/);
+  assert.match(E.AGENT_REASON_TEXT.integration_diverged, /ask a developer/);
+  assert.doesNotMatch(E.AGENT_REASON_TEXT.integration_diverged, /your own tools|merge|branch|code/i);
+  // The model and key sentences keep their meaning.
+  assert.match(E.AGENT_REASON_TEXT.hosted_key_rejected, /did not accept your access key/);
+  assert.match(E.AGENT_REASON_TEXT.hosted_quota_exhausted, /free allowance/);
+  assert.match(E.AGENT_REASON_TEXT.hosted_rate_limited, /fewer requests/);
+  assert.match(E.AGENT_REASON_TEXT.hosted_model_unavailable, /not available from this AI service/);
+  assert.match(E.AGENT_REASON_TEXT.hosted_provider_not_chosen, /No online AI service is chosen/);
+  assert.match(E.AGENT_REASON_TEXT.local_model_not_chosen, /No AI model is chosen/);
+  assert.match(E.AGENT_REASON_TEXT.local_model_server_down, /not running/);
+  assert.match(E.AGENT_REASON_TEXT.consent_missing, /internet permission/);
+  // Every refusal that asks the person to go somewhere names the one place.
+  for (const [k, v] of Object.entries(E.AGENT_REASON_TEXT)) assert.doesNotMatch(v, /\bSetup\b/, `${k} names the old Setup`);
 });

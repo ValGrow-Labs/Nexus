@@ -272,7 +272,7 @@ test('HA-B2b the agent flow actions answer agents_unavailable while the agents p
       for (const s of bar.sentences) {
         sentences++;
         // Round 4 (final review I2) and round 6: one agent-off sentence that names no cause it cannot know (the action view carries no reason).
-        assert.match(s.text, /: Agent work is not available on this computer right now\. Open Setup to see why\.$/, s.text);
+        assert.match(s.text, /: The AI helper is not available on this computer right now\. Open “Get this computer ready” to see why\.$/, s.text);
         assert.doesNotMatch(s.text, /agents_unavailable/, 'never a raw code');
       }
     }

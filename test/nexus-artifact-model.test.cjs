@@ -277,7 +277,7 @@ test('save: every refusal reads through errorCopy, each with its own sentence', 
     seen.add(text);
   }
   assert.equal(seen.size, reasons.length);
-  assert.match(S.saveFailureText(fail('invalid', { reason: 'path_refused' })), /outside the project folder are refused, and so are files with several hard links/);
+  assert.match(S.saveFailureText(fail('invalid', { reason: 'path_refused' })), /It is outside the project folder, or it is a linked file that is also stored under other names/);
   for (const code of ['not_participating', 'participation_inactive', 'conflict', 'not_found', 'denied', 'internal'])
     assert.equal(S.saveFailureText(fail(code)), errorCopy(code).text, code);
   assert.equal(S.saveFailureText(fail('platform_unavailable', { reason: 'busy' })), errorCopy('platform_unavailable', 'busy').text);

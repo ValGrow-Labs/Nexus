@@ -178,7 +178,7 @@ test('I7 detail keeps only allow-listed scalar keys; a known reason gets a plain
   const r2 = await call('nexus:artifact:get', UNKNOWN_ID);
   assert.deepEqual([r2.code, r2.reason], ['invalid', 'path_refused']);
   assert.equal(r2.message, REASON_MESSAGES.path_refused);
-  assert.match(r2.message, /hard links/); assert.match(r2.message, /outside the project/); assert.match(r2.message, /pnpm/);
+  assert.match(r2.message, /linked file that is also stored under other names/); assert.match(r2.message, /outside the project/); assert.match(r2.message, /package tools/);
   nx.artifacts.get = () => { throw new PlatformError('invalid', 'x', { reason: 'Bad Reason!' }); };
   assert.equal((await call('nexus:artifact:get', UNKNOWN_ID)).reason, undefined);
 });
@@ -329,7 +329,7 @@ test('platform_unavailable from a service gets a fixed message and a reason; no 
   const r = await call('nexus:participations:list');
   assert.deepEqual([r.ok, r.code, r.reason], [false, 'platform_unavailable', 'startup_failed']);
   assert.doesNotMatch(JSON.stringify(r), /user:|seeded|missing/);
-  assert.equal(r.message, 'The Nexus platform is not available.');
+  assert.equal(r.message, "Some of Nexus's saved information is not available right now.");
   // Busy and locked codes (with sub-codes) are 'busy'; any other code is 'startup_failed'.
   const busy = (code) => fail(new PlatformError('platform_unavailable', 'the database is busy; try again user:local', { sqliteCode: code }), 'x', () => {});
   for (const c of ['SQLITE_BUSY', 'SQLITE_BUSY_SNAPSHOT', 'SQLITE_LOCKED', 'SQLITE_LOCKED_SHAREDCACHE']) {

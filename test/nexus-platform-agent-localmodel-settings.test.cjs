@@ -172,10 +172,10 @@ test('LS5 the picker rows: one per runtime, labels from the probe, a model list 
 
 test('LS5b the fixed sentences: server not running, model missing, model cannot use tools, address not on this computer', () => {
   const sentence = (o) => X.runtimeChoices(view([opt(), localOpt(o)]))[1].text;
-  assert.equal(sentence({ state: 'not_installed', models: [], problem: null }), 'The local model server is not running on this computer. Start it, then check again in Setup.');
-  assert.equal(sentence({ problem: 'model_missing', model: 'gone:1b' }), 'The chosen local model is not installed on this computer. Choose another in Setup.');
-  assert.equal(sentence({ problem: 'model_no_tools', model: 'plain:1b' }), 'The chosen local model cannot use tools, which agent turns need. Choose another in Setup.');
-  assert.equal(sentence({ problem: 'address_not_local', model: 'coder:7b' }), 'The local model address is not on this computer, or is not the one that was given permission. Check it in Setup.');
+  assert.equal(sentence({ state: 'not_installed', models: [], problem: null }), 'The program that runs AI on this computer is not running. Start it, then check again in “Get this computer ready”.');
+  assert.equal(sentence({ problem: 'model_missing', model: 'gone:1b' }), 'The AI model you chose is not installed on this computer. Choose another one in “Get this computer ready”.');
+  assert.equal(sentence({ problem: 'model_no_tools', model: 'plain:1b' }), 'The AI model you chose cannot take actions such as reading and changing files, which the AI helper needs. Choose another model in “Get this computer ready”.');
+  assert.equal(sentence({ problem: 'address_not_local', model: 'coder:7b' }), 'The address for AI on this computer does not point to this computer, or it is not the one you allowed. Check it in “Get this computer ready”.');
   assert.equal(X.runtimeChoices(view([opt(), localOpt({ state: 'not_installed', models: [], problem: null })]))[1].action.disabled, true);
   // A sentence for every problem word, equal to main's words for the same reason, and no raw code or vendor word in any.
   const MAIN = { model_not_chosen: 'local_model_not_chosen', address_not_local: 'local_model_endpoint', model_missing: 'local_model_missing', model_no_tools: 'local_model_no_tools' };

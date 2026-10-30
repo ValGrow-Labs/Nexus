@@ -1031,7 +1031,7 @@ test('AR2 unavailable is a shared error code with its own plain sentence; the se
   assert.ok(E.NEXUS_ERROR_CODES.includes('unavailable'));
   const c = E.errorCopy('unavailable', 'setup:disk_low');
   assert.equal(c.kind, 'refused'); assert.equal(c.retry, false);
-  assert.equal(c.text, 'That cannot run on this computer right now. Check the setup notes for what it needs.');
+  assert.equal(c.text, 'This cannot run on this computer yet. Open “Get this computer ready” to see what is missing.');
   const { w } = imageWorld({ freeBytes: 20 * GIB });
   assert.throws(() => w.nx.approvals.requestImage(w.me, 'sde-node', 'u-1'), (e) => e.code === 'unavailable' && e.detail.reason === 'setup:disk_low');
   w.close();
