@@ -118,3 +118,6 @@
 .nx-fbl__n { display: inline-grid; place-items: center; width: 20px; height: 20px; border: 1px solid var(--nx-line); border-radius: 50%; font-size: 12px; }
 .nx-fbl__lead { margin: 0; }
 .nx-fbl .nx-btn { justify-self: start; }
+/* The side panel scrolls to its last item with room to spare, and the work area ends in a visible line (V9h). */
+.nx-passport { padding-bottom: calc(var(--nx-s4) + 24px); }
+.nx-bench { border-bottom: 1px solid var(--nx-divider); }

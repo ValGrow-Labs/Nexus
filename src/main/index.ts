@@ -2142,6 +2142,8 @@ function stopWebhookServer(): void {
 /** The persisted main-window geometry (kv key `window.bounds`). */
 interface WindowBounds { x?: number; y?: number; width: number; height: number }
 
+import { fitIntoWorkArea } from './windowBounds';
+
 const DEFAULT_WIN = { width: 1440, height: 900 };
 const MIN_WIN = { width: 1280, height: 800 };
 
@@ -2154,14 +2156,10 @@ function clampBounds(b: unknown): WindowBounds | null {
   if (typeof r.width !== 'number' || typeof r.height !== 'number') return null;
   const width = Math.max(MIN_WIN.width, Math.round(r.width));
   const height = Math.max(MIN_WIN.height, Math.round(r.height));
-  if (typeof r.x !== 'number' || typeof r.y !== 'number') return { width, height };
-  const x = Math.round(r.x), y = Math.round(r.y);
-  // Keep the position only if the window rect overlaps some display's work area.
-  const onScreen = screen.getAllDisplays().some((d) => {
-    const wa = d.workArea;
-    return x < wa.x + wa.width && x + width > wa.x && y < wa.y + wa.height && y + height > wa.y;
-  });
-  return onScreen ? { x, y, width, height } : { width, height };
+  // Inside a display's work area (never under the taskbar), moved there if it was saved partly outside; see windowBounds.ts.
+  const primary = screen.getPrimaryDisplay();
+  const areas = [primary, ...screen.getAllDisplays().filter((d) => d.id !== primary.id)].map((d) => d.workArea);
+  return fitIntoWorkArea({ x: r.x, y: r.y, width, height }, areas, MIN_WIN);
 }
 
 /** Minimal trailing-edge debounce for the move/resize flood. */
@@ -2304,8 +2302,9 @@ function createWindow(opts: { floor?: boolean } = {}): BrowserWindow {
     width: geom?.width ?? DEFAULT_WIN.width,
     height: geom?.height ?? DEFAULT_WIN.height,
     ...(geom && geom.x !== undefined && geom.y !== undefined ? { x: geom.x, y: geom.y } : {}),
-    minWidth: MIN_WIN.width,
-    minHeight: MIN_WIN.height,
+    // A minimum that fits the screen (a small display's work area can be shorter than the usual minimum).
+    minWidth: Math.min(MIN_WIN.width, screen.getPrimaryDisplay().workArea.width),
+    minHeight: Math.min(MIN_WIN.height, screen.getPrimaryDisplay().workArea.height),
     title: 'Nexus',
     backgroundColor: '#FFF8E7',
     titleBarStyle: 'hiddenInset',
@@ -2377,6 +2376,21 @@ function createWindow(opts: { floor?: boolean } = {}): BrowserWindow {
     });
   }
 
+
+  // A display that changed (plugged, unplugged, resized, scaled) can leave the window partly outside it: bring it back in.
+  if (!isFloor) {
+    const refit = () => {
+      if (win.isDestroyed() || win.isMinimized() || win.isMaximized() || win.isFullScreen()) return;
+      const primary = screen.getPrimaryDisplay();
+      const areas = [primary, ...screen.getAllDisplays().filter((d) => d.id !== primary.id)].map((d) => d.workArea);
+      const cur = win.getBounds();
+      const fit = fitIntoWorkArea(cur, areas, { width: win.getMinimumSize()[0], height: win.getMinimumSize()[1] });
+      if (fit.x !== cur.x || fit.y !== cur.y || fit.width !== cur.width || fit.height !== cur.height) win.setBounds({ ...cur, ...fit });
+    };
+    screen.on('display-metrics-changed', refit);
+    screen.on('display-removed', refit);
+    win.on('closed', () => { screen.removeListener('display-metrics-changed', refit); screen.removeListener('display-removed', refit); });
+  }
 
   win.once('ready-to-show', () => win.show());
 
