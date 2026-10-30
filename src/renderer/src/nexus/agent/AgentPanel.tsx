@@ -26,6 +26,8 @@ export function AgentPanel({ projectId, workspaceId }: { projectId: string; work
   const [busy, setBusy] = useState<string | null>(null);
   const [note, setNote] = useState<{ text: string; alert: boolean } | null>(null);
   const [logOf, setLogOf] = useState<string | null>(null);
+  // The snapshot a failed turn asked for was started from here: the old failure is answered until the next message.
+  const [snapshotStarted, setSnapshotStarted] = useState(false);
   const ids = { field: useId(), target: useId(), body: useId() };
   // A turn that starts working opens the panel so it is seen; the person can close it again.
   useEffect(() => { if (panel.working || repoWaiting.length > 0) setOpen(true); }, [panel.working, repoWaiting.length]);
@@ -39,7 +41,7 @@ export function AgentPanel({ projectId, workspaceId }: { projectId: string; work
     const key = `agent:start:${projectId}:${chosen}:${messageKey(message)}`;
     const built = startArgs({ projectId, workspaceId, sessionId: chosen === 'new' ? null : chosen, message, intentId: 'pending' });
     if ('problem' in built) { setNote({ text: built.problem, alert: true }); return; }
-    setBusy('send'); setNote(null);
+    setBusy('send'); setNote(null); setSnapshotStarted(false);
     const r = await withIntent(key, (intentId) => nexusClient.agentStart({ ...built.args, intentId }));
     setBusy(null);
     if (r.ok) { setMessage(''); setNote({ text: 'Sent. The agent works in its own copy of the repository; follow the turn here or in Runs.', alert: false }); setLogOf(r.data.session.id); }
@@ -52,6 +54,7 @@ export function AgentPanel({ projectId, workspaceId }: { projectId: string; work
     setBusy('snapshot'); setNote(null);
     const r = await withIntent(`agent:snapshot:${projectId}`, (intentId) => nexusClient.jobStart({ projectId, workspaceId, actionId: 'sde.repository.snapshot', inputs: [], params: {}, intentId }));
     setBusy(null);
+    if (r.ok) setSnapshotStarted(true);
     setNote(r.ok ? { text: 'The repository snapshot was started. When it has finished (see Runs), send your message again.', alert: false } : { text: agentFailText(r), alert: true });
     refresh();
   };
@@ -107,7 +110,7 @@ export function AgentPanel({ projectId, workspaceId }: { projectId: string; work
               <ApprovalList approvals={repoWaiting} label="Approval the agent is waiting for" />
             </div>
           )}
-          {panel.failure && repoWaiting.length === 0 && (
+          {panel.failure && repoWaiting.length === 0 && !snapshotStarted && (
             <p className="nx-passport__note" role="status">
               {panel.failure.text}{' '}
               {panel.failure.snapshot && <Button variant="primary" disabled={busy !== null} onClick={() => { void snapshot(); }}>{busy === 'snapshot' ? 'Starting…' : 'Take a repository snapshot'}</Button>}

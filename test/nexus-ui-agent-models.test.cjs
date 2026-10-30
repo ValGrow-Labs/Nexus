@@ -1007,6 +1007,7 @@ test('V9d-1 a failed turn says why, with the fixed sentence for its reason (neve
   const panelSrc = src('agent/AgentPanel.tsx');
   assert.ok(panelSrc.includes("actionId: 'sde.repository.snapshot'"));
   assert.ok(panelSrc.includes('Take a repository snapshot'));
+  assert.ok(panelSrc.includes('!snapshotStarted'), 'once the snapshot was started from the panel the old failure is not shown again');
 });
 
 test('V9d-2 a turn waiting for the repository-write approval says so in the panel and the approval is answered there; the strip leaves it out; the second step of the confirm is labelled', () => {
