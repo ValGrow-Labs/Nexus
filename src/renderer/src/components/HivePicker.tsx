@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { PixelPanel } from './PixelPanel';
 import { PixelButton } from './PixelButton';
 import { Icon } from './Icon';
@@ -32,6 +32,10 @@ export function HivePicker({ config, onOpenCurrent }: HivePickerProps) {
   const recents = (config.recentHives ?? []).filter((h) => h && h !== current);
   const [busy, setBusy] = useState<string | undefined>();
   const [error, setError] = useState<string | undefined>();
+  // With one folder and no others to choose from, asking "which folder?" on every launch is just a click in the way: go straight in.
+  const nothingToChoose = !!current && recents.length === 0;
+  useEffect(() => { if (nothingToChoose) onOpenCurrent(); }, [nothingToChoose, onOpenCurrent]);
+  if (nothingToChoose) return null;
 
   // Open a hive. Same folder as the current one → just enter it (no relaunch).
   // A different folder → changeHome('fresh') re-points + relaunches the process.
