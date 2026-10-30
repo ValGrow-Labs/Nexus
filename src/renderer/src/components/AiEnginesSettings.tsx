@@ -28,10 +28,10 @@ const BACKENDS: Array<{ id: string; label: string; envVar: string }> = [
 
 /** CLI engines that take a per-provider local base-URL + default model. */
 const CLIS: Array<{ id: AgentProvider; label: string; hint: string }> = [
-  { id: 'opencode', label: 'OpenCode', hint: 'http://localhost:11434/v1 (Ollama) — injected as a local provider' },
-  { id: 'crush', label: 'Crush', hint: 'OpenAI-compatible endpoint — used as the proxy upstream' },
-  { id: 'pi', label: 'Pi', hint: 'local models are file-based (models.json); base-URL reserved' },
-  { id: 'qwen', label: 'Qwen', hint: 'OpenAI-compatible endpoint — used as the proxy upstream' }
+  { id: 'opencode', label: 'OpenCode', hint: 'http://localhost:11434/v1 (Ollama). Used as an AI service on this computer' },
+  { id: 'crush', label: 'Crush', hint: 'the address of an AI service that works like OpenAI’s' },
+  { id: 'pi', label: 'Pi', hint: 'local models are listed in a file called models.json, so no address is used yet' },
+  { id: 'qwen', label: 'Qwen', hint: 'the address of an AI service that works like OpenAI’s' }
 ];
 
 const inputStyle: CSSProperties = {
@@ -107,7 +107,7 @@ export function AiEnginesSettings({ config }: { config: HarnessConfig }) {
           }
         }
       } catch {
-        if (alive) setOllamaStatus({ running: false, error: 'Ollama service unreachable' });
+        if (alive) setOllamaStatus({ running: false, error: 'Nexus could not reach Ollama.' });
       }
     })();
     return () => { alive = false; };
@@ -120,12 +120,12 @@ export function AiEnginesSettings({ config }: { config: HarnessConfig }) {
       const r = await window.cth.ollamaTest({ model: selectedOllamaModel });
       if (r.ok) {
         const evalTokens = r.tokens?.eval_count ? ` · ${r.tokens.eval_count} tokens generated` : '';
-        setOllamaTestNote(`✓ Inference successful (${r.latencyMs}ms${evalTokens}): "${r.response || 'Ready'}"`);
+        setOllamaTestNote(`✓ It works (${r.latencyMs}ms${evalTokens}). The AI said: "${r.response || 'Ready'}"`);
       } else {
-        setOllamaTestNote(`✗ Error: ${r.error || 'Test request failed'}`);
+        setOllamaTestNote(`✗ The test did not work: ${r.error || 'no reason was given'}`);
       }
     } catch (e) {
-      setOllamaTestNote(`✗ Error: ${e instanceof Error ? e.message : String(e)}`);
+      setOllamaTestNote(`✗ The test did not work: ${e instanceof Error ? e.message : String(e)}`);
     } finally {
       setOllamaTesting(false);
     }
@@ -142,7 +142,7 @@ export function AiEnginesSettings({ config }: { config: HarnessConfig }) {
         setNote((s) => ({ ...s, [backend]: 'saved' }));
         // OpenAI key gates Talk — mirror presence to the store so the warning clears now.
         if (backend === 'openai') setHasOpenAiKey(true);
-      } else setNote((s) => ({ ...s, [backend]: r.error ?? 'failed' }));
+      } else setNote((s) => ({ ...s, [backend]: r.error ?? 'could not be saved' }));
     } catch (e) { setNote((s) => ({ ...s, [backend]: e instanceof Error ? e.message : String(e) })); }
   };
   const clearKey = async (backend: string) => {
@@ -174,17 +174,17 @@ export function AiEnginesSettings({ config }: { config: HarnessConfig }) {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
       <div>
-        <div style={headStyle}>AI ENGINE PROVIDERS (BYOK)</div>
+        <div style={headStyle}>OTHER AI HELPER PROGRAMS</div>
         <div style={{ fontSize: 12, color: 'var(--cth-ink-700)', lineHeight: '18px' }}>
-          API keys + local endpoints for the OpenCode, Crush, pi.dev and Qwen engines.
-          Keys are stored <strong>write-only</strong> (encrypted at rest; never shown again)
-          and used only when those engines spawn. Claude Code and Codex use their own login.
+          Access keys and addresses for the helper programs OpenCode, Crush, pi.dev and Qwen.
+          Each key is <strong>locked on this computer and never shown again</strong>, and it is
+          used only when one of those programs starts. Claude Code and Codex use their own sign-in.
         </div>
       </div>
 
-      {/* Backend API keys (write-only) */}
+      {/* Backend access keys (write-only) */}
       <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-        <div style={headStyle}>API KEYS</div>
+        <div style={headStyle}>ACCESS KEYS</div>
         {BACKENDS.map((b) => (
           <div key={b.id} style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
             <label style={labelStyle}>
@@ -194,7 +194,7 @@ export function AiEnginesSettings({ config }: { config: HarnessConfig }) {
               <input
                 type="password"
                 autoComplete="off"
-                placeholder={hasKey[b.id] ? '•••••••• (stored — type to replace)' : `paste ${b.label} key`}
+                placeholder={hasKey[b.id] ? '•••••••• (saved. Type to replace it)' : `paste your ${b.label} access key`}
                 value={draftKey[b.id] ?? ''}
                 onChange={(e) => setDraftKey((s) => ({ ...s, [b.id]: e.target.value }))}
                 style={inputStyle}
@@ -222,7 +222,7 @@ export function AiEnginesSettings({ config }: { config: HarnessConfig }) {
           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
             <ProviderLogo provider="pi" size={16} />
             <span style={{ fontFamily: 'var(--cth-font-display)', fontSize: 10, color: 'var(--cth-ink-900)', textTransform: 'uppercase' }}>
-              Ollama · Local Model Provider
+              Ollama · AI on this computer
             </span>
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
@@ -236,18 +236,19 @@ export function AiEnginesSettings({ config }: { config: HarnessConfig }) {
               }}
             />
             <span style={{ fontSize: 11, color: 'var(--cth-ink-700)' }}>
-              {ollamaStatus?.running ? `Running (v${ollamaStatus.version || 'unknown'})` : 'Stopped / Offline'}
+              {ollamaStatus?.running ? `Running (version ${ollamaStatus.version || 'unknown'})` : 'Not running'}
             </span>
           </div>
         </div>
 
         <div style={{ fontSize: 12, color: 'var(--cth-ink-700)', lineHeight: '18px' }}>
-          Local models served at <code>http://localhost:11434</code>. Discovered models automatically power your local agents.
+          Ollama is a free program that runs AI on this computer. Nexus looks for it at <code>http://localhost:11434</code>.
+          The models it finds can be used by your local AI helpers.
         </div>
 
         <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
           <div style={{ flex: 1 }}>
-            <label style={labelStyle}>Installed Ollama Models</label>
+            <label style={labelStyle}>Models installed in Ollama</label>
             {ollamaModels.length > 0 ? (
               <select
                 value={selectedOllamaModel}
@@ -262,7 +263,7 @@ export function AiEnginesSettings({ config }: { config: HarnessConfig }) {
               </select>
             ) : (
               <div style={{ ...inputStyle, color: 'var(--cth-ink-500)', fontSize: 12 }}>
-                {ollamaStatus?.running ? 'No models found in Ollama (run: ollama pull qwen2.5-coder:7b)' : 'Ollama not detected'}
+                {ollamaStatus?.running ? 'Ollama has no models yet. In a terminal, run: ollama pull qwen2.5-coder:7b' : 'Nexus cannot find Ollama. Install it and start it.'}
               </div>
             )}
           </div>
@@ -274,7 +275,7 @@ export function AiEnginesSettings({ config }: { config: HarnessConfig }) {
               disabled={!ollamaStatus?.running || ollamaTesting}
               onClick={() => void runOllamaTest()}
             >
-              {ollamaTesting ? 'Testing...' : 'Test Connection'}
+              {ollamaTesting ? 'Testing...' : 'Test it'}
             </PixelButton>
           </div>
         </div>
@@ -294,7 +295,7 @@ export function AiEnginesSettings({ config }: { config: HarnessConfig }) {
 
       {/* Per-CLI local endpoint + default model */}
       <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-        <div style={headStyle}>LOCAL ENDPOINT · DEFAULT MODEL (PER ENGINE)</div>
+        <div style={headStyle}>ADDRESS AND DEFAULT MODEL FOR EACH PROGRAM</div>
         {CLIS.map((c) => (
           <div key={c.id} style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
             <label style={{ ...labelStyle, display: 'flex', alignItems: 'center', gap: 6 }}>
@@ -302,13 +303,13 @@ export function AiEnginesSettings({ config }: { config: HarnessConfig }) {
             </label>
             <div style={{ display: 'flex', gap: 6 }}>
               <input
-                placeholder={`base-URL — ${c.hint}`}
+                placeholder={`address: ${c.hint}`}
                 defaultValue={baseUrls[c.id] ?? ''}
                 onBlur={(e) => saveBaseUrl(c.id, e.target.value)}
                 style={inputStyle}
               />
               <input
-                placeholder="default model (provider/model)"
+                placeholder="default model (service/model)"
                 defaultValue={models[c.id] ?? ''}
                 onBlur={(e) => saveModel(c.id, e.target.value)}
                 style={{ ...inputStyle, maxWidth: 220 }}
@@ -350,10 +351,9 @@ export function AiEnginesSettings({ config }: { config: HarnessConfig }) {
         fontSize: 12, color: 'var(--cth-ink-700)', lineHeight: '17px',
         padding: 8, boxShadow: 'inset 0 0 0 1px var(--cth-ink-300)', background: 'var(--cth-paper-100)'
       }}>
-        ⚠ In <strong>auto mode</strong> these engines run with full filesystem + shell access
-        (no sandbox) — like Claude's bypass mode. Turn auto mode off (General) to make them
-        ask first. Live end-to-end verification with real model calls is pending your keys / a
-        local LLM.
+        ⚠ With <strong>auto mode</strong> on, these programs can change any file on this computer and
+        run any command, and nothing limits them. Turn auto mode off (in General) to make them
+        ask first. This has not yet been tested from start to finish with a real AI.
       </div>
     </div>
   );

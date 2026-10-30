@@ -1257,12 +1257,12 @@ export function SettingsModal({ config, onClose, initialSection }: SettingsModal
                           fontFamily: 'var(--cth-font-display)', fontSize: 8, lineHeight: '12px',
                           color: 'var(--cth-ink-500)', textTransform: 'uppercase', marginBottom: 10
                         }}>
-                          Default agent model
+                          Default model for AI helpers
                         </div>
                         <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
                           <span style={{ fontSize: 12, lineHeight: '16px', color: 'var(--cth-ink-500)' }}>
-                            Every newly spawned Claude agent (including the lead agent) starts on this model unless picked per-agent.
-                            Marked “· default” in the model pickers.
+                            New AI helpers that use Claude Code, including the lead AI helper, start on this model unless you pick another one for that AI helper.
+                            It is marked “· default” in the model lists.
                           </span>
                           <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
                             {AGENT_MODELS.map((m) => (
@@ -1296,11 +1296,11 @@ export function SettingsModal({ config, onClose, initialSection }: SettingsModal
                           fontFamily: 'var(--cth-font-display)', fontSize: 8, lineHeight: '12px',
                           color: 'var(--cth-ink-500)', textTransform: 'uppercase', marginBottom: 10
                         }}>
-                          Allowed custom engines
+                          Allowed helper programs
                         </div>
                         {trustedEngines.length === 0 ? (
                           <span style={{ fontSize: 12, lineHeight: '16px', color: 'var(--cth-ink-500)' }}>
-                            No custom engines allowed. Nexus asks before running one.
+                            No extra helper programs are allowed. Nexus asks you before it runs one.
                           </span>
                         ) : (
                           <ul style={{ listStyle: 'none', margin: 0, padding: 0, display: 'flex', flexDirection: 'column', gap: 6 }}>
@@ -1338,7 +1338,7 @@ export function SettingsModal({ config, onClose, initialSection }: SettingsModal
                             Restore my Claude settings
                           </PixelButton>
                           <span style={{ fontSize: 12, lineHeight: '16px', color: 'var(--cth-ink-500)' }}>
-                            Older versions added two approval settings to ~/.claude/settings.json. This removes them.
+                            Older versions of Nexus added two approval settings to your Claude Code settings file (~/.claude/settings.json). This button removes them.
                           </span>
                         </div>
                         {claudeRestoreNote && <div role="status" style={{ marginTop: 6, fontSize: 12, color: 'var(--cth-ink-700)' }}>{claudeRestoreNote}</div>}
@@ -1396,10 +1396,10 @@ export function SettingsModal({ config, onClose, initialSection }: SettingsModal
                         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
                           <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
                             <span style={{ fontSize: 13, lineHeight: '20px', color: 'var(--cth-ink-900)' }}>
-                              Auto mode: agents skip their CLI approval prompts
+                              Auto mode: AI helpers do not ask before they run commands or change files
                             </span>
                             <span style={{ fontSize: 12, lineHeight: '16px', color: 'var(--cth-ink-500)' }}>
-                              Agents can run commands and change files in their folders without asking. Turning it on asks you to confirm.
+                              AI helpers can run commands and change files in their folders without asking you. Turning it on asks you to confirm.
                             </span>
                           </div>
                           <PixelButton variant={autoModeOn ? 'primary' : 'secondary'} size="sm" onClick={toggleAutoMode} aria-pressed={autoModeOn}>

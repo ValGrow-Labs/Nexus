@@ -10,7 +10,7 @@ export function autoModeNeedsReview(cfg: { autoMode?: boolean; autoModeReviewedV
 /** Banner copy (shared by both surfaces). */
 export const AUTO_MODE_BANNER = {
   title: 'Auto mode is on',
-  body: 'Agents skip their CLI approval prompts, so they can run commands and change files without asking. New installs now start with auto mode off.',
+  body: 'AI helpers do not ask you before they run commands or change files. New installs now start with auto mode off.',
   turnOff: 'Turn auto mode off',
   keep: 'Keep auto mode on'
 } as const;

@@ -37,7 +37,7 @@ export type KeyRefusal = 'bad_provider' | 'providers_unknown' | 'bad_key' | 'enc
 export const KEY_REFUSAL_TEXT: Readonly<Record<KeyRefusal, string>> = Object.freeze({
   bad_provider: 'That AI service is not one Nexus offers.',
   providers_unknown: 'Nexus has not read the list of AI services yet. Open “Get this computer ready”, check again, then try again.',
-  bad_key: 'That does not look like an access key. Paste the key exactly as the AI service shows it (letters, numbers and symbols, no spaces).',
+  bad_key: 'That does not look like an access key. Paste the key exactly as the AI service shows it (letters, digits and symbols, no spaces).',
   encryption_unavailable: 'This computer cannot keep a secret safely right now, so the access key was not saved.',
   store_failed: 'The access key could not be saved. Nothing was changed.',
   not_allowed: 'Only the person who owns this Nexus can change access keys.',

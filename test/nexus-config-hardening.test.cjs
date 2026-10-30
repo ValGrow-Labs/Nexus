@@ -318,8 +318,8 @@ test('main reads every config secret through readConfigSecret(s), never the plai
 
 test('copy: autonomy row, banner and restore strings are the brief text', () => {
   const sm = read('src/renderer/src/components/SettingsModal.tsx');
-  assert.ok(sm.includes('Auto mode: agents skip their CLI approval prompts'));
-  assert.ok(sm.includes('Agents can run commands and change files in their folders without asking. Turning it on asks you to confirm.'));
+  assert.ok(sm.includes('Auto mode: AI helpers do not ask before they run commands or change files'));
+  assert.ok(sm.includes('AI helpers can run commands and change files in their folders without asking you. Turning it on asks you to confirm.'));
   assert.ok(sm.includes('Restore my Claude settings'));
   assert.ok(sm.includes('Removed ${n} setting(s). A backup is next to the file.'));
   assert.ok(sm.includes("'Nothing to remove.'"));
@@ -329,7 +329,7 @@ test('copy: autonomy row, banner and restore strings are the brief text', () => 
   const { AUTO_MODE_BANNER } = loadTs('src/shared/autoModeReview.ts');
   assert.deepEqual(AUTO_MODE_BANNER, {
     title: 'Auto mode is on',
-    body: 'Agents skip their CLI approval prompts, so they can run commands and change files without asking. New installs now start with auto mode off.',
+    body: 'AI helpers do not ask you before they run commands or change files. New installs now start with auto mode off.',
     turnOff: 'Turn auto mode off',
     keep: 'Keep auto mode on'
   });

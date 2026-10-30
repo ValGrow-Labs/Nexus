@@ -357,7 +357,7 @@ test('HS7 the Settings model: a row per probe provider, "Saved" or "Not set", a 
   assert.match(comp, /window\.cth\.hostedKeySet\(\{ provider: id, key: row\.draft \}\)/);
   assert.match(comp, /setDrafts\(\(d\) => \(\{ \.\.\.d, \[id\]: '' \}\)\)/, 'the typed text leaves the field once sent');
   // The access keys come first in Agents & Models ("Add my key" lands there), above the default model and the engines.
-  assert.match(read('src/renderer/src/components/SettingsModal.tsx'), /<HostedKeysSettings \/>[\s\S]{0,600}Default agent model[\s\S]*<AiEnginesSettings config=\{config\} \/>/);
+  assert.match(read('src/renderer/src/components/SettingsModal.tsx'), /<HostedKeysSettings \/>[\s\S]{0,600}Default model for AI helpers[\s\S]*<AiEnginesSettings config=\{config\} \/>/);
   assert.match(comp, /requestKeysFocus/, 'the block scrolls itself into view and takes the cursor when it was asked for');
   assert.match(comp, /scrollIntoView/);
   // The sheet opens Settings (and closes itself first) and only from the hosted row's key help.

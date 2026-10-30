@@ -188,7 +188,7 @@ test('PC9 "Add my key" lands on the keys: the full path is stated, the block com
   assert.match(X.KEY_HELP_TEXT, /^To get a free access key, open the website of the AI service, sign up for free, and create a key there\./);
   const settings = read('src/renderer/src/components/SettingsModal.tsx');
   const agents = settings.slice(settings.indexOf("activeSection === 'Agents & Models'"));
-  assert.ok(agents.indexOf('<HostedKeysSettings />') > 0 && agents.indexOf('<HostedKeysSettings />') < agents.indexOf('Default agent model'), 'the access keys are first');
+  assert.ok(agents.indexOf('<HostedKeysSettings />') > 0 && agents.indexOf('<HostedKeysSettings />') < agents.indexOf('Default model for AI helpers'), 'the access keys are first');
   const keys = read('src/renderer/src/components/HostedKeysSettings.tsx');
   assert.match(keys, /export function requestKeysFocus\(\): void/);
   assert.match(keys, /box\.current\?\.scrollIntoView\?\.\(\{ block: 'start' \}\)/);
