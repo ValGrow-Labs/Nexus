@@ -5,6 +5,8 @@
 .nx-btn--primary { background: var(--nx-ink); color: var(--nx-on-ink); border-color: var(--nx-ink); }
 .nx-btn--quiet { border-color: transparent; background: transparent; color: var(--nx-text-2); }
 .nx-btn:disabled { opacity: 0.55; cursor: not-allowed; }
+/* A disabled primary button keeps readable words: a flat grey fill with grey text (fading the dark button turned its white words almost invisible). */
+.nx-btn--primary:disabled { opacity: 1; background: var(--nx-sunken); color: var(--nx-text-3); border-color: var(--nx-line-strong); }
 @media (prefers-reduced-motion: no-preference) { .nx-btn { transition: background var(--nx-t-fast), transform var(--nx-t-fast) var(--nx-ease-in); } .nx-btn:active { transform: translateY(1px); } }
 .nx-badge { display: inline-flex; align-items: center; height: 20px; padding: 0 8px; border-radius: 999px; border: 1px solid var(--nx-line-strong); font: 550 11px var(--nx-font); color: var(--nx-text-2); }
 .nx-muted { color: var(--nx-text-3); }

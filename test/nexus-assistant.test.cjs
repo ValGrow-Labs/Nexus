@@ -58,3 +58,9 @@ test('the request box inside the AI helper dock always belongs to the project\'s
   assert.match(intent, /const lockedBox = \(locked \|\| dock\) && mode !== 'agent'/, 'in the dock a box that cannot ask is locked, never sent to the lead agent');
   assert.match(src('agent/AgentPanel.tsx'), /<IntentLine inline compact dock /, 'the dock\'s box says it is the dock');
 });
+
+test('a disabled primary button (the request box before you type) keeps readable words: flat grey fill, grey text, no fading of the whole button', () => {
+  const fs = require('node:fs'); const path = require('node:path');
+  const css = fs.readFileSync(path.join(__dirname, '..', 'src', 'renderer', 'src', 'nexus', 'styles', 'ui.css'), 'utf8');
+  assert.match(css, /\.nx-btn--primary:disabled \{[^}\r\n]*opacity: 1;[^}\r\n]*background: var\(--nx-sunken\);[^}\r\n]*color: var\(--nx-text-3\);/);
+});
