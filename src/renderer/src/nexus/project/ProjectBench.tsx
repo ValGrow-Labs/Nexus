@@ -21,7 +21,8 @@ import { buildSpine, nodeLabel, spineLine } from './spineModel';
 import type { SpineNode } from './spineModel';
 import { useProjectGit } from './useProjectGit';
 import { Spine } from './Spine';
-import { IntentLine } from '../intent/IntentLine';
+import { SetupCard } from '../agent/SetupCard';
+import { setupCard } from './projectSetupModel';
 import { ProjectHeader } from './ProjectHeader';
 import { ProgressSection } from './ProgressSection';
 import { changeSetRows } from './changeSetModel';
@@ -314,6 +315,7 @@ function Workbench({ project, tool }: { project: Project; tool: ProjectTool }) {
   const rails = useGroupRails(project.id, groups, artifacts, versionChecks.validators, draftBuilds);
   // Suggested changes waiting for a decision: the card at the top points at them.
   const reviewReady = useMemo(() => changeSetRows(artifacts).filter((r) => r.reviewable).length, [artifacts]);
+  const card = setupCard({ inSoftware: (idx.byProject.get(project.id) ?? []).some((r) => r.status === 'active' && r.workspaceId === 'sde'), git: git.status === 'ready' ? 'ready' : git.status === 'error' ? 'error' : 'loading', isRepo: git.status === 'ready' && git.isRepo });
   const hasSde = (idx.byProject.get(project.id) ?? []).some((r) => r.status === 'active' && r.workspaceId === 'sde');
   // A brand-new project: the three steps of "Your first build", until it has any suggested changes.
   const firstLine = firstBuildLine({ hasAiHelper: hasSde, loaded: artifactsLoaded, artifacts });
@@ -343,7 +345,6 @@ function Workbench({ project, tool }: { project: Project; tool: ProjectTool }) {
           {firstLine && <FirstBuildLine line={firstLine} onOpen={execUi.openSetup} />}
           <ExecutionNotice availability={availability} onSetup={execUi.openSetup} />
           <ApprovalsSection projectId={project.id} except={hasSde ? ['repo.write_refs'] : []} />
-          {!hasSde && <section className="nx-ag__next" aria-label="Ask for what you want"><IntentLine inline /></section>}
         </div>
         <div className="nx-bench">
           <ToolRail projectId={project.id} rootPath={project.rootPath} tool={tool} hasChanges={hasChanges} onOpenTerminal={openTerminal}
@@ -355,7 +356,8 @@ function Workbench({ project, tool }: { project: Project; tool: ProjectTool }) {
           {wide && <Passport project={project} node={node} headSha={head?.sha ?? null} onRefreshProject={refreshProject} onOpenTerminal={openTerminal} notice={notice} artifacts={artifacts} onSave={onSave} onHandOff={onHandOff} />}
         </div>
         </div>
-      {hasSde && <AiDock projectId={project.id} workspaceId="sde" reviewReady={reviewReady} onReview={() => navigate({ name: 'project', id: project.id, tool: 'changes' })} />}
+      {card && <aside className="nx-dock nx-dock--setup" aria-label="AI helper"><SetupCard card={card} project={project} onDone={() => { refresh(); }} /></aside>}
+      {hasSde && !card && <AiDock projectId={project.id} workspaceId="sde" reviewReady={reviewReady} onReview={() => navigate({ name: 'project', id: project.id, tool: 'changes' })} />}
       </div>
       {!wide && (
         <Sheet open={detailsOpen} onClose={closeDetails} side={mobile ? 'bottom' : 'right'} labelledBy="nx-passport-title" focusHeading>

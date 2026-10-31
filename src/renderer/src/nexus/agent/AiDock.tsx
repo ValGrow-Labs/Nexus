@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode, type PointerEvent as RPointerEvent } from 'react';
 import { Icon } from '../icons';
 import { useMedia } from '../ui/useMedia';
+import { useNexusUi } from '../state/uiStore';
 import { AgentPanel } from './AgentPanel';
 import { clampDockWidth, DOCK_DEFAULT_WIDTH, DOCK_NARROW_QUERY, readDock, writeDock } from './dockModel';
 
@@ -34,6 +35,14 @@ export function AiDock({ projectId, workspaceId, reviewReady, onReview }: { proj
     if (attention && !wasAttention.current) { if (narrow) setDrawerOpen(true); else if (state.collapsed) save({ ...state, collapsed: false }); }
     wasAttention.current = attention;
   }, [attention]); // eslint-disable-line react-hooks/exhaustive-deps
+  // "Focus the request box" (the Home page's Start, the Ask buttons) also opens the dock if it was closed.
+  const focusTick = useNexusUi((s) => s.intentFocusTick);
+  const seenTick = useRef(focusTick);
+  useEffect(() => {
+    if (focusTick === seenTick.current) return;
+    seenTick.current = focusTick;
+    if (narrow) setDrawerOpen(true); else if (state.collapsed) save({ ...state, collapsed: false });
+  }, [focusTick]); // eslint-disable-line react-hooks/exhaustive-deps
   const width = clampDockWidth(state.width, vw);
   const onDown = (e: RPointerEvent<HTMLDivElement>) => { drag.current = { x: e.clientX, w: width }; e.currentTarget.setPointerCapture(e.pointerId); };
   const onMove = (e: RPointerEvent<HTMLDivElement>) => { if (drag.current) setState((s) => ({ ...s, width: clampDockWidth(drag.current!.w + (drag.current!.x - e.clientX), vw) })); };

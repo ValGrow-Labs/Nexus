@@ -294,3 +294,8 @@
 .nx-ag__input .nx-intent { border: 1px solid var(--nx-border-strong); }
 .nx-ag__input .nx-intent__status { font-size: 12px; color: var(--nx-text-3); margin: 0; }
 .nx-ag__input .nx-intent__status span[role="status"] { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+/* The setup panel that stands where the AI helper dock will be: one title, one sentence, one button. */
+.nx-dock--setup { width: 420px; padding: var(--nx-s4); }
+.nx-setup { display: grid; gap: var(--nx-s3); align-content: start; font-size: 13px; }
+.nx-setup__title { margin: 0; font: 700 15px var(--nx-font); }
+.nx-setup__text, .nx-setup__note { margin: 0; color: var(--nx-text-2); }

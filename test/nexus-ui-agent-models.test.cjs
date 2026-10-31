@@ -1164,7 +1164,7 @@ test('V9g the project page has no fixed bottom bar and no helper stack on top: t
   const panelSrc = src('agent/AgentPanel.tsx');
   const dockPart = panelSrc.slice(panelSrc.indexOf('nx-ag--dock'));
   assert.ok(dockPart.indexOf('nx-ag__chat') < dockPart.indexOf('<IntentLine inline compact'), 'the request box comes after the conversation: pinned at the bottom');
-  assert.ok(src('project/ProjectBench.tsx').includes('{!hasSde && <section className="nx-ag__next"'), 'a project without the AI helper keeps its lead-helper box, inline');
+  assert.ok(src('project/ProjectBench.tsx').includes('<SetupCard card={card}') && !src('project/ProjectBench.tsx').includes('Ask for what you want'), 'a project that is not ready gets the setup card, never a grey lead-helper box');
   assert.ok(src('intent/IntentLine.tsx').includes("inline ? 'nx-intent nx-intent--inline'"));
   assert.ok(fs.readFileSync(path.join(NEXUS, 'styles', 'agent.css'), 'utf8').includes('.nx-intent--inline { position: static;'));
 });
@@ -1276,4 +1276,24 @@ test('V9k-3 an older reply cut at 200 characters ends in "(shortened)", not mid-
   assert.equal(A.usageShort({ usdCents: 9, turns: 1, estimated: false }), 'Today: 1 request, $0.09');
   const p = src('agent/AgentPanel.tsx');
   assert.ok(p.includes('usageShort(health.agent.usageToday)') && p.includes('nx-ag__more'), 'earlier conversations, cost and the service name are behind More');
+});
+
+// ---------- V9m: a new user never dead-ends ----------
+
+const PS = loadTs('src/renderer/src/nexus/project/projectSetupModel.ts');
+test('V9m the setup card: Software first (nothing re-filed silently), then Set it up for a folder that is not a repository, then nothing; plain words', () => {
+  const ws = PS.setupCard({ inSoftware: false, git: 'ready', isRepo: false });
+  assert.deepEqual([ws.kind, ws.button, ws.title], ['workspace', 'Add to Software', 'The AI helper works in Software projects']);
+  const g = PS.setupCard({ inSoftware: true, git: 'ready', isRepo: false });
+  assert.deepEqual([g.kind, g.button, g.title], ['git', 'Set it up', 'Start tracking changes in this folder']);
+  assert.equal(PS.setupCard({ inSoftware: true, git: 'ready', isRepo: true }), null);
+  assert.equal(PS.setupCard({ inSoftware: true, git: 'loading', isRepo: false }), null, 'still reading: nothing yet');
+  assert.equal(PS.setupCard({ inSoftware: true, git: 'error', isRepo: false }), null);
+  for (const c of [ws, g]) assert.ok(!/\b(repository|commit|branch|worktree|workspace)\b/i.test(`${c.title} ${c.text} ${c.button}`), 'plain words');
+  assert.equal(PS.setupFailText('git_missing'), 'Git is not installed on this computer. Install it, then try again.');
+  assert.equal(PS.setupFailText('weird'), 'It did not work. Try again.');
+  const card = src('agent/SetupCard.tsx');
+  assert.ok(card.includes("participationAttach(project.id, 'sde')") && card.includes('window.cth.gitInitProject(project.id)') && card.includes("actionId: 'sde.repository.snapshot'"));
+  const bench = src('project/ProjectBench.tsx');
+  assert.ok(bench.includes('{card && <aside className="nx-dock nx-dock--setup"') && bench.includes('{hasSde && !card && <AiDock'));
 });
