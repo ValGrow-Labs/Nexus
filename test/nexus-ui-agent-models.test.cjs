@@ -1434,3 +1434,12 @@ test('V10d the wiring: one shared send for the request box and Start, Start neve
   const css = fs.readFileSync(path.join(NEXUS, 'styles', 'execution.css'), 'utf8');
   assert.ok(css.includes('.nx-build__big { min-height: 48px;') && css.includes('prefers-reduced-motion: reduce) { .nx-build__dot'));
 });
+
+test('a request that ran and then failed in the AI service says so, and does not send you to "check again" in setup', () => {
+  const j = (o) => ({ state: 'failed', outcome: 'runtime_error', phase: null, headline: 'running', cancelRequested: false, error: { code: 'runtime_error', message: 'raw runtime text' }, ...o });
+  assert.equal(R.agentTurnHeadline(j()), 'The AI service stopped partway through your request');
+  assert.equal(R.agentTurnNext(j()), 'Ask again. If it keeps happening, choose another AI model in Settings.');
+  assert.doesNotMatch(R.agentTurnHeadline(j()), /raw runtime text|check the AI helper/);
+  // the setup-check sentence itself is unchanged for the setup screens
+  assert.equal(R.agentTurnHeadline(j({ outcome: 'runtime_auth' })).includes('stopped partway'), false);
+});

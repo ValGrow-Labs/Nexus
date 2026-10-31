@@ -413,8 +413,13 @@ function failedText(outcome: string | null, code: string | null | undefined): { 
     if (Object.prototype.hasOwnProperty.call(CODE_WORDS, k)) return { text: CODE_WORDS[k].replace(/\.$/, ''), stepInside: false };
     return null;
   };
+  // A request that ran and then failed in the AI service is not "could not check the AI helper" (that sentence is for the setup check,
+  // and its advice, "check again", does not help here).
+  if (outcome === 'runtime_error') return { text: AGENT_STOPPED_PARTWAY, stepInside: false };
   return own(outcome) ?? own(code);
 }
+export const AGENT_STOPPED_PARTWAY = 'The AI service stopped partway through your request';
+export const AGENT_STOPPED_PARTWAY_NEXT = 'Ask again. If it keeps happening, choose another AI model in Settings.';
 type TurnLike = Pick<JobView, 'state' | 'outcome' | 'phase' | 'headline' | 'cancelRequested'> & Partial<Pick<JobView, 'error'>>;
 export function agentTurnHeadline(j: TurnLike): string {
   switch (j.state) {
@@ -446,6 +451,7 @@ export function agentTurnNext(j: TurnLike): string | null {
     case 'failed': {
       const f = failedText(j.outcome, j.error?.code);
       if (f?.stepInside) return null;
+      if (j.outcome === 'runtime_error') return AGENT_STOPPED_PARTWAY_NEXT;
       const k = [j.outcome, j.error?.code].find((x): x is string => typeof x === 'string' && Object.prototype.hasOwnProperty.call(CODE_NEXT, x));
       return k ? CODE_NEXT[k] : 'Ask the AI helper again.';
     }
