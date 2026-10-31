@@ -160,3 +160,16 @@ test('PV6 the helper is told to make an app runnable: standard library only, por
   assert.match(skill, /## When the person asks for an app, a website or a web page/);
   for (const needle of ['0.0.0.0', 'GET /health', 'nexus.app.json', 'dist', "Node's standard library", 'CDN']) assert.ok(skill.includes(needle), needle);
 });
+
+test('PV7 the two hour limit is shown as a countdown, in plain words', () => {
+  const NOW = 1_800_000_000_000;
+  assert.equal(M.countdownText(NOW + 2 * 3_600_000, NOW), 'Stops by itself in 2 hours');
+  assert.equal(M.countdownText(NOW + 80 * 60_000, NOW), 'Stops by itself in 1 hour 20 minutes');
+  assert.equal(M.countdownText(NOW + 61 * 60_000, NOW), 'Stops by itself in 1 hour 1 minute');
+  assert.equal(M.countdownText(NOW + 45 * 60_000, NOW), 'Stops by itself in 45 minutes');
+  assert.equal(M.countdownText(NOW + 20_000, NOW), 'Stops by itself in 1 minute');
+  assert.equal(M.countdownText(NOW - 5, NOW), 'Stopping now');
+  assert.equal(M.countdownText(Number.NaN, NOW), 'Stopping now');
+  assert.match(read('src/renderer/src/nexus/project/PreviewPanel.tsx'), /countdownText\(deployment\.endsAt, now\)/);
+  assert.doesNotMatch(M.countdownText(NOW + 3_600_000, NOW), VENDOR);
+});

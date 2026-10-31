@@ -104,3 +104,13 @@ export async function runPreviewChain(client: ChainClient, onStep: (s: PreviewSt
   if (!dep.ok) return fail('start', dep.why);
   return { ok: true, deploymentId: dep.id };
 }
+
+/** "Stops by itself in 1 hour 20 minutes": the visible countdown of the fixed two hour limit. */
+export function countdownText(endsAt: number, now: number): string {
+  const ms = endsAt - now;
+  if (!Number.isFinite(ms) || ms <= 0) return 'Stopping now';
+  const min = Math.max(1, Math.round(ms / 60_000));
+  if (min < 60) return `Stops by itself in ${min} ${min === 1 ? 'minute' : 'minutes'}`;
+  const h = Math.floor(min / 60); const m = min % 60;
+  return `Stops by itself in ${h} ${h === 1 ? 'hour' : 'hours'}${m ? ` ${m} ${m === 1 ? 'minute' : 'minutes'}` : ''}`;
+}

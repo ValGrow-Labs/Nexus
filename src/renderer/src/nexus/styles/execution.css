@@ -372,3 +372,4 @@
 .nx-preview__acts { display: inline-flex; gap: var(--nx-s2); align-items: center; }
 .nx-preview__frame { min-height: 420px; height: 52vh; border: 1px solid var(--nx-border-strong); border-radius: var(--nx-r-obj); background: var(--nx-sunken); display: grid; place-items: center; overflow: hidden; }
 .nx-preview__empty { margin: 0; padding: var(--nx-s4); text-align: center; }
+.nx-preview__left { color: var(--nx-text-3); font-weight: 400; font-size: 12.5px; margin-left: var(--nx-s2); }

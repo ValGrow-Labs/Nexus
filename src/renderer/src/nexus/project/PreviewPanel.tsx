@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import type { DeploymentView } from '@shared/nexus/ipc';
 import { Button } from '../ui/Button';
 import { openLoopbackUrl } from '../data/nexusClient';
-import { PREVIEW_EMBED_LABEL, PREVIEW_NOT_ANSWERING, deploymentWord, isLive } from './previewModel';
+import { PREVIEW_EMBED_LABEL, PREVIEW_NOT_ANSWERING, countdownText, deploymentWord, isLive } from './previewModel';
 
 /** A Nexus overlay (a sheet, the search) is open: the native view would paint above it, so the preview is hidden meanwhile. */
 const OVERLAY = '.nx-sheet-layer, .nx-palette, [role="dialog"][aria-modal="true"]';
@@ -17,6 +17,9 @@ export function PreviewPanel({ deployment, onStop, stopping }: { deployment: Dep
   const [view, setView] = useState<'loading' | 'ready' | 'failed'>('loading');
   const [refused, setRefused] = useState(false);
   const live = isLive(deployment);
+  // The visible countdown of the fixed two hour limit (a slow tick).
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => { if (!isLive(deployment)) return undefined; const t = setInterval(() => setNow(Date.now()), 30_000); return () => clearInterval(t); }, [deployment.status]);
   const id = deployment.id;
   // Shown once the app answers (or stopped answering) and its published port is known; while it starts the frame says so (main refuses a view before the port exists).
   const showing = live && (deployment.status === 'healthy' || deployment.status === 'unhealthy') && deployment.hostPort !== null;
@@ -63,7 +66,7 @@ export function PreviewPanel({ deployment, onStop, stopping }: { deployment: Dep
   return (
     <section className="nx-preview" aria-label="Preview of your app" data-state={deployment.status}>
       <div className="nx-preview__bar">
-        <span className="nx-preview__word" role="status"><span className="nx-preview__dot" aria-hidden="true" />{word}</span>
+        <span className="nx-preview__word" role="status"><span className="nx-preview__dot" aria-hidden="true" />{word}{live && <span className="nx-preview__left">{countdownText(deployment.endsAt, now)}</span>}</span>
         <span className="nx-preview__acts">
           <Button variant="quiet" disabled={!showing} onClick={() => { void window.cth.previewReload(); }}>Reload</Button>
           <Button variant="quiet" disabled={!showing || !deployment.url} onClick={openOutside}>Open in browser</Button>
