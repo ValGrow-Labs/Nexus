@@ -319,8 +319,8 @@ function Workbench({ project, tool }: { project: Project; tool: ProjectTool }) {
   const reviewReady = useMemo(() => changeSetRows(artifacts).filter((r) => r.reviewable).length, [artifacts]);
   const card = setupCard({ inSoftware: (idx.byProject.get(project.id) ?? []).some((r) => r.status === 'active' && r.workspaceId === 'sde'), git: git.status === 'ready' ? 'ready' : git.status === 'error' ? 'error' : 'loading', isRepo: git.status === 'ready' && git.isRepo });
   const hasSde = (idx.byProject.get(project.id) ?? []).some((r) => r.status === 'active' && r.workspaceId === 'sde');
-  // The newest suggested change waiting for a decision: Try it can run it as well as the project as it stands.
-  const tryChange = useMemo(() => { const r = changeSetRows(artifacts).find((x) => x.reviewable); return r ? { versionId: r.versionId, name: r.name } : null; }, [artifacts]);
+  // The newest suggested change that is waiting for a decision or kept but not added yet: Try it can run it as well as the project as it stands.
+  const tryChange = useMemo(() => { const r = changeSetRows(artifacts).find((x) => x.status === 'candidate' || x.status === 'active'); return r ? { versionId: r.versionId, name: r.name } : null; }, [artifacts]);
   // A brand-new project: the three steps of "Your first build", until it has any suggested changes.
   // The same test the request box uses: once the AI helper can take a request, the three steps are done and the card goes away.
   const helperCanAsk = agentPanelModel({ health, availability, sessions: [], sessionsFail: null }).canAsk;
