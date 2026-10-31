@@ -130,7 +130,7 @@ export function AgentPanel({ projectId, workspaceId, reviewReady = 0, onReview, 
             {ui && <li><Button variant={panel.chooseRuntime ? 'primary' : 'quiet'} onClick={ui.openSetup}>{panel.chooseRuntime ? CHOOSE_RUNTIME_BUTTON : GLOSSARY.getReady.name}</Button></li>}
           </ul>
         )}
-        {panel.kind === 'ready' && <p className="nx-muted">{panel.lead} Ask in the box above.</p>}
+        {panel.kind === 'ready' && <p className="nx-muted">{panel.lead} Ask in the box below.</p>}
         {/* While it works: what it is doing, for how long, that you can leave, and what happens next. */}
         {panel.progress && (
           <div className="nx-ag__progress" aria-label="Progress of the AI helper">
