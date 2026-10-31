@@ -167,6 +167,15 @@ export function classify(status: number, bodyText: string, quirks: ProviderPrese
   return 'other';
 }
 
+/** The provider's short error label (its `code`, `type` and `status` words) for the local log only, or ''. Only plain label characters
+ *  are kept (letters, digits, underscore, dot, dash, space), so no sentence, prompt text or key can pass through. */
+export function errorLabel(bodyText: string): string {
+  try {
+    const e = (JSON.parse(bodyText) as { error?: { code?: unknown; type?: unknown; status?: unknown } } | null)?.error;
+    return [e?.code, e?.type, e?.status].filter((x): x is string => typeof x === 'string' && /^[A-Za-z0-9_. -]{1,40}$/.test(x)).join(' ').toLowerCase();
+  } catch { return ''; }
+}
+
 /** `Retry-After` as milliseconds (seconds, possibly fractional, or an HTTP date), or null. */
 export function retryAfterMs(h: string | string[] | undefined, nowMs: number): number | null {
   const v = Array.isArray(h) ? h[0] : h;
@@ -233,7 +242,11 @@ export function createChatFn(o: HostedChatOptions): ChatFn {
       switch (kind) {
         case 'auth': return failure('auth', MSG.keyRejected);
         case 'model_missing': return failure('runtime_error', MSG.modelUnavailable);
-        case 'refused': return failure('runtime_error', MSG.refused);
+        case 'refused': {
+          // The turn's message stays the one fixed sentence; the provider's short label goes to the local log so a refusal can be diagnosed.
+          o.log?.(`hosted model: the provider refused a request (HTTP ${t.status}${errorLabel(t.text) ? `, ${errorLabel(t.text)}` : ''})`);
+          return failure('runtime_error', MSG.refused);
+        }
         case 'quota': return failure('limit', MSG.quotaExhausted);
         case 'too_long': {
           if (trimmed) return failure('runtime_error', MSG.contextTooLong);

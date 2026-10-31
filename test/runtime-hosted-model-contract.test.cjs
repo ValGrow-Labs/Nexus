@@ -751,6 +751,11 @@ test('HM11 the registry builds the kind (the key and the proxy accessor reach th
   assert.equal(clientMod.classify(429, '{"error":{"message":"slow down"}}', {}), 'rate');
   assert.equal(clientMod.classify(401, '', {}), 'auth');
   assert.equal(clientMod.classify(503, '', {}), 'transient');
+  // The provider's short label goes to the local log only, and only plain label characters pass: never a sentence, prompt text or key.
+  assert.equal(clientMod.errorLabel('{"error":{"code":"invalid_request_error","type":"invalid_request_error","message":"Bad: my secret prompt text sk-123"}}'), 'invalid_request_error invalid_request_error');
+  assert.equal(clientMod.errorLabel('{"error":{"code":"Please do not log THIS sentence, it has punctuation: sk-123","type":"tool_use_failed"}}'), 'tool_use_failed');
+  assert.equal(clientMod.errorLabel('not json'), '');
+  assert.equal(clientMod.errorLabel('{"error":{"code":"' + 'a'.repeat(41) + '"}}'), '');
   assert.equal(clientMod.retryAfterMs('2', 0), 2000);
   assert.equal(clientMod.retryAfterMs(undefined, 0), null);
   assert.equal(clientMod.retryAfterMs('soon', 0), null);
