@@ -49,3 +49,12 @@ test('quick actions: every action acts; all icons exist', () => {
   for (const a of QUICK_ACTIONS) assert.ok(NEXUS_ICON_NAMES.includes(a.icon), a.id);
   for (const s of SUGGESTIONS) { assert.ok(s.prompt.trim().length > 10, s.id); assert.ok(NEXUS_ICON_NAMES.includes(s.icon), s.id); }
 });
+
+test('the request box inside the AI helper dock always belongs to the project\'s AI helper, never the old lead agent, whichever workspace the project is filed under first', () => {
+  const fs = require('node:fs'); const path = require('node:path');
+  const src = (f) => fs.readFileSync(path.join(__dirname, '..', 'src', 'renderer', 'src', 'nexus', f), 'utf8');
+  const intent = src('intent/IntentLine.tsx');
+  assert.match(intent, /const mode = dock && ctx\.project \? \(canAsk \? 'agent' : 'legacy'\)/, 'in the dock a project box is agent mode when it can ask');
+  assert.match(intent, /const lockedBox = \(locked \|\| dock\) && mode !== 'agent'/, 'in the dock a box that cannot ask is locked, never sent to the lead agent');
+  assert.match(src('agent/AgentPanel.tsx'), /<IntentLine inline compact dock /, 'the dock\'s box says it is the dock');
+});

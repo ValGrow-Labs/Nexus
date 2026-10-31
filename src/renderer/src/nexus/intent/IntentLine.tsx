@@ -31,7 +31,7 @@ function takeHandoff(): boolean { const fresh = Date.now() - handoffAt < 10000; 
  *  project that is ready, the lead AI helper everywhere else. A label and one plain line say which. `summoned`: mounted on demand
  *  (Ctrl/Cmd+J or an "Ask" button) on a route that does not dock it, so it takes focus on mount and can close. `inline`: drawn in the
  *  flow of the page (inside the project page's next-step box) instead of docked at the bottom. */
-export function IntentLine({ summoned = false, inline = false, compact = false, locked = false, onClose }: { summoned?: boolean; inline?: boolean; compact?: boolean; locked?: boolean; onClose?: () => void }) {
+export function IntentLine({ summoned = false, inline = false, compact = false, locked = false, dock = false, onClose }: { summoned?: boolean; inline?: boolean; compact?: boolean; locked?: boolean; dock?: boolean; onClose?: () => void }) {
   const port = useAssistant();
   const route = useRoute();
   const projects = useStore((s) => s.projects);
@@ -100,7 +100,9 @@ export function IntentLine({ summoned = false, inline = false, compact = false, 
     return { canAsk: p.canAsk, note: p.note };
   }, [execHealth, platformOff]);
   const canAsk = askable.canAsk;
-  const mode = intentRoute({ routeName: route.name, primaryWorkspaceId: ctx.project ? ctx.ws?.id ?? null : null, canAsk });
+  // The box inside the project's AI helper dock always belongs to the project's AI helper, whichever workspace the project is filed
+  // under first (a project filed under Machine learning can still have the AI helper); it never falls back to the old lead agent.
+  const mode = dock && ctx.project ? (canAsk ? 'agent' : 'legacy') : intentRoute({ routeName: route.name, primaryWorkspaceId: ctx.project ? ctx.ws?.id ?? null : null, canAsk });
 
   const chip = ctx.selection ?? ctx.project?.name ?? ctx.ws?.label ?? null;
   const header = buildContextHeader({
@@ -113,7 +115,7 @@ export function IntentLine({ summoned = false, inline = false, compact = false, 
   const s = port.status;
   // ONE plain line that says who gets the message and what happens next, and a short label for the same thing.
   // In the project dock the box never reaches the lead AI helper: while the project's own AI helper is not ready it is locked, text kept.
-  const lockedBox = locked && mode !== 'agent';
+  const lockedBox = (locked || dock) && mode !== 'agent';
   const baseWords = intentWords({ mode: lockedBox ? 'agent' : mode, lead: s, onSoftwareProject: route.name === 'project' && ctx.ws?.id === 'sde' && !canAsk, note: askable.note, replyHint: port.replyHint });
   const words = lockedBox ? { ...baseWords, placeholder: 'Get this computer ready first', explain: 'The AI helper for this project is not ready yet. Get this computer ready first, then ask here; what you typed is kept.' } : baseWords;
 

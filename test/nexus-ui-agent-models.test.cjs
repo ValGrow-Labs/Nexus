@@ -1268,11 +1268,11 @@ test('V9k-0 the dock is three parts: header, chat (bubbles, grey steps, one inli
 
 test('V9k-2 the request box in the dock never goes to the lead AI helper: locked with "Get this computer ready first" until the project helper is ready, text kept', () => {
   const il = src('intent/IntentLine.tsx');
-  assert.ok(il.includes("const lockedBox = locked && mode !== 'agent';"));
+  assert.ok(il.includes("const lockedBox = (locked || dock) && mode !== 'agent';"), 'in the dock the box is locked whenever it cannot ask, not only when told to lock');
   assert.ok(il.includes("placeholder: 'Get this computer ready first'"));
   assert.ok(il.includes('disabled={lockedBox}') && il.includes('sending || lockedBox'));
   assert.ok(il.includes("if (!text || lockedBox) return;"));
-  assert.ok(src('agent/AgentPanel.tsx').includes("<IntentLine inline compact locked={panel.kind !== 'ready'} />"));
+  assert.ok(src('agent/AgentPanel.tsx').includes("<IntentLine inline compact dock locked={panel.kind !== 'ready'} />"));
 });
 
 test('V9k-3 an older reply cut at 200 characters ends in "(shortened)", not mid-word with an ellipsis; the footer row holds earlier conversations and today in one line', () => {

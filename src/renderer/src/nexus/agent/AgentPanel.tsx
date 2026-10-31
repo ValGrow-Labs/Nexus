@@ -169,7 +169,7 @@ export function AgentPanel({ projectId, workspaceId, reviewReady = 0, onReview, 
         {note && <p className="nx-ag__step" role="status">{note}</p>}
         {panel.readError && <p className="nx-ag__step" role="status">The conversations could not be read. <Button variant="quiet" onClick={sessions.reload}>Try again</Button></p>}
       </div>
-      <div className="nx-ag__input"><IntentLine inline compact locked={panel.kind !== 'ready'} /></div>
+      <div className="nx-ag__input"><IntentLine inline compact dock locked={panel.kind !== 'ready'} /></div>
     </section>
   );
 }
