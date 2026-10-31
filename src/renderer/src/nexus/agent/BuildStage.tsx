@@ -87,7 +87,7 @@ export function BuildStage({ projectId, blocked, reviewReady, onReview, children
       {view.said && <p className="nx-build__said"><span className="nx-build__who">The AI helper said</span>{view.said}</p>}
       <div className="nx-build__acts">
         {view.button && <button type="button" className="nx-btn nx-btn--primary nx-build__big" onClick={press}>{view.button.label}</button>}
-        {view.canStop && <Button variant="quiet" disabled={stopping} onClick={() => { void stop(); }}>Stop</Button>}
+        {view.canStop && <Button variant="secondary" disabled={stopping} onClick={() => { void stop(); }}>Stop</Button>}
       </div>
       {note && <p className="nx-build__next" role="status">{note}</p>}
     </section>
