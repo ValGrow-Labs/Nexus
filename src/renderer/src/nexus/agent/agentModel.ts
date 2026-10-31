@@ -101,8 +101,10 @@ export function tidyCut(text: string): string {
   return `${(at > 20 ? body.slice(0, at) : body).trimEnd()} (shortened)`;
 }
 
+/** A message that holds no words, only brackets ("{}"), is not something the AI helper said. */
+function hasWords(text: string): boolean { return text.trim() !== '' && text.split('').every((ch) => ' \t\r\n{}[]'.includes(ch)) === false; }
 export function replyOf(d: Pick<SessionDetailView, 'messages'> | null | undefined): string | null {
-  const m = d ? [...d.messages].reverse().find((x) => x.from === 'agent' && x.text.trim() !== '') : undefined;
+  const m = d ? [...d.messages].reverse().find((x) => x.from === 'agent' && hasWords(x.text)) : undefined;
   if (!m) return null;
   const t = tidyCut(m.text).split(/[\t\n\r ]+/).join(' ').trim();
   return t.length > 600 ? `${t.slice(0, 599)}…` : t;
@@ -118,6 +120,7 @@ export function chatItems(d: Pick<SessionDetailView, 'messages' | 'toolCalls'> |
   ].sort((a, b) => a.ts - b.ts || a.seq - b.seq);
   const out: ChatItem[] = [];
   for (const x of all) {
+    if (x.msg && x.msg.from === 'agent' && !hasWords(x.msg.text)) continue;
     if (x.msg) {
       out.push({ kind: x.msg.from === 'agent' ? 'helper' : 'you', key: `m${x.msg.seq}`, text: x.msg.from === 'agent' ? tidyCut(x.msg.text) : x.msg.text, when: clock(x.msg.ts) });
     } else if (x.step) {

@@ -31,6 +31,8 @@ function IntentSlot() {
   // The project page asks inside its own next-step box (inline), so only the workspace page docks the line.
   const docked = route.name === 'workspace';
   if (docked) return <IntentLine key="docked" />;
+  // A project page has its own request box in the AI helper dock, so a second box never opens at the bottom of it.
+  if (route.name === 'project') return null;
   if (summonedOn === key) return <IntentLine key={`summoned:${key}`} summoned onClose={() => setSummonedOn(null)} />;
   return null;
 }

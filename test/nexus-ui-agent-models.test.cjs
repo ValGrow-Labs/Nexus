@@ -1161,6 +1161,7 @@ test('V9f the request bar has its own row under the page and never covers conten
 test('V9g the project page has no fixed bottom bar and no helper stack on top: the AI helper is a dock on the right with the request box pinned at its bottom; only the workspace page docks the line', () => {
   const shell = fs.readFileSync(path.join(NEXUS, 'NexusShell.tsx'), 'utf8');
   assert.ok(shell.includes("const docked = route.name === 'workspace';"));
+  assert.ok(shell.indexOf("if (route.name === 'project') return null;") > shell.indexOf('if (docked)') && shell.indexOf("if (route.name === 'project') return null;") < shell.indexOf('if (summonedOn === key)'), 'asking from elsewhere (the Home page Start) never opens a second box at the bottom of a project page');
   const panelSrc = src('agent/AgentPanel.tsx');
   const dockPart = panelSrc.slice(panelSrc.indexOf('nx-ag--dock'));
   assert.ok(dockPart.indexOf('nx-ag__chat') < dockPart.indexOf('<IntentLine inline compact'), 'the request box comes after the conversation: pinned at the bottom');
@@ -1178,6 +1179,8 @@ test('V9j-1 what the AI helper said back is shown; a request that only answered 
   const said = detail([{ seq: 1, ts: 1, from: 'user', text: 'hi', displayOnly: true }, { seq: 2, ts: 2, from: 'agent', text: 'Hi!   I can help.\n\nWhat would you like?', displayOnly: true }]);
   assert.equal(A.replyOf(said), 'Hi! I can help. What would you like?');
   assert.equal(A.replyOf(detail([{ seq: 1, ts: 1, from: 'user', text: 'hi', displayOnly: true }])), null);
+  assert.equal(A.replyOf(detail([{ seq: 1, ts: 1, from: 'agent', text: '{}', displayOnly: true }])), null, 'a bare "{}" is not a reply');
+  assert.deepEqual(A.chatItems({ messages: [{ seq: 1, ts: 1, from: 'agent', text: '{}', displayOnly: true }], toolCalls: [] }), []);
   assert.equal(A.replyOf(detail([{ seq: 1, ts: 1, from: 'agent', text: 'x'.repeat(900), displayOnly: true }])).length, 600);
   assert.equal(A.shortReply('a'.repeat(200), 80).length, 80);
   const end = (reply) => A.agentEnding(job({ state: 'partial', outcome: 'no_change', headline: 'checks_could_not_run' }), reply);
