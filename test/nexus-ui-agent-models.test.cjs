@@ -1167,6 +1167,7 @@ test('V9g the project page has no fixed bottom bar and no helper stack on top: t
   assert.ok(dockPart.indexOf('nx-ag__chat') < dockPart.indexOf('<IntentLine inline compact'), 'the request box comes after the conversation: pinned at the bottom');
   assert.ok(src('project/ProjectBench.tsx').includes('<SetupCard card={card}') && !src('project/ProjectBench.tsx').includes('Ask for what you want'), 'a project that is not ready gets the setup card, never a grey lead-helper box');
   assert.ok(src('intent/IntentLine.tsx').includes("inline ? 'nx-intent nx-intent--inline'"));
+  assert.ok(src('intent/IntentLine.tsx').includes('export function markHandoff()'), 'the request box that opens after the Home page Start takes focus once');
   assert.ok(fs.readFileSync(path.join(NEXUS, 'styles', 'agent.css'), 'utf8').includes('.nx-intent--inline { position: static;'));
 });
 
@@ -1331,4 +1332,5 @@ test('V9n the review page: what the AI helper did, plain proof with ticks (no ha
   assert.ok(rv.includes('Technical details (for developers)') && rv.includes('All of these must pass before you can press “Looks good”.'));
   assert.ok(rv.includes("useNexusUi((x) => x.audience) === 'technical'") && rv.includes('Show what changed'), 'what changed is closed for a newcomer, open for a technical person');
   assert.ok(fs.readFileSync(path.join(NEXUS, 'styles', 'execution.css'), 'utf8').includes('.nx-cs__bar { position: sticky; bottom: 0;'));
+  assert.ok(fs.readFileSync(path.join(NEXUS, 'styles', 'execution.css'), 'utf8').includes('.nx-review.nx-surface { padding-bottom: 0; }'), 'the sticky decision bar sits at the very bottom of the page, not above the project page bottom room');
 });

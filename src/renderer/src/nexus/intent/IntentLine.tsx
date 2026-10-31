@@ -22,6 +22,11 @@ const TOOL_PAGE: Record<ProjectTool, string> = { bench: 'Work area', changes: 'S
 let requestSeq = 0;
 function newRequestId(): string { requestSeq += 1; return `r-${Date.now()}-${requestSeq}`; }
 
+/** The Home page's Start hands its words over: the request box that opens next takes focus once, even though it is drawn after the press. */
+let handoffAt = 0;
+export function markHandoff(): void { handoffAt = Date.now(); }
+function takeHandoff(): boolean { const fresh = Date.now() - handoffAt < 10000; handoffAt = 0; return fresh; }
+
 /** One line, bound to what the user is looking at, that sends a request to an AI helper: this project's AI helper on a software
  *  project that is ready, the lead AI helper everywhere else. A label and one plain line say which. `summoned`: mounted on demand
  *  (Ctrl/Cmd+J or an "Ask" button) on a route that does not dock it, so it takes focus on mount and can close. `inline`: drawn in the
@@ -45,6 +50,12 @@ export function IntentLine({ summoned = false, inline = false, compact = false, 
   const seenTick = useRef(summoned ? -1 : focusTick);
   const ids = { field: useId(), status: useId(), error: useId(), pop: useId() };
 
+  useEffect(() => {
+    if (!inline || summoned || !takeHandoff()) return undefined;
+    const t = window.setTimeout(() => ta.current?.focus(), 300); // after the page has put its own focus on the title
+    return () => window.clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   useEffect(() => {
     if (focusTick !== seenTick.current) { seenTick.current = focusTick; ta.current?.focus(); }
   }, [focusTick]);

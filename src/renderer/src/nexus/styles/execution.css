@@ -309,3 +309,7 @@
 .nx-cs__details { margin-top: var(--nx-s3); }
 .nx-cs__details > summary { cursor: pointer; font: 600 12.5px var(--nx-font); color: var(--nx-text-2); }
 .nx-cs__bar { position: sticky; bottom: 0; margin-top: var(--nx-s4); padding: var(--nx-s3) 0; background: var(--nx-surface); border-top: 1px solid var(--nx-border); display: grid; gap: var(--nx-s2); z-index: 2; }
+/* The review page ends at its decision bar: the project page's bottom room would hold the sticky bar 120px above the edge. */
+.nx-review.nx-surface { padding-bottom: 0; }
+.nx-cs__block > p, .nx-cs__block > h3 { margin: 0; }
+.nx-cs__bar { padding-bottom: var(--nx-s4); }
