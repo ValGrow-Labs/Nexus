@@ -8,7 +8,7 @@ import type {
   ActivityPage, ActivityView, ArtifactDetail, ArtifactSummaryView, ArtifactsListFilter, HandoffDetailView, HandoffSummaryView,
   HandoffsListFilter, LineageQuery, LineageView, LinkSourcesView, NexusFail, NexusResult, ParticipationView, SaveCommitArgs,
   SaveResultView, SaveTextFileArgs, SendHandoffArgs, SendHandoffView, VersionDetail, VersionView,
-  AcceptResultView, AgentConsentArgs, AgentConsentView, AgentStartArgs, AgentStartResultView, MergeView, RepoMergeArgs, RepoStatusView,
+  AcceptResultView, AgentConsentArgs, AgentConsentView, AgentStartArgs, AgentStartResultView, MergeView, RepoMergeArgs, RepoStatusView, TryArgs, TryResultView,
   ReviewDecideArgs, ReviewResultView, SessionDetailView, SessionView, SessionsListFilter
 } from '@shared/nexus/ipc';
 
@@ -140,6 +140,8 @@ export const nexusClient = {
   repoMergeAccepted: (projectId: string, args: RepoMergeArgs): Promise<NexusResult<MergeView>> =>
     execCall(() => window.cth.nexusRepoMergeAccepted(projectId, args)),
   agentConsent: (args: AgentConsentArgs): Promise<NexusResult<AgentConsentView>> => execCall(() => window.cth.nexusAgentConsent(args)),
+  /** #52 "Try it": the buttons of a suggested change, or one run of it in the safe space. */
+  tryRun: (args: TryArgs): Promise<NexusResult<TryResultView>> => execCall(() => window.cth.nexusTry(args)),
   /** The nexus:hint push (the newest event seq only). Returns an unsubscribe; a no-op when the preload has none. */
   onHint: (cb: (hint: NexusHint) => void): (() => void) => {
     try {

@@ -107,11 +107,13 @@ const EXEC_QUERIES = {
             AND (y.finished_at > x.finished_at OR (y.finished_at = x.finished_at AND y.rowid > x.rowid))))`;
   },
   // O17 completed tool.run or validate jobs whose current attempt has neither an ingested output version nor a (job, n) validation.
+  // "Try it" (sde.try.run): a run makes no version and no check; its durable record is its own attempt, which must exist, succeeded, with an exit code of 0.
   // B2b (Task 16): the git recipes whose result is a durable RECORD, not a version (RECORD_ONLY_RECIPES) stand on that record, which
   // must exist: a worktree's `session_worktrees` row, a fast-forward's `repo_merges` row, a rollback's `changeset.rollback` activity row.
   O17: (v9, o) => v9 ? `SELECT j.id FROM jobs j WHERE j.state = 'completed' AND j.kind IN ('tool.run','validate')
     AND NOT EXISTS (SELECT 1 FROM version_attempts va WHERE va.job_id = j.id AND va.attempt_n = j.attempts)
-    AND NOT EXISTS (SELECT 1 FROM validations x WHERE x.job_id = j.id AND x.attempt_n = j.attempts)${o && o.v10 ? `
+    AND NOT EXISTS (SELECT 1 FROM validations x WHERE x.job_id = j.id AND x.attempt_n = j.attempts)
+    AND NOT (j.recipe_id = 'sde.try.run' AND EXISTS (SELECT 1 FROM job_attempts t WHERE t.job_id = j.id AND t.n = j.attempts AND t.state = 'succeeded' AND t.exit_code = 0))${o && o.v10 ? `
     AND NOT (j.recipe_id = 'repo.worktree' AND EXISTS (SELECT 1 FROM session_worktrees sw WHERE sw.session_id = j.session_id))
     AND NOT (j.recipe_id = 'repo.ff' AND EXISTS (SELECT 1 FROM repo_merges m WHERE m.ff_job_id = j.id))
     AND NOT (j.recipe_id = 'changeset.accept_rollback' AND EXISTS (SELECT 1 FROM activity a WHERE a.job_id = j.id AND a.action = 'changeset.rollback' AND a.status = 'succeeded'))` : ''}` : null

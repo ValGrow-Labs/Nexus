@@ -156,14 +156,22 @@ test('no nexus:* request schema (B1 or B2a) names a folder, file, image, network
   assert.ok(lists.length >= 18, `the B1 and B2a schemas were found (${lists.length})`);
   const keysOf = (l) => [...l.matchAll(/['"`]([^'"`]+)['"`]/g)].map((m) => m[1]);
   const banned = /^(root|rootPath|cwd|path|dir|folder|file|image|network|argv|command|env)$|Path$|Root$|Dir$|File$/i;
-  for (const k of lists.flatMap(keysOf)) assert.ok(k === 'relPath' || !banned.test(k), k);
+  // Deliberate contract change ("Try it", #52): `nexus:try` alone carries `command`, and only as the TEXT the person typed into "Try your own command". Main
+  // cuts it into an argument array (tokenizeCommand: quotes, no shell), checks it again (checkTryArgv, secret scan) and runs it only in the same no-network
+  // sandbox as a test run, one run at a time, on a button press. No other schema may name one; the key set is pinned exactly here.
+  const isTry = (l) => keysOf(l).join() === 'op,projectId,versionId,what,command,intentId';
+  assert.equal(lists.filter(isTry).length, 1, 'exactly one schema (#52) carries command');
+  for (const l of lists) for (const k of keysOf(l)) assert.ok(k === 'relPath' || !banned.test(k) || (isTry(l) && k === 'command'), k);
   // relPath is the one path-like key, in exactly one schema: #10 (saveTextFile).
   const withRel = lists.filter((l) => keysOf(l).includes('relPath'));
   assert.equal(withRel.length, 1);
   assert.match(mod, /reg\('nexus:artifact:saveTextFile'[\s\S]{0,200}V\.object\(args\[0\], \['projectId', 'workspaceId', 'relPath', 'target'\]/);
   // The request types the preload sends: no such key in any of them (relPath only in SaveTextFileArgs).
   const ipc = read('src/shared/nexus/ipc.ts');
-  const requests = ipc.slice(ipc.indexOf('// ---------- requests'));
+  const tryArgs = ipc.match(/export type TryArgs =[\s\S]*?intentId: string \};/);
+  assert.ok(tryArgs && ipc.indexOf(tryArgs[0]) > ipc.indexOf('// ---------- "Try it" request (channel #52)'), 'the Try request type has its own section');
+  assert.deepEqual([...new Set([...tryArgs[0].matchAll(/\b([A-Za-z]+)\??:\s/g)].map((m) => m[1]))].sort(), ['command', 'intentId', 'op', 'projectId', 'versionId', 'what']);
+  const requests = ipc.slice(ipc.indexOf('// ---------- requests')).replace(tryArgs[0], '');
   const typeKeys = [...requests.matchAll(/\b([A-Za-z]+)\??:\s/g)].map((m) => m[1]);
   for (const k of typeKeys) assert.ok(k === 'relPath' || !banned.test(k), k);
   assert.equal((requests.match(/\brelPath\??:/g) || []).length, 1);
@@ -203,7 +211,7 @@ test('the agent request schemas (#42-#51) name no folder, command, image, networ
   assert.match(block, /hostedChoiceProblem\(seen\.setup\?\.providers, q\.provider \?\? null, q\.model \?\? null\)/);
   // The request types the preload sends (B2b part): the same ban.
   const ipc = read('src/shared/nexus/ipc.ts');
-  const b2b = ipc.slice(ipc.indexOf('// ---------- B2b requests'));
+  const b2b = ipc.slice(ipc.indexOf('// ---------- B2b requests')).replace(/export type TryArgs =[\s\S]*?intentId: string \};/, '');
   assert.ok(b2b.length > 300);
   // Everything but #51's own args type, which alone carries `runtime` and `model` (deliberate; see above) and is pinned to exactly those keys.
   const consentArgs = b2b.match(/export type AgentConsentArgs =[\s\S]*?\{ op: 'model'; model: string; provider\?: string \};/);

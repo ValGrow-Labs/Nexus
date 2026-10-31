@@ -9,7 +9,7 @@ import type {
   DeploymentView, DomainSpecView, EventsPageView, EventsQuery, HealthQuery, HealthView, ImageProfileArg, InlineSaveView, JobDetailView, JobLogsQuery,
   JobsListFilter, JobStartArgs, JobStartView, JobView, LogPageView, NexusHint, PreviewQuery, PreviewView, SaveInlineArgs, ValidationResultView,
   AcceptResultView, AgentConsentArgs, AgentConsentView, AgentStartArgs, AgentStartResultView, MergeView, RepoMergeArgs, RepoStatusView, ReviewDecideArgs,
-  ReviewResultView, SessionDetailView, SessionsListFilter, SessionView
+  ReviewResultView, SessionDetailView, SessionsListFilter, SessionView, TryArgs, TryResultView
 } from '../shared/nexus/ipc';
 
 export type { HireManifest } from '../shared/hire';
@@ -1742,6 +1742,9 @@ const api = {
     ipcRenderer.invoke('nexus:repo:mergeAccepted', projectId, args),
   nexusAgentConsent: (args: AgentConsentArgs): Promise<NexusResult<AgentConsentView>> =>
     ipcRenderer.invoke('nexus:agent:consent', args),
+  /** #52 "Try it": the buttons of a suggested change, or one run of it in the safe space (a button, or the person's own typed command). */
+  nexusTry: (args: TryArgs): Promise<NexusResult<TryResultView>> =>
+    ipcRenderer.invoke('nexus:try', args),
   /** The hint push: the newest event seq only (pull nexusEventsSince for what changed). Returns an unsubscribe. */
   onNexusHint: (cb: (hint: NexusHint) => void): (() => void) => {
     const listener = (_e: IpcRendererEvent, hint: NexusHint) => {

@@ -219,6 +219,16 @@ function playTool(w, c, driver) {
     } else if (cmd === 'python' && st[2] === 'build') {
       const dest = st[st.indexOf('--outdir') + 1];
       write(path.join(toOut(dest), 'pytest_app-0.1.0-py3-none-any.whl'), Buffer.from('PK\u0003\u0004 pytest_app 0.1.0 (a recorded stand-in for the wheel)'));
+    } else if (cmd === 'echo') {
+      // "Try it" (sde.try.run): the person's own command. The fake world plays a few harmless programs by name; it never runs anything the change holds.
+      driver.emit(c.id, 'stdout', `${st.slice(1).join(' ')}\n`);
+    } else if (cmd === 'fail-run') {
+      driver.emit(c.id, 'stdout', 'before the error\n'); driver.emit(c.id, 'stderr', 'something went wrong\n');
+      code = 3;
+    } else if (cmd === 'hold-run') {
+      // A program that does not end by itself (Stop and the wall clock end it).
+      driver.emit(c.id, 'stdout', 'waiting\n');
+      return null;
     } else {
       driver.emit(c.id, 'stderr', `${cmd}: not found\n`);
       code = 127;
@@ -322,6 +332,8 @@ async function flowWorld(o = {}) {
   const nx = createNexusPlatform(db, { now: () => clock.now, log: (l) => logs.push(l), execution: true, agents: true, dataHome, profiles: images.profiles,
     imageContexts: images.imageContexts, acceptFsRoot, isRepository: repositoryCheck, resolveCommit, appVersion: '0.0.0-test',
     skillsResourcesDir: path.join(ROOT, 'resources'), runtimeHealthTtlMs: 365 * 24 * 3600_000, bootId: o.bootId,
+    // "Try it": main's git read of one file or folder of a commit (src/main/git.ts getFileAtRev), for the buttons a change gets.
+    readAtRev: async (root, rev, rel) => { try { return { exists: true, content: execFileSync('git', ['show', `${rev}:${rel}`], { cwd: root, encoding: 'utf8', windowsHide: true, stdio: ['ignore', 'pipe', 'ignore'] }) }; } catch { return { exists: false, content: '' }; } },
     // The user's existing local-server setting (main's reader: localModelSettings.ts): the address of the model server a turn is sent to.
     ...(lm || al ? { localModelConfig: () => ({ providerBaseUrls: { opencode: lmCfg.baseUrl } }) } : {}), ...(hm ? { hostedKeys } : {}) });
   const startup = nx.startup();

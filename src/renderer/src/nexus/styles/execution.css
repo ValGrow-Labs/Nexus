@@ -335,3 +335,21 @@
 .nx-build__who { font: 600 12px var(--nx-font); color: var(--nx-text-3); }
 .nx-build__acts { display: flex; gap: var(--nx-s3); align-items: center; flex-wrap: wrap; }
 .nx-build__big { min-height: 48px; padding: 0 var(--nx-s6); font-size: 16px; }
+
+/* Try it: the buttons, the person's own command, and the real output of a run in the safe space. */
+.nx-try { display: grid; gap: var(--nx-s2); }
+.nx-try__buttons { display: flex; flex-wrap: wrap; gap: var(--nx-s3) var(--nx-s4); align-items: center; }
+.nx-try__opt { display: inline-flex; flex-direction: column; gap: 2px; align-items: flex-start; }
+.nx-try__shows { font: 12px var(--nx-font-code); color: var(--nx-text-3); }
+.nx-try__own > summary { cursor: pointer; font: 600 12.5px var(--nx-font); color: var(--nx-text-2); }
+.nx-try__own form { display: flex; gap: var(--nx-s2); margin-top: var(--nx-s2); flex-wrap: wrap; }
+.nx-try__cmd { flex: 1 1 320px; min-width: 0; font: 13px var(--nx-font-code); padding: var(--nx-s2) var(--nx-s3); border: 1px solid var(--nx-border); border-radius: var(--nx-r-obj); background: var(--nx-surface); color: var(--nx-ink); }
+.nx-try__result { display: grid; gap: var(--nx-s2); margin-top: var(--nx-s2); }
+.nx-try__status { margin: 0; display: flex; align-items: center; gap: var(--nx-s2); font-weight: 600; flex-wrap: wrap; }
+.nx-try__dot { width: 10px; height: 10px; border-radius: 50%; background: var(--nx-border-strong); flex: none; }
+.nx-try__status[data-state="running"] .nx-try__dot, .nx-try__status[data-state="starting"] .nx-try__dot { background: var(--nx-ink); animation: nx-build-pulse 1.4s ease-in-out infinite; }
+.nx-try__status[data-state="done"] .nx-try__dot { background: var(--nx-ink); }
+@media (prefers-reduced-motion: reduce) { .nx-try__dot { animation: none !important; } }
+.nx-try__out { margin: 0; padding: var(--nx-s3); max-height: 320px; overflow: auto; border: 1px solid var(--nx-border); border-radius: var(--nx-r-obj); background: var(--nx-sunken); font: 12.5px/1.5 var(--nx-font-code); white-space: pre-wrap; overflow-wrap: anywhere; }
+.nx-try__line[data-stream="stderr"] { color: var(--nx-ink); font-weight: 600; }
+.nx-try__cut { color: var(--nx-text-3); }

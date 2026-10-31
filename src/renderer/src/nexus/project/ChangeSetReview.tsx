@@ -10,6 +10,7 @@ import { useExecStore, useRead, withIntent } from '../data/useExecution';
 import { Button } from '../ui/Button';
 import { EvidenceSection } from './EvidenceSection';
 import { useExecutionUi } from './execContext';
+import { TryIt } from './TryIt';
 import { useNexusUi } from '../state/uiStore';
 import {
   BUTTON_LABEL, DIFF_REDACTED_NOTE, acceptedText, changeCounts, changeSetModel, proofLines, railLine, changeSetRows, classifyDiff, diffHasRedaction, diffSummary, headLine, headTitle, mergeModel, mergedOnBranch, mergedText, mergedTitle, reviewOf,
@@ -226,6 +227,7 @@ export function ChangeSetReview({ versionId, projectId, status, name, withEviden
           </ul>
         </div>
       )}
+      <div className="nx-cs__block"><TryIt projectId={projectId} versionId={versionId} /></div>
       <div className="nx-cs__block">
         <h3 className="nx-cs__sub">What changed</h3>
         <Button variant="quiet" ariaExpanded={diffOpen} onClick={() => setShowDiff(!diffOpen)}>{diffOpen ? 'Hide what changed' : 'Show what changed'}</Button>

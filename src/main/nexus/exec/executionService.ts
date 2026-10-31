@@ -102,6 +102,7 @@ import { profileFromFacts } from './sandboxProfile';
 import type { RuntimeEvent } from '../../../shared/nexus/runtime';
 import type { Job, JobKind, JobState, Principal, ScopeRef } from '../../../shared/nexus/platform';
 import { getUserAction, USER_ACTIONS, type UserActionDef } from '../../../shared/nexus/actions';
+import { TRY_LOOK_FOR, plainMain, tokenizeCommand, tryOptions as detectTryOptions, type TryFacts, type TryOption, type TryWhat } from '../../../shared/nexus/tryRun';
 import type { ParamsSchema } from '../../../shared/nexus/domainSpec';
 import { getRecipe, PREVIEW_IDLE_TTL_MS, RETRY_BACKOFF_MS, type RecipeDef } from '../../../shared/nexus/recipes';
 import { APPROVAL_TTL_MS, EXPIRY_SWEEP_MS, latestSucceededBuild, withdrawPendingApprovalsTx } from '../approvals/approvalService';
@@ -131,7 +132,7 @@ import { enqueueAcceptRollbackTx, preparedOf, rollbackNeeded } from '../repo/acc
 /** The git jobs a user (or anyone) cannot cancel through `cancel`, nor any cascade: they move a Nexus ref or the user's branch and end only through ingest (B5). */
 export const NOT_CANCELLABLE_RECIPES: readonly string[] = Object.freeze(['changeset.accept', 'changeset.accept_rollback', 'repo.ff', 'repo.worktree']);
 import {
-  AGENT_TURN_MEMORY_MB, boundedRecord, buildPlan, depsVolumeName, imageRef, lockfileSha256Of, RECORD_MAX_CHARS, sandboxRecord, underDataHome,
+  AGENT_TURN_MEMORY_MB, boundedRecord, buildPlan, depsVolumeName, imageRef, lockfileSha256Of, RECORD_MAX_CHARS, sandboxRecord, tryRunArgv, underDataHome,
   type DiagnoseContext, type PlanApproval, type PlanInput, type ServiceContext
 } from './planBuilder';
 import { stat } from 'node:fs/promises';
@@ -253,8 +254,11 @@ export type IngestDecision =
    */
   | { ok: true; outcome?: string; durableRecord?: true }
   | { ok: false; outcome: string; error: { code: string; message: string } };
-/** The git recipes whose result is a record, not a version: a worktree row, a rollback, a merge row (B2b). */
-export const RECORD_ONLY_RECIPES: readonly string[] = Object.freeze(['repo.worktree', 'changeset.accept_rollback', 'repo.ff']);
+/**
+ * The recipes whose result is a record, not a version: the git recipes (a worktree row, a rollback, a merge row: B2b) and a try run ("Try it":
+ * its result is the attempt's own durable record, the exit status, the stored log and the activity events; it makes no version and no check).
+ */
+export const RECORD_ONLY_RECIPES: readonly string[] = Object.freeze(['repo.worktree', 'changeset.accept_rollback', 'repo.ff', 'sde.try.run']);
 /**
  * Ingest (Task 8). After the exit is durable (phase `collecting` and an `attempt.output` event, in their own
  * transaction), `prepare` may gather facts main observes itself (async, outside any transaction), then `ingestTx`
@@ -383,6 +387,8 @@ export interface ExecutionDeps {
    * the runner sent back `waiting:git` is leased again only once this finds one (final batch item 3).
    */
   findGit?: (() => Promise<string | null>) | null;
+  /** One file or folder of a commit in the project folder (main's git read); what "Try it" detects its buttons from. */
+  readAtRev?: ((root: string, rev: string, rel: string) => Promise<{ exists: boolean; content: string } | null>) | null;
   /**
    * B2b (Task 5): the MCP gateway; null drops `mcp.call` and `agent.exec.done` with one log line each (no agent
    * services in this build). Platform.ts builds this AFTER the execution core (ExecQueries needs `exec`), so it is
@@ -463,6 +469,8 @@ const withoutKey = (r: Record<string, unknown>, max: number): Record<string, unk
   for (const k of ['executor', 'name', 'profile', 'image', 'argvCount', 'argvSha256', 'network', 'limits', 'containerId', 'preflight']) if (k in b) keep[k] = b[k];
   return keep;
 };
+/** The id of the try-run action and of its recipe (they are the same string). */
+const TRY_ACTION_ID = 'sde.try.run';
 const invalid = (reason: string, message: string): never => { throw new PlatformError('invalid', message, { reason }); };
 
 /**
@@ -2512,6 +2520,8 @@ export class ExecutionService {
     const action = typeof r.actionId === 'string' ? getUserAction(r.actionId) : null;
     if (!action || !('recipes' in action.run)) return invalid('unknown_action', 'unknown action');
     if (action.domain !== r.workspaceId) return invalid('action_not_in_domain', 'the action belongs to another domain');
+    // A try run carries a command: it starts only through `startTry`, which builds and checks it. Never through the generic job start.
+    if (action.id === TRY_ACTION_ID) return invalid('unknown_action', 'a try run is started through its own request');
     if (this.needsRepositoryCheck(action) && checked !== REPOSITORY_CHECKED) {
       return invalid('repository_check_required', 'a repository snapshot is requested through the snapshot request, which checks the folder first');
     }
@@ -2541,6 +2551,105 @@ export class ExecutionService {
     const inputs = this.validateInputShape(action, r.inputVersionIds.map((versionId) => ({ versionId, slot: action.inputs[0].slot })));
     return this.createExecJob(p, { action, projectId: pw.project_id, workspaceId: pw.workspace_id, key, params: {}, inputs, retryOf: null,
       onlyRecipe: r.recipeId, parentJobId: r.parentJobId, sessionId: r.sessionId });
+  }
+
+  /**
+   * "Try it": runs a suggested change (a change set version) in the safe space, because the person pressed a button. The command is an
+   * argument array (the caller built it from what main detected in the change, or tokenized what the person typed: src/shared/nexus/tryRun.ts);
+   * it is checked again here and at the lease (planBuilder.tryRunArgv), and it is written into the job's own params, where the lease reads it.
+   * It is the same job machinery as a test run (the same sandbox, no network, the same limits and wall clock, the same log reader and
+   * activity record). One try run at a time per project; the pressed button is the person's OK (no approval is needed: nothing leaves the
+   * computer). The agent's `job_request` can never ask for it: the recipe is in no agent capability scope.
+   */
+  startTry(p: Principal, r: { projectId: string; versionId: string; argv: readonly string[]; intentId: string }): { job: ExecJob; created: boolean } {
+    this.requireAvailable();
+    if (!isPlainObject(r) || !isStr(r.projectId) || !isStr(r.versionId) || !Array.isArray(r.argv)) throw new PlatformError('invalid', 'projectId, versionId and argv are required');
+    const pw = requireActiveParticipation(this.access, this.db, p, r.projectId, 'sde', 'job.create');
+    const key = validateKey(r.intentId);
+    const action = getUserAction(TRY_ACTION_ID);
+    if (!action) return invalid('unknown_action', 'unknown action');
+    let argv: string[];
+    try { argv = tryRunArgv({ argv: [...r.argv] }); } catch (e) {
+      if (e instanceof PlatformError && e.detail?.reason === 'secret_in_argv') return invalid('try_secret', 'the command looks like it holds a secret');
+      return invalid('try_command', 'the command is not one a try run can take');
+    }
+    const prior = this.db.prepare('SELECT id FROM jobs WHERE idempotency_key = ?').get(key) as { id: string } | undefined;
+    if (!prior) {
+      const live = this.db.prepare(`SELECT 1 FROM jobs WHERE project_id = ? AND recipe_id = ? AND state IN (${LIVE_JOB_STATES.map(() => '?').join(', ')}) LIMIT 1`)
+        .get(pw.project_id, TRY_ACTION_ID, ...LIVE_JOB_STATES);
+      if (live) throw new PlatformError('conflict', 'a try run of this project is already waiting or running', { reason: 'try_busy' });
+    }
+    return this.createExecJob(p, { action, projectId: pw.project_id, workspaceId: pw.workspace_id, key, params: { argv }, inputs: [{ versionId: r.versionId, slot: 'change' }],
+      retryOf: null, onlyRecipe: TRY_ACTION_ID });
+  }
+
+  /** The commit of a suggested change (a change set version of this project the caller may read), or a refusal. */
+  private changeCommit(p: Principal, projectId: string, versionId: string): string {
+    try { this.access.requireVersionReadable(p, versionId, projectId); } catch (e) {
+      if (e instanceof PlatformError && e.code === 'invalid') throw new PlatformError('invalid', 'the input is not allowed', { reason: 'input_not_allowed' });
+      throw e;
+    }
+    const v = this.db.prepare(`SELECT v.status, v.storage_ref_json, a.kind FROM artifact_versions v JOIN artifacts a ON a.id = v.artifact_id WHERE v.id = ?`)
+      .get(versionId) as { status: string; storage_ref_json: string; kind: string } | undefined;
+    const st = v ? (parseJson(v.storage_ref_json) as { kind?: unknown; commit?: unknown } | null) : null;
+    if (!v || v.kind !== 'change_set' || !st || st.kind !== 'git' || typeof st.commit !== 'string' || !/^[0-9a-f]{40}$/.test(st.commit)) {
+      throw new PlatformError('invalid', 'the input is not allowed', { reason: 'input_not_allowed' });
+    }
+    return st.commit;
+  }
+
+  /**
+   * "Try it": the buttons a suggested change gets, read by main from the change's own commit (never from the renderer): package.json's scripts
+   * and main file, a main.py, a tests folder. Nothing is run. Without main's git read there are no buttons (the person's own command still works).
+   */
+  async tryOptions(p: Principal, r: { projectId: string; versionId: string }): Promise<{ what: 'tests' | 'program'; label: string; shows: string }[]> {
+    this.requireAvailable();
+    if (!isPlainObject(r) || !isStr(r.projectId) || !isStr(r.versionId)) throw new PlatformError('invalid', 'projectId and versionId are required');
+    const pw = requireActiveParticipation(this.access, this.db, p, r.projectId, 'sde', 'job.create');
+    const commit = this.changeCommit(p, pw.project_id, r.versionId);
+    return (await this.tryFacts(pw.project_id, commit)).map(({ what, label, shows }) => ({ what, label, shows }));
+  }
+
+  private async tryFacts(projectId: string, commit: string): Promise<TryOption[]> {
+    const read = this.deps.readAtRev;
+    const root = this.repoPathOf(projectId);
+    if (!read || !root) return [];
+    const has: string[] = [];
+    let packageJson: TryFacts['packageJson'] = null;
+    const look = async (rel: string): Promise<{ exists: boolean; content: string } | null> => { try { return await read(root, commit, rel); } catch { return null; } };
+    for (const rel of TRY_LOOK_FOR) {
+      const f = await look(rel);
+      if (f && f.exists) has.push(rel);
+      if (rel === 'package.json' && f && f.exists) {
+        const j = parseJson(f.content);
+        packageJson = isPlainObject(j) ? j : null;
+        const main = plainMain(packageJson);
+        if (main !== null && !TRY_LOOK_FOR.includes(main) && (await look(main))?.exists) has.push(main);
+      }
+    }
+    return detectTryOptions({ packageJson, has });
+  }
+
+  /**
+   * "Try it" (the try request, op run): the person pressed "Run the tests", "Run the program" or typed their own command. For the two buttons main
+   * works out the command from the change itself; for their own it tokenizes the text (quotes, no shell). Then the one try-run job (startTry).
+   */
+  async tryStart(p: Principal, r: { projectId: string; versionId: string; what: TryWhat; command?: string; intentId: string }): Promise<{ job: ExecJob; created: boolean }> {
+    this.requireAvailable();
+    if (!isPlainObject(r) || !isStr(r.projectId) || !isStr(r.versionId)) throw new PlatformError('invalid', 'projectId and versionId are required');
+    const pw = requireActiveParticipation(this.access, this.db, p, r.projectId, 'sde', 'job.create');
+    const commit = this.changeCommit(p, pw.project_id, r.versionId);
+    let argv: readonly string[];
+    if (r.what === 'custom') {
+      const t = tokenizeCommand(r.command);
+      if (!t.ok) return invalid('try_command', 'the command could not be read');
+      argv = t.argv;
+    } else {
+      const opt = (await this.tryFacts(pw.project_id, commit)).find((o) => o.what === r.what);
+      if (!opt) return invalid('try_nothing', 'this change has nothing to run that way');
+      argv = opt.argv;
+    }
+    return this.startTry(p, { projectId: pw.project_id, versionId: r.versionId, argv, intentId: r.intentId });
   }
 
   retry(p: Principal, jobId: string, intentId: string): { job: ExecJob } {

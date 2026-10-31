@@ -106,24 +106,26 @@ const preview = (w, versionId, extra = {}) => w.x.call('nexus:version:preview', 
 
 test('IA1 the ten agent channels are frozen, distinct, registered once each through the one wrapper, and exposed by the preload exactly once', () => {
   assert.equal(NEXUS_AGENT_CHANNELS.length, 10); assert.equal(new Set(NEXUS_AGENT_CHANNELS).size, 10); assert.ok(Object.isFrozen(NEXUS_AGENT_CHANNELS));
-  assert.deepEqual([...NEXUS_EVERY_CHANNEL], [...NEXUS_ALL_CHANNELS, ...NEXUS_AGENT_CHANNELS]);
-  assert.equal(NEXUS_EVERY_CHANNEL.length, 51);
+  // "Try it" (#52, nexus:try) joined the family after the agent channels: it needs execution, not the agents part.
+  assert.deepEqual([...NEXUS_EVERY_CHANNEL], [...NEXUS_ALL_CHANNELS, ...NEXUS_AGENT_CHANNELS, 'nexus:try']);
+  assert.equal(NEXUS_EVERY_CHANNEL.length, 52);
   for (const c of NEXUS_AGENT_CHANNELS) assert.ok(!NEXUS_ALL_CHANNELS.includes(c), c);
   const got = [];
   const deps = (more) => ({ platform: () => null, unavailableReason: () => 'held', sources: {}, log: () => {}, executionUnavailableReason: () => null, ...more });
   registerNexusIpc({ handle: (c) => got.push(c) }, deps({ agentsUnavailableReason: () => null }));
   assert.deepEqual([...got].sort(), [...NEXUS_EVERY_CHANNEL].sort());
-  assert.equal(new Set(got).size, 51, 'each channel once');
-  // Without the agent deps only the 41 B1 and B2a channels exist (the B2a callers are unchanged).
+  assert.equal(new Set(got).size, 52, 'each channel once');
+  // Without the agent deps only the 41 B1 and B2a channels and #52 (Try it, which needs execution only) exist (the B2a callers are unchanged).
   const base = []; registerNexusIpc({ handle: (c) => base.push(c) }, deps({}));
-  assert.deepEqual([...base].sort(), [...NEXUS_ALL_CHANNELS].sort());
+  assert.deepEqual([...base].sort(), [...NEXUS_ALL_CHANNELS, 'nexus:try'].sort());
   // The preload: one literal and one invoke per channel, ten methods.
   const preload = read('src/preload/index.ts');
   for (const c of NEXUS_AGENT_CHANNELS) assert.equal((preload.match(new RegExp(`ipcRenderer\\.invoke\\('${c}'`, 'g')) || []).length, 1, c);
   const methods = (preload.match(/^\s{2}(nexus[A-Z][A-Za-z]*):/gm) || []).map((x) => x.trim().slice(0, -1));
   for (const m of ['nexusAgentStart', 'nexusSessionsList', 'nexusSessionGet', 'nexusSessionEnd', 'nexusSessionCancel', 'nexusReviewDecide', 'nexusChangeSetAccept',
     'nexusRepoStatus', 'nexusRepoMergeAccepted', 'nexusAgentConsent']) assert.ok(methods.includes(m), m);
-  assert.equal(methods.length, 51, 'B1 21 + B2a 20 + 10 agent methods');
+  assert.ok(methods.includes('nexusTry') && (preload.match(/ipcRenderer\.invoke\('nexus:try'/g) || []).length === 1, 'the Try it method, once');
+  assert.equal(methods.length, 52, 'B1 21 + B2a 20 + 10 agent methods + Try it');
 });
 
 

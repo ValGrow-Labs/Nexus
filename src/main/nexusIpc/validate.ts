@@ -20,6 +20,7 @@
  * identity) is a bad request, and any other breach of the schema (an unknown parameter, a value with a separator,
  * `..`, a drive, a stream name or a trailing dot) is `bad_params`.
  */
+import { TRY_COMMAND_MAX_CHARS } from '../../shared/nexus/tryRun';
 import { USER_ACTIONS } from '../../shared/nexus/actions';
 import type { ParamField } from '../../shared/nexus/domainSpec';
 import { JOB_STATES } from '../nexus/jobs/jobRules';
@@ -228,6 +229,12 @@ export const V = {
   },
 
   // ---------- B2a Task 13: the execution request shapes ----------
+
+  /** The text of "Try your own command": a string of at most TRY_COMMAND_MAX_CHARS (main cuts it into an argument array and checks it again). */
+  tryCommand(x: unknown, f = 'command'): string {
+    if (typeof x !== 'string' || x.length === 0 || x.length > TRY_COMMAND_MAX_CHARS) throw new RequestError(f, `must be text of 1 to ${TRY_COMMAND_MAX_CHARS} characters`);
+    return x;
+  },
 
   /** A user intent: a ULID the renderer minted once (re-sent on reload, never a second job). */
   intentId(x: unknown, f = 'intentId'): string { return pattern(x, f, PLATFORM_ID, 26); },

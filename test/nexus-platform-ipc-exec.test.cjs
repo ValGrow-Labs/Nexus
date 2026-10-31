@@ -62,7 +62,9 @@ function validArgs(w, ids = {}) {
     'nexus:version:preview': [w.repoV, { part: 'content', maxBytes: 4096 }],
     'nexus:artifact:saveInline': [{ projectId: 'p-ledger', workspaceId: 'sde', kind: 'requirement', target: { name: 'R' }, content: REQ }],
     'nexus:deployments:list': [{}], 'nexus:deployment:stop': [UNKNOWN], 'nexus:approvals:list': [{}],
-    'nexus:approval:respond': [UNKNOWN, 'once'], 'nexus:setup:prepareImage': ['sde-node', intent()], 'nexus:blobs:gc': [{ apply: false }]
+    'nexus:approval:respond': [UNKNOWN, 'once'], 'nexus:setup:prepareImage': ['sde-node', intent()], 'nexus:blobs:gc': [{ apply: false }],
+    // "Try it" (#52): gated with the execution channels.
+    'nexus:try': [{ op: 'options', projectId: 'p-ledger', versionId: w.repoV }]
   };
 }
 
@@ -75,17 +77,18 @@ test('I-E1 the twenty execution channels are frozen, distinct, and registered th
   const reg = (deps) => { const got = []; registerNexusIpc({ handle: (c) => got.push(c) }, { platform: () => null, unavailableReason: () => 'held',
     sources: {}, log: () => {}, ...deps }); return got; };
   assert.deepEqual(reg({}).sort(), [...NEXUS_CHANNELS].sort());
-  assert.deepEqual(reg({ executionUnavailableReason: () => null }).sort(), [...NEXUS_ALL_CHANNELS].sort());
-  assert.deepEqual(reg({ exec: () => null }).sort(), [...NEXUS_ALL_CHANNELS].sort());
+  // "Try it" (#52) is registered with the execution deps too (it needs execution only, not the agents part).
+  assert.deepEqual(reg({ executionUnavailableReason: () => null }).sort(), [...NEXUS_ALL_CHANNELS, 'nexus:try'].sort());
+  assert.deepEqual(reg({ exec: () => null }).sort(), [...NEXUS_ALL_CHANNELS, 'nexus:try'].sort());
   assert.equal(NEXUS_HINT_CHANNEL, 'nexus:hint');
 });
 
 test('I-E2 with no platform every one of the 41 channels answers platform_unavailable with the store\'s reason', async () => {
   const w = { nx: null, dataHome: null, repoV: UNKNOWN };
   const x = ipcOver(w, { platform: () => null });
-  assert.equal(x.handlers.size, 41);
+  assert.equal(x.handlers.size, 42, '41 B1 and B2a channels and Try it');
   const args = validArgs(w);
-  for (const ch of NEXUS_ALL_CHANNELS) {
+  for (const ch of [...NEXUS_ALL_CHANNELS, 'nexus:try']) {
     const r = await x.call(ch, ...args[ch]);
     assert.deepEqual([r.ok, r.code, r.reason], [false, 'platform_unavailable', 'held'], ch);
   }

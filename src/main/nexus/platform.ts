@@ -192,6 +192,11 @@ export interface NexusPlatformOptions {
   appVersion?: string | null;
   /** Main's own look for git (default: resolveGitBinary over the file system); a job waiting for git leases once it answers. */
   findGit?: (() => Promise<string | null>) | null;
+  /**
+   * main's read of one file (or folder) of a commit in the project folder (src/main/git.ts getFileAtRev): what "Try it" looks at to offer its
+   * buttons (package.json, a main file, a tests folder). Null: no buttons are offered, but the person's own command still runs.
+   */
+  readAtRev?: ((root: string, rev: string, rel: string) => Promise<{ exists: boolean; content: string } | null>) | null;
   /** This process's boot id (a ULID); default: a new one. */
   bootId?: string;
   /** Tests only: the registry check's problems (default: registryImpl's startup check). */
@@ -295,7 +300,7 @@ export function createNexusPlatform(db: Database.Database, opts?: NexusPlatformO
     approvals: opts?.approvals !== undefined ? opts.approvals : approvals, images: approvals, deployments,
     // With main's repository check wired in, a snapshot starts only through RepoService (which runs it first).
     snapshotsNeedRepositoryCheck: !!opts?.isRepository,
-    ingest, validation, appVersion: opts?.appVersion ?? null, findGit: opts?.findGit ?? null
+    ingest, validation, appVersion: opts?.appVersion ?? null, findGit: opts?.findGit ?? null, readAtRev: opts?.readAtRev ?? null
   });
   validation?.setSender((msg) => exec.sendToRunner(msg));
   // B2b Task 14: the agent flow actions of #24 answer by whether the agent services are composed (decided below).

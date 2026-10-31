@@ -60,6 +60,7 @@ import { loopbackEndpoint } from '../../../shared/nexus/localModel';
 import { HOSTED_MODEL_KIND } from '../../../shared/nexus/hostedModel';
 import { isRuntimeApiKey } from '../../../shared/nexus/runnerProtocol';
 import { homeLabel } from '../../../shared/nexus/homeLabel';
+import { checkTryArgv } from '../../../shared/nexus/tryRun';
 import { containsSecret } from '../activity/redact';
 import {
   EGRESS_ENV_NAMES, EGRESS_PROXY_ARGV, EGRESS_PROXY_LIMITS, EGRESS_PROXY_PROFILE, egressAllowFor, egressClientEnv, egressInternalNetwork,
@@ -118,6 +119,9 @@ export const ARGV_TEMPLATES: Readonly<Record<string, readonly string[]>> = Objec
   'pytest.junit': ['python', '-m', 'pytest', '-q', '--junitxml=/out/junit.xml', '-p', 'no:cacheprovider'],
   'npm.run-build': ['npm', 'run', 'build'],
   'entry.collect-output': ['nexus-collect', '--from', 'dist', '--to', '/out/dist'],
+  // A try run (sde.try.run): the person's button or command, as an argument array main built and checked (`expandArgv` appends it; the
+  // template itself holds nothing). It runs as given: no shell, in /workspace, with no network.
+  'try.run': [],
   'python.build-wheel': ['python', '-m', 'build', '--wheel', '--no-isolation', '--outdir', '/out/dist'],
   // A dev deployment: the app runs the manifest's validated argv (appended by main); the forwarder's target is appended.
   'app.manifest-run': [],
@@ -278,7 +282,20 @@ function discoveredFiles(inputs: readonly PlanInput[]): string[] {
   return [];
 }
 
-export function expandArgv(recipe: RecipeDef, framework: TestFramework | null, inputs: readonly PlanInput[]): string[] {
+/**
+ * The argument array a try run executes: the job's own params (`{ argv }`, written by main when the person pressed the button, after
+ * main built or tokenized and checked it), checked again here: 1 to 32 plain arguments, none secret-shaped, none the entry's step token,
+ * the first not a Nexus helper. Never a shell string.
+ */
+export function tryRunArgv(params: unknown): string[] {
+  const raw = isPlainObject(params) ? params.argv : undefined;
+  const argv = checkRunArgv(raw);
+  const t = checkTryArgv(argv);
+  if (!t.ok) return refuse('bad_input', 'the try run command is not allowed');
+  return t.argv;
+}
+
+export function expandArgv(recipe: RecipeDef, framework: TestFramework | null, inputs: readonly PlanInput[], params?: unknown): string[] {
   const ids = framework === null ? recipe.argvTemplates : recipe.argvTemplates.filter((t) => t.startsWith(`${framework}.`));
   const out: string[] = [];
   for (const id of ids) {
@@ -287,6 +304,7 @@ export function expandArgv(recipe: RecipeDef, framework: TestFramework | null, i
     if (out.length > 0) out.push(STEP_SEPARATOR);
     out.push(...base);
     if (id === 'node-test.junit') out.push(...discoveredFiles(inputs));
+    if (id === 'try.run') out.push(...tryRunArgv(params));
   }
   return out;
 }
@@ -395,7 +413,7 @@ export function buildPlan(ctx: PlanContext): AttemptPlan {
     profile: profile.id,
     image: { ref: imageRef(profile, ctx.imageId), id: ctx.imageId },
     entrypoint: [...profile.entrypoint],
-    argv: expandArgv(recipe, framework, ctx.inputs),
+    argv: expandArgv(recipe, framework, ctx.inputs, ctx.params),
     imageEnv: [...profile.imageEnv],
     env: checkEnv({ ...envFor(recipe, profile.id, framework), NEXUS_WALL_SECONDS: wallSeconds(recipe.wallClockMs),
       ...(network.mode === 'egress-approved' ? egressClientEnv(profile.id) : {}) }),

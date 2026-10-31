@@ -43,6 +43,7 @@ import { requireStoredUser } from '../nexus/auth/principals';
 import { HANDOFF_STATUSES, MAX_SUBJECTS } from '../nexus/handoff/handoffRules';
 import { MAX_LINK_SOURCES } from '../nexus/lineage/lineageService';
 import { getUserAction } from '../../shared/nexus/actions';
+import { TRY_WHATS } from '../../shared/nexus/tryRun';
 import { DOMAINS } from '../../shared/nexus/domains/index';
 import { LOCAL_MODEL_KIND, modelProblem } from '../../shared/nexus/localModel';
 import { HOSTED_MODEL_KIND, hostedChoiceProblem } from '../../shared/nexus/hostedModel';
@@ -129,8 +130,10 @@ export const NEXUS_AGENT_CHANNELS: readonly string[] = Object.freeze([
   'nexus:repo:mergeAccepted',
   'nexus:agent:consent'
 ]);
-/** Every nexus:* channel main can register (51). */
-export const NEXUS_EVERY_CHANNEL: readonly string[] = Object.freeze([...NEXUS_ALL_CHANNELS, ...NEXUS_AGENT_CHANNELS]);
+/** "Try it" (#52): run a suggested change in the safe space on a button press. Needs execution (schema v9), not the agents part. */
+export const NEXUS_TRY_CHANNELS: readonly string[] = Object.freeze(['nexus:try']);
+/** Every nexus:* channel main can register (52). */
+export const NEXUS_EVERY_CHANNEL: readonly string[] = Object.freeze([...NEXUS_ALL_CHANNELS, ...NEXUS_AGENT_CHANNELS, ...NEXUS_TRY_CHANNELS]);
 const AGENT_CHANNELS: ReadonlySet<string> = new Set(NEXUS_AGENT_CHANNELS);
 /** How long #42 and a #51 grant wait for a fresh runtime probe when the cached health is stale. */
 export const RUNTIME_REFRESH_WAIT_MS = 10_000;
@@ -138,7 +141,7 @@ export const RUNTIME_REFRESH_WAIT_MS = 10_000;
 export const NEXUS_HINT_CHANNEL = 'nexus:hint';
 
 /** #24-#41: they need schema v9 execution (#22 and #23 answer whenever the platform is up). */
-const EXECUTION_CHANNELS: ReadonlySet<string> = new Set(NEXUS_EXEC_CHANNELS.filter((c) => c !== 'nexus:domains:list' && c !== 'nexus:platform:health'));
+const EXECUTION_CHANNELS: ReadonlySet<string> = new Set([...NEXUS_EXEC_CHANNELS.filter((c) => c !== 'nexus:domains:list' && c !== 'nexus:platform:health'), ...NEXUS_TRY_CHANNELS]);
 
 /** List limits as the renderer may ask for them; a larger integer is clamped to the channel's maximum. */
 export const ARTIFACTS_LIST_MAX = 500;
@@ -691,6 +694,31 @@ export function registerNexusIpc(registrar: IpcRegistrar, deps: NexusIpcDeps): v
     if (o.apply !== true) throw new RequestError('apply', 'must be true or false');
     return { apply: true as const, expectedCandidatesHash: V.sha256(o.expectedCandidatesHash, 'expectedCandidatesHash') };
   }, async (nx, me, q) => ok(gcView(await portOf().blobsGc(me, q))));
+
+  // #52 "Try it": the buttons a suggested change gets (`options`), and one run of the change in the safe space (`run`), started because the
+  // person pressed a button. Ids and a choice from the renderer; for their own command, typed text only (main tokenizes it into an argument
+  // array and checks it again; nothing runs in a shell). The job is the ordinary recipe job (sde.try.run): same sandbox, no network, same
+  // limits and wall clock, one at a time per project; its output is read through the job log channel.
+  reg('nexus:try', (args) => {
+    V.arity(args, 1);
+    const o = V.object(args[0], ['op', 'projectId', 'versionId', 'what', 'command', 'intentId'] as const, ['what', 'command', 'intentId'] as const);
+    const op = V.enumOf(o.op, 'op', ['options', 'run'] as const);
+    const base = { projectId: V.projectId(o.projectId), versionId: V.platformId(o.versionId, 'versionId') };
+    if (op === 'options') {
+      if (o.what !== undefined) throw new RequestError('what', 'is sent only with run');
+      if (o.command !== undefined) throw new RequestError('command', 'is sent only with run');
+      if (o.intentId !== undefined) throw new RequestError('intentId', 'is sent only with run');
+      return { op, ...base };
+    }
+    const what = V.enumOf(o.what, 'what', TRY_WHATS);
+    if (what === 'custom' && o.command === undefined) throw new RequestError('command', 'is required');
+    if (what !== 'custom' && o.command !== undefined) throw new RequestError('command', 'is sent only with a command of your own');
+    return { op, ...base, what, command: o.command === undefined ? undefined : V.tryCommand(o.command), intentId: V.intentId(o.intentId) };
+  }, async (nx, me, q) => {
+    if (q.op === 'options') return ok({ options: await nx.exec.tryOptions(me, { projectId: q.projectId, versionId: q.versionId }) });
+    const r = await nx.exec.tryStart(me, { projectId: q.projectId, versionId: q.versionId, what: q.what, ...(q.command !== undefined ? { command: q.command } : {}), intentId: q.intentId });
+    return ok({ job: jobView(r.job), created: r.created });
+  });
 
   // ---------- B2b Task 14: the agent channels #42-#51 (registered when main passes the agent deps) ----------
   if (!agentsRegistered) return;

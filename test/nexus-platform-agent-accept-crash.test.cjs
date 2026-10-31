@@ -218,7 +218,7 @@ test('RA16: the six validators and the accept rows are written by main only thro
   assert.match(rev, /requireStoredUser\(this\.deps\.principals, this\.deps\.auth, user, 'review\.decide'/);
 });
 
-test('RA17: the evidence backstop lets a record-only git job complete (worktree row, rollback, merge row) and nothing else', async () => {
+test('RA17: the evidence backstop lets a record-only job complete (worktree row, rollback, merge row, and a try run, whose record is its own attempt) and nothing else', async () => {
   const world = await candidateWorld();
   const { w } = world;
   // A second session's worktree job completes through its own durable record (the session_worktrees row).
@@ -232,6 +232,6 @@ test('RA17: the evidence backstop lets a record-only git job complete (worktree 
   assert.equal(jobRow(w, res.job.id).state, 'completed');
   assert.ok(w.db.prepare('SELECT 1 FROM session_worktrees WHERE session_id = ?').get(turn2.session.id));
   const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'main', 'nexus', 'exec', 'executionService.ts'), 'utf8');
-  assert.match(src, /RECORD_ONLY_RECIPES: readonly string\[\] = Object\.freeze\(\['repo\.worktree', 'changeset\.accept_rollback', 'repo\.ff'\]\)/);
+  assert.match(src, /RECORD_ONLY_RECIPES: readonly string\[\] = Object\.freeze\(\['repo\.worktree', 'changeset\.accept_rollback', 'repo\.ff', 'sde\.try\.run'\]\)/);
   assert.match(src, /d\.durableRecord === true && RECORD_ONLY_RECIPES\.includes\(recipe\.id\)/);
 });

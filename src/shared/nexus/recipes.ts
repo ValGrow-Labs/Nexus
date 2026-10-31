@@ -105,6 +105,14 @@ export const RECIPES: readonly RecipeDef[] = deepFreeze([
     outputContract: { required: ['target', 'containers', 'logs'],
       description: 'Facts: the inspected containers and the hashed log ranges; main adds its own probe table and stores a report whose every field comes from inspect, a probe or a log range.' },
     parsers: ['diagnostic'], produces: ['diagnostic_report'], subPhase: 'B2a' },
+  // A try run (B2b, "Try it"): the person presses a button, a suggested change runs in the safe space and its output is shown. The command is an
+  // argument array main wrote into the job (a detected button, or the person's own command tokenized by main); the lease checks it again. Same
+  // limits and wall clock as a test run, no network, one run at a time per project; the output is capped at 4 MiB and shown redacted.
+  { id: 'sde.try.run', version: '1', executor: 'tool', profiles: NODE_OR_PY,
+    argvTemplates: ['try.run'], params: NO_PARAMS, network: 'none',
+    retry: { idempotent: false, maxAttempts: 1 }, wallClockMs: 15 * MIN, limits: { cpus: 2, memoryMb: 2048, outputMaxBytes: 4 * MIB },
+    outputContract: { required: [], description: 'None: the output is the log of the run, and the exit status says how it ended.' },
+    parsers: [], produces: [], subPhase: 'B2a' },
   // ----- B2b: the git writes of agent changes, each a system child job. Every ref is under refs/nexus/* (D-B13); only
   // repo.ff touches the user's branch, and only after the user confirmed it in a dialog. -----
   { id: 'repo.worktree', version: '1', ...engine,

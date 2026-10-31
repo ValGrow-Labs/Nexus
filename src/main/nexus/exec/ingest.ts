@@ -125,10 +125,12 @@ export const MAX_TREE_FILES = 5000;
 
 /** The ingest rule of each recipe: the one dispatch table of `ingestTx` (B2a Task 13 pins it to the registry's B2A_IMPL). */
 export const INGEST_RULES: Readonly<Record<string, 'snapshot' | 'discovery' | 'testRun' | 'build' | 'assemble' | 'diagnose' | 'deps' | 'worktree'
-  | 'gitFacts' | 'changeSet' | 'mergeCheck' | 'accept' | 'forward'>> = Object.freeze({
+  | 'tryRun' | 'gitFacts' | 'changeSet' | 'mergeCheck' | 'accept' | 'forward'>> = Object.freeze({
   'repo.snapshot': 'snapshot', 'sde.test.discover': 'discovery', 'sde.test.node': 'testRun', 'sde.test.pytest': 'testRun',
   'sde.build.node': 'build', 'sde.build.python': 'build', 'sde.app.assemble': 'assemble', 'sde.diagnose': 'diagnose',
   'sde.deps.node': 'deps', 'sde.deps.python': 'deps',
+  // "Try it": a run writes no output files and records nothing; how it ended is the attempt's own exit status.
+  'sde.try.run': 'tryRun',
   // B2b Task 7: the session worktree row, and an accept's rollback.
   'repo.worktree': 'worktree', 'changeset.accept_rollback': 'gitFacts',
   // B2b Task 9: the accept (promotion, accept row, rollback on failure) and the dialog-confirmed fast-forward (merge row).
@@ -227,6 +229,7 @@ export class IngestService implements IngestPort {
       case 'assemble': return this.assemble(ctx);
       case 'diagnose': return this.diagnose(ctx);
       case 'deps': return this.depsInstall(ctx);
+      case 'tryRun': return DURABLE;
       case 'worktree': return this.worktree(ctx);
       case 'gitFacts': return this.rollbackFacts(ctx);
       case 'accept': return acceptIngestTx(this.acceptDeps(), ctx);

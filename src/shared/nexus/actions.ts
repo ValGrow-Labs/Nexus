@@ -62,6 +62,9 @@ export const USER_ACTIONS: readonly UserActionDef[] = deepFreeze([
     [one('repository', 'repository')], ['git', 'docker', 'disk:5GiB']),
   a('sde.tests.run', 'sde', 'Run tests on a commit', { recipes: ['sde.test.node', 'sde.test.pytest'] },
     [one('suite', 'test_suite')], ['git', 'docker', 'disk:5GiB']),
+  // Try it (B2b): started only through its own request (`nexus:try`), which writes the command into the job; never through `nexus:job:start`.
+  a('sde.try.run', 'sde', 'Try the suggested changes', { recipes: ['sde.try.run'] },
+    [one('change', 'change_set')], ['git', 'docker', 'disk:5GiB']),
   a('sde.build.run', 'sde', 'Build', { recipes: ['sde.build.node', 'sde.build.python'] },
     [one('repository', 'repository')], ['git', 'docker', 'disk:5GiB']),
   a('sde.app.assemble', 'sde', 'Assemble the application', { recipes: ['sde.app.assemble'] },

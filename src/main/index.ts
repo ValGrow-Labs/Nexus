@@ -5795,6 +5795,7 @@ app.whenReady().then(() => {
         acceptFsRoot,
         isRepository: repositoryCheck,
         resolveCommit,
+        readAtRev: async (root, rev, rel) => { const f = await getFileAtRev(root, rev, rel); return f.ok && !f.isBinary ? { exists: f.exists, content: f.content } : f.ok ? { exists: f.exists, content: '' } : null; },
         appVersion: app.getVersion(),
         // B2b Task 14: the agent services (v10 on, execution on), their skill files, and a deferred scheduler tick for queued work.
         agents: persist.agentsAvailable,

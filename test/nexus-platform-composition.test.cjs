@@ -61,16 +61,18 @@ const NEXUS_CHANNEL_LIST = [
 // B2a Task 13 (pinned-test extension): the one push of the family, main -> renderer.
 const NEXUS_PUSH = ['nexus:hint'];
 // Task 7: every channel is registered and exposed (the read channels came in Task 6, the writes in Task 7).
-const NEXUS_REGISTERED = [...NEXUS_CHANNEL_LIST];
+// "Try it" (#52, nexus:try): needs execution only, so it is registered with the B2a channels; its preload method is last.
+const NEXUS_TRY_LIST = ['nexus:try'];
+const NEXUS_REGISTERED = [...NEXUS_CHANNEL_LIST, ...NEXUS_TRY_LIST];
 // B2b Task 14 (pinned-test extension): the ten agent channels #42-#51, registered when main passes the agent deps, and their preload methods.
 const NEXUS_AGENT_LIST = [
   'nexus:agent:start', 'nexus:sessions:list', 'nexus:session:get', 'nexus:session:end', 'nexus:session:cancel', 'nexus:review:decide',
   'nexus:changeSet:accept', 'nexus:repo:status', 'nexus:repo:mergeAccepted', 'nexus:agent:consent'
 ];
-const NEXUS_EVERY = [...NEXUS_CHANNEL_LIST, ...NEXUS_AGENT_LIST];
+const NEXUS_EVERY = [...NEXUS_CHANNEL_LIST, ...NEXUS_AGENT_LIST, ...NEXUS_TRY_LIST];
 const NEXUS_AGENT_METHODS = [
   'nexusAgentStart', 'nexusSessionsList', 'nexusSessionGet', 'nexusSessionEnd', 'nexusSessionCancel', 'nexusReviewDecide',
-  'nexusChangeSetAccept', 'nexusRepoStatus', 'nexusRepoMergeAccepted', 'nexusAgentConsent'
+  'nexusChangeSetAccept', 'nexusRepoStatus', 'nexusRepoMergeAccepted', 'nexusAgentConsent', 'nexusTry'
 ];
 const NEXUS_PRELOAD_METHODS = [
   'nexusParticipationsList', 'nexusParticipationAttach', 'nexusParticipationWithdraw',
@@ -99,6 +101,7 @@ test('nexus:* channels: one module, the exact list, the exact preload surface', 
   assert.match(idx, /registerNexusIpc\(ipcMain, \{/);
   assert.match(idx, /unavailableReason: \(\) => nexusUnavailableReason/);
   assert.match(idx, /handoffsUnavailableReason: \(\) => handoffsUnavailableReason/);
+  // (Try it, #52, is the one channel outside NEXUS_ALL_CHANNELS that needs execution only.)
   // The module's literals are NEXUS_CHANNELS (B1, 21) and NEXUS_EXEC_CHANNELS (B2a, 20), which are the literal list
   // here, plus the one push (B2a Task 13 pinned-test extension: literals(mod) == NEXUS_CHANNEL_LIST + NEXUS_PUSH).
   const { NEXUS_CHANNELS, NEXUS_EXEC_CHANNELS, NEXUS_ALL_CHANNELS, registerNexusIpc } = loadTs('src/main/nexusIpc/registerNexusIpc.ts');
@@ -155,7 +158,7 @@ test('nexusIpc: every registration goes through the one wrapper; no identity fro
   for (const f of ['src/main/nexusIpc/registerNexusIpc.ts', 'src/main/nexusIpc/validate.ts']) {
     assert.doesNotMatch(read(f), /\.(principal|principalId|actor|actorId|role|onBehalfOf)\b/, f);
   }
-  assert.equal(NEXUS_REGISTERED.length, 41);
+  assert.equal(NEXUS_REGISTERED.length, 42, '41 B1 and B2a channels and Try it');
   assert.equal(NEXUS_PRELOAD_METHODS.length, 41);
   // ... and 'kind' is read from a request only as the artifact-kind filter of nexus:artifacts:list and (B2a Task 13
   // pinned-test extension) as saveInline's user-authorable kind.
