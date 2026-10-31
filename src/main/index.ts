@@ -35,7 +35,7 @@ import {
   engineConfirmText, autoFlagBlocked, ENGINE_NOT_ALLOWED, ENGINE_INVALID, ENGINE_FORBIDDEN, ENGINE_AUTO_FLAG_OFF
 } from './spawnPolicy';
 import {
-  getBranch, getStatus, getLog, getBranches, getAheadBehind, isRepo, getDiff, mainRepoRoot,
+  getBranch, getStatus, getLog, getBranches, getAheadBehind, isRepo, initRepository, getDiff, mainRepoRoot,
   addWorktree, removeWorktree, worktreeHasUnintegratedWork, worktreeIsGcSafe,
   getLogGraph, getCommitFiles, getFileAtRev, compareRefs, listWorktrees, checkoutRef, repoToplevel,
   repositoryCheck, resolveCommit
@@ -3721,6 +3721,16 @@ function acceptGitCwd(cwd: string): boolean {
   if (gitDerivedRoots.size === 0) return false;
   return resolveAllowedRoot(expandTilde(cwd), [...gitDerivedRoots], realpathSync.native) !== null;
 }
+// "Set it up": git in a new project folder. Only the registered root of a project the caller names, never a path of the caller's own;
+// the folder must not be a repository yet (initRepository refuses that, links and non-folders). The press of the button after the plain
+// card is the person's consent; nothing else calls this.
+ipcMain.handle('git:initProject', async (_evt, projectId: unknown) => {
+  if (typeof projectId !== 'string' || !projectId) return { ok: false, reason: 'invalid' };
+  let root: string | null = null;
+  try { root = projectManager.getProject(projectId)?.rootPath ?? null; } catch { root = null; }
+  if (!root) return { ok: false, reason: 'unknown_project' };
+  return initRepository(root);
+});
 ipcMain.handle('git:isRepo', (_evt, cwd: unknown) => {
   if (typeof cwd !== 'string') return false;
   if (!acceptGitCwd(cwd)) return false;

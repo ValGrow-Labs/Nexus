@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process';
-import { readFile, stat } from 'node:fs/promises';
+import { lstat, readFile, stat } from 'node:fs/promises';
 import * as path from 'node:path';
 import { safeJoin } from './fs';
 import {
@@ -589,4 +589,38 @@ export async function resolveCommit(cwd: string, sha: string): Promise<ResolvedC
   if ((h ?? '').trim().toLowerCase() !== full) return { error: 'not_a_commit' };
   const seconds = Number.parseInt(ct ?? '', 10);
   return { commit: full, subject: rest.join(' ').trim(), committedAt: Number.isFinite(seconds) ? seconds * 1000 : 0 };
+}
+
+/** What `initRepository` answers: the repository was set up on branch main, or why not (a plain reason; never git's own text). */
+export type InitRepositoryResult = { ok: true; branch: 'main' } | { ok: false; reason: 'not_absolute' | 'not_a_folder' | 'is_link' | 'already_a_repository' | 'git_missing' | 'failed' };
+
+/**
+ * Set up git in a NEW folder: `git init` with an empty template (no hooks are copied from the user's templates), branch main, and ONE
+ * empty first commit "Start of this project". The folder must be a real folder (not a link) that is not already a repository, nor inside
+ * one. The identity is repository-local and only when the user has none (name "Nexus", email "nexus@localhost.invalid"); no global or
+ * system config is ever written. Fixed argv through runGit (no shell, no hooks, no filters, no signing). The caller has already checked that
+ * the folder is a registered project's root.
+ */
+export async function initRepository(cwd: string): Promise<InitRepositoryResult> {
+  if (typeof cwd !== 'string' || !cwd || cwd.includes(' ') || !path.isAbsolute(cwd)) return { ok: false, reason: 'not_absolute' };
+  let st;
+  try { st = await lstat(cwd); } catch { return { ok: false, reason: 'not_a_folder' }; }
+  if (st.isSymbolicLink()) return { ok: false, reason: 'is_link' };
+  if (!st.isDirectory()) return { ok: false, reason: 'not_a_folder' };
+  let hasDotGit = true;
+  try { await lstat(path.join(cwd, '.git')); } catch { hasDotGit = false; }
+  if (hasDotGit) return { ok: false, reason: 'already_a_repository' };
+  const inside = await repositoryCheck(cwd);
+  if (inside === 'git_missing') return { ok: false, reason: 'git_missing' };
+  if (inside === true) return { ok: false, reason: 'already_a_repository' };
+  const init = await runGit(cwd, ['init', '--template=']);
+  if (!init.ok) return { ok: false, reason: init.gitMissing === true ? 'git_missing' : 'failed' };
+  const head = await runGit(cwd, ['symbolic-ref', 'HEAD', 'refs/heads/main']);
+  if (!head.ok) return { ok: false, reason: 'failed' };
+  const name = await runGit(cwd, ['config', 'user.name']);
+  const email = await runGit(cwd, ['config', 'user.email']);
+  const identity = name.ok && name.stdout.trim() && email.ok && email.stdout.trim() ? [] : ['-c', 'user.name=Nexus', '-c', 'user.email=nexus@localhost.invalid'];
+  const commit = await runGit(cwd, [...identity, '-c', 'commit.gpgsign=false', 'commit', '--allow-empty', '--no-verify', '-m', 'Start of this project']);
+  if (!commit.ok) return { ok: false, reason: 'failed' };
+  return { ok: true, branch: 'main' };
 }
