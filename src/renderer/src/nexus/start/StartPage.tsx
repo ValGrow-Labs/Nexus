@@ -184,7 +184,7 @@ export function StartPage() {
               </button>
             ))}
           </div>
-          <button type="button" className="nx-wb__link" onClick={() => navigate({ name: 'browse' })}>Browse all environments →</button>
+          <button type="button" className="nx-wb__link" onClick={() => navigate({ name: 'workspaces' })}>Browse all environments →</button>
         </div>
 
         <div className="nx-wb__group">

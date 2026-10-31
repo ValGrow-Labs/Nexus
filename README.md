@@ -9,7 +9,7 @@ workspace, and build with AI helpers alongside your normal development tools.
 2. Ask for what you want, in plain words.
 3. Look over the suggested changes, then add them to your project.
 
-> **Status: college project, beta.** The shell, the workspace launcher, the workspace
+> **Status: college project, beta.** The shell, the Start page, the workspace
 > and project pages and the assistant panel run on real local data. On top of that
 > there is a platform core with a sandboxed **execution and agent runtime (B2b)**:
 > an AI helper works in a safe copy of a project, its suggested changes are checked by real
@@ -84,7 +84,7 @@ If launch fails with a `NODE_MODULE_VERSION` or "wrong ELF/Mach-O" error, re-run
 |---|---|
 | `src/main/` | Electron main process: projects, agents and hive, terminals, files, git, skills, integrations, the local database. |
 | `src/preload/` | The typed IPC bridge (`window.cth`). |
-| `src/renderer/src/nexus/` | The Nexus shell: launcher, workspaces, pages, assistant, command palette. |
+| `src/renderer/src/nexus/` | The Nexus shell: Start page, workspaces, pages, assistant, command palette. |
 | `src/renderer/src/` | Other UI: IDE, terminals, agent views, settings. |
 | `src/shared/` | Types and registries shared by main and renderer. |
 | `docs/superpowers/` | Specs and implementation plans. |

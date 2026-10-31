@@ -61,29 +61,24 @@ Sizes are not tokenised; each stylesheet sets its own `font` shorthand. In pract
 
 ## Where things live
 
-- `src/renderer/src/nexus/`: all Spine UI. Subfolders: `agents`, `assistant`, `chrome`, `components`, `data`, `design` (provenance), `intent`, `launcher`, `pages`, `project`, `review`, `router`, `routes`, `runs`, `state`, `styles`, `ui`, `workspaces`.
-- Pure models (no React or `window`, loadable by `test/load-ts.cjs`) include `provenance.ts`, `launcher/indexModel.ts`, `router/routes.ts`, `project/spineModel.ts`, `project/passport.ts`, `runs/runModel.ts`, `review/reviewModel.ts`, `intent/intentContext.ts`.
+- `src/renderer/src/nexus/`: all Spine UI. Subfolders: `agents`, `assistant`, `chrome`, `components`, `data`, `design` (provenance), `intent`, `launcher` (the environment emblems only), `pages`, `project`, `review`, `router`, `routes`, `runs`, `state`, `styles`, `ui`, `workspaces`.
+- Pure models (no React or `window`, loadable by `test/load-ts.cjs`) include `provenance.ts`, `router/routes.ts`, `project/spineModel.ts`, `project/passport.ts`, `runs/runModel.ts`, `review/reviewModel.ts`, `intent/intentContext.ts`.
 - `nexus/agents/workbench`: the agent workbench (header, section tabs, native lead sections, hosted tools) mounted on the Agents page and in fullscreen.
 - `src/renderer/src/design/tokens.css`: the legacy `--cth-*` tokens, now references to `--nx-*`.
 - `src/renderer/src/design/tokens.ts`: sRGB mirror of the light-theme values. Its runtime colours are read only by `scene/office`; `AddAgentModal`, `AgentCard`, `PixelPanel`, `store` and `memoryGraph/buildGraph` import only its types (`AccentColorName`). Update with `tokens.css`.
 - `src/renderer/src/design/global.css`: reset, focus ring, scrollbars, keyframes, markdown preview, reduced-motion rule.
 - `test/nexus-decoupling.test.cjs`: guards `nexus/` against the retired office scene, pixel components, persona names and the old product identity, and against `"Inter"` and plain horizontal gradients in Nexus CSS (repeating gradients are textures and are allowed).
 
-## Launcher motion exception
+## Start page motion exception
 
-The launcher surfaces are the one place ambient motion is allowed: the Start page at `#/` (`nexus/start/*`, `styles/start.css`) and the environment picker at `#/browse` (`nexus/launcher/*`, `styles/launcher.css`). It was requested explicitly so the front door feels alive. Every other surface keeps the Motion rules above.
+The Start page at `#/` (`nexus/start/*`, `styles/start.css`) is the one place ambient motion is allowed. It was requested explicitly so the front door feels alive. Every other surface keeps the Motion rules above. The old dark environment picker (`#/browse`, an instrument wall) is gone: "Browse all environments" on Start opens the Workspaces list, and an old `#/browse` link opens it too.
 
 - **Start (Home), `#/`.** An intent-first page: describe, then confirm, then start.
   - Detection (`start/startModel.ts`, tested) maps the words to a registry environment, or to none and never a guess.
-  - Step 2 picks or creates a real project. Step 3 shows exactly what goes to the lead agent, and nothing is sent until "Start building".
-  - It has its own violet-to-blue palette. Waves, a laptop and glass tiles are drawn in code and drift gently. The chosen environment's emblem (`launcher/emblems.ts`) and provenance colour appear in steps 2 and 3.
-- **Environment picker, `#/browse`: an instrument wall.**
-  - A dense console of panels separated by hairlines, always dark in both themes. Inside it, the `--nx-*` roles are re-pointed at the console palette, so provenance colours and scenes render dark-tuned.
-  - Each panel has a `~/environment` header with a live LED, a real project count and a 1–9 key. It plays a looping scene of its own work (`launcher/TileScene.tsx`, `sceneKinds.ts`); future workspaces get a generic scene.
-  - A sticky status bar carries the selection's description, project count, last activity, Open and New project.
-  - Keyboard: `/` focuses the filter, arrows move in two dimensions (`launcher/gridNav.ts`), number keys jump (`launcher/wallModel.ts`), Enter opens. Typed letters are underlined where they matched (`launcher/highlight.ts`), and the idle filter types example searches (`launcher/typewriter.ts`).
-- **Reduced motion.** Every keyframe and transition sits under `prefers-reduced-motion: no-preference`, and the typewriter is switched off in JS. With `reduce`, both pages are static and fully usable. Scenes rest on a readable frame.
-- **Still enforced.** No plain horizontal gradients and no Inter. The combobox/listbox semantics are unchanged. `test/nexus-launcher-*.test.cjs` and `test/nexus-start.test.cjs` cover the helpers.
+  - Pressing Start creates the project when a new folder was chosen, then hands the request to the project's AI helper, which begins the build.
+  - It has its own violet-to-blue palette. Waves, a laptop and glass tiles are drawn in code and drift gently. The chosen environment's emblem (`launcher/emblems.ts`) and provenance colour appear next to the request.
+- **Reduced motion.** Every keyframe and transition sits under `prefers-reduced-motion: no-preference`. With `reduce`, the page is static and fully usable.
+- **Still enforced.** No plain horizontal gradients and no Inter. `test/nexus-start.test.cjs` and `test/nexus-emblems.test.cjs` cover the helpers.
 
 ## Legacy screens
 

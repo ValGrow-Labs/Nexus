@@ -171,7 +171,7 @@ test('the loader is mounted once, in the shell, and never writes the project lis
 
 test('the notice is on the Workspaces, Workspace and Projects pages, and every screen reads the one index', () => {
   for (const f of ['pages/WorkspacesPage.tsx', 'pages/WorkspacePage.tsx', 'pages/ProjectsPage.tsx']) assert.match(src(f), /<PlatformNotice \/>/, f);
-  for (const f of ['pages/WorkspacesPage.tsx', 'pages/WorkspacePage.tsx', 'pages/ProjectsPage.tsx', 'launcher/LauncherPage.tsx', 'start/StartPage.tsx',
+  for (const f of ['pages/WorkspacesPage.tsx', 'pages/WorkspacePage.tsx', 'pages/ProjectsPage.tsx', 'start/StartPage.tsx',
     'chrome/ContextBar.tsx', 'intent/IntentLine.tsx', 'project/SourceView.tsx', 'project/CompletionPlaceholder.tsx', 'project/PassportPanel.tsx', 'project/ProjectBench.tsx'])
     assert.match(src(f), /useParticipationIndex\(\)/, f);
   const notice = src('components/PlatformNotice.tsx');

@@ -13,7 +13,6 @@ export type ProjectTool = (typeof PROJECT_TOOLS)[number];
 export type Route =
   | { name: 'home' }
   | { name: 'welcome' }
-  | { name: 'browse' }
   | { name: 'workspaces' }
   | { name: 'workspace'; id: WorkspaceId | DomainPageId }
   | { name: 'projects' }
@@ -24,7 +23,7 @@ export type Route =
   | { name: 'agents' }
   | { name: 'not-found'; path: string };
 
-const SIMPLE = ['welcome', 'browse', 'workspaces', 'projects', 'artifacts', 'handoffs', 'deployments', 'agents'] as const;
+const SIMPLE = ['welcome', 'workspaces', 'projects', 'artifacts', 'handoffs', 'deployments', 'agents'] as const;
 
 /** Pages with an optional record id: `#/artifacts/<id>`, `#/handoffs/<id>`. */
 const WITH_ID = ['artifacts', 'handoffs'] as const;
@@ -48,6 +47,8 @@ export function parseHash(hash: string): Route {
   const parts = path.slice(1).split('/');
   const notFound: Route = { name: 'not-found', path };
   if (parts.length === 1) {
+    // The old environment picker (#/browse) is gone: an old link opens the Workspaces list instead of dead-ending.
+    if (parts[0] === 'browse') return { name: 'workspaces' };
     const head = parts[0] as (typeof SIMPLE)[number];
     return (SIMPLE as readonly string[]).includes(head) ? ({ name: head } as Route) : notFound;
   }

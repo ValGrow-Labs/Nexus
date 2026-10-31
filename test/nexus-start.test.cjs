@@ -74,8 +74,16 @@ test('start: one reason at a time, in the order the person fills the screen', ()
   assert.match(startBlocker({ text: '', envId: null, hasProject: false, assistant: 'unavailable' }), /Describe/);
 });
 
-test('routes: #/browse is the environment picker and round-trips', () => {
-  assert.deepEqual(parseHash('#/browse'), { name: 'browse' });
-  assert.equal(formatRoute({ name: 'browse' }), '#/browse');
+test('routes: the old environment picker is gone; #/browse opens the Workspaces list, and Start links there', () => {
+  assert.deepEqual(parseHash('#/browse'), { name: 'workspaces' }, 'an old link never dead-ends');
+  assert.deepEqual(parseHash('#/browse/'), { name: 'workspaces' });
+  assert.equal(formatRoute({ name: 'workspaces' }), '#/workspaces');
   assert.deepEqual(parseHash('#/'), { name: 'home' });
+  const fs = require('node:fs'); const path = require('node:path');
+  const nexus = path.join(__dirname, '..', 'src', 'renderer', 'src', 'nexus');
+  assert.ok(fs.readFileSync(path.join(nexus, 'start', 'StartPage.tsx'), 'utf8').includes("navigate({ name: 'workspaces' })"), 'Browse all environments goes to the Workspaces page');
+  const routeView = fs.readFileSync(path.join(nexus, 'routes', 'RouteView.tsx'), 'utf8');
+  assert.ok(!routeView.includes('LauncherPage') && !routeView.includes("'browse'"));
+  for (const gone of ['LauncherPage.tsx', 'TileScene.tsx', 'indexModel.ts', 'wallModel.ts']) assert.ok(!fs.existsSync(path.join(nexus, 'launcher', gone)), `${gone} is deleted`);
+  assert.ok(!fs.existsSync(path.join(nexus, 'styles', 'launcher.css')) && !fs.readFileSync(path.join(nexus, 'styles', 'index.css'), 'utf8').includes('launcher.css'));
 });
