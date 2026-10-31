@@ -101,8 +101,13 @@ export function tidyCut(text: string): string {
   return `${(at > 20 ? body.slice(0, at) : body).trimEnd()} (shortened)`;
 }
 
-/** A message that holds no words, only brackets ("{}"), is not something the AI helper said. */
-function hasWords(text: string): boolean { return text.trim() !== '' && text.split('').every((ch) => ' \t\r\n{}[]'.includes(ch)) === false; }
+/** A message that holds no words, only brackets ("{}"), or is nothing but data (a JSON object or list the model handed in), is not something the AI helper said. */
+function isData(text: string): boolean {
+  const t = text.trim();
+  if (!(t.startsWith('{') || t.startsWith('['))) return false;
+  try { return typeof JSON.parse(t) === 'object'; } catch { return false; }
+}
+function hasWords(text: string): boolean { return text.trim() !== '' && text.split('').every((ch) => ' \t\r\n{}[]'.includes(ch)) === false && !isData(text); }
 export function replyOf(d: Pick<SessionDetailView, 'messages'> | null | undefined): string | null {
   const m = d ? [...d.messages].reverse().find((x) => x.from === 'agent' && hasWords(x.text)) : undefined;
   if (!m) return null;

@@ -1185,6 +1185,9 @@ test('V9j-1 what the AI helper said back is shown; a request that only answered 
   assert.equal(A.replyOf(detail([{ seq: 1, ts: 1, from: 'user', text: 'hi', displayOnly: true }])), null);
   assert.equal(A.replyOf(detail([{ seq: 1, ts: 1, from: 'agent', text: '{}', displayOnly: true }])), null, 'a bare "{}" is not a reply');
   assert.deepEqual(A.chatItems({ messages: [{ seq: 1, ts: 1, from: 'agent', text: '{}', displayOnly: true }], toolCalls: [] }), []);
+  const data = '{"clientKey":"cs1","summary":"Added a simple add function and test","title":"Initial demo add function"}';
+  assert.equal(A.replyOf(detail([{ seq: 1, ts: 1, from: 'agent', text: data, displayOnly: true }])), null, 'data the model handed in is not a reply');
+  assert.deepEqual(A.chatItems({ messages: [{ seq: 1, ts: 1, from: 'agent', text: data, displayOnly: true }, { seq: 2, ts: 2, from: 'agent', text: 'I added it. {see the suggested changes}', displayOnly: true }], toolCalls: [] }).map((i) => i.text), ['I added it. {see the suggested changes}'], 'data is hidden, a sentence that merely contains braces is kept');
   assert.equal(A.replyOf(detail([{ seq: 1, ts: 1, from: 'agent', text: 'x'.repeat(900), displayOnly: true }])).length, 600);
   assert.equal(A.shortReply('a'.repeat(200), 80).length, 80);
   const end = (reply) => A.agentEnding(job({ state: 'partial', outcome: 'no_change', headline: 'checks_could_not_run' }), reply);
