@@ -359,3 +359,16 @@
 .nx-try__targets { display: flex; flex-wrap: wrap; gap: var(--nx-s2); }
 .nx-try__targets .nx-btn[aria-pressed="true"] { border: 1px solid var(--nx-border-strong); background: var(--nx-sunken); color: var(--nx-ink); font-weight: 600; }
 .nx-ag__run { display: grid; gap: var(--nx-s2); justify-items: start; }
+
+/* Preview: the running app inside Nexus (an isolated view is placed over the frame; the toolbar and states are Nexus's). */
+.nx-previewsec { display: grid; gap: var(--nx-s2); }
+.nx-previewsec__acts { display: flex; gap: var(--nx-s3); align-items: center; flex-wrap: wrap; }
+.nx-previewsec__step { color: var(--nx-text-2); }
+.nx-preview { display: grid; gap: var(--nx-s2); }
+.nx-preview__bar { display: flex; justify-content: space-between; align-items: center; gap: var(--nx-s3); flex-wrap: wrap; }
+.nx-preview__word { display: inline-flex; align-items: center; gap: var(--nx-s2); font-weight: 600; }
+.nx-preview__dot { width: 10px; height: 10px; border-radius: 50%; background: var(--nx-border-strong); flex: none; }
+.nx-preview[data-state="healthy"] .nx-preview__dot, .nx-preview[data-state="starting"] .nx-preview__dot { background: var(--nx-ink); }
+.nx-preview__acts { display: inline-flex; gap: var(--nx-s2); align-items: center; }
+.nx-preview__frame { min-height: 420px; height: 52vh; border: 1px solid var(--nx-border-strong); border-radius: var(--nx-r-obj); background: var(--nx-sunken); display: grid; place-items: center; overflow: hidden; }
+.nx-preview__empty { margin: 0; padding: var(--nx-s4); text-align: center; }

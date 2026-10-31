@@ -1223,6 +1223,20 @@ const api = {
   // ─── Reliability / OS integration (onboarding permissions step) ──────────────
   /** Open a System Settings deep-link (or https URL) in the OS handler. Main
    *  restricts the scheme; the renderer just points at the pane. */
+  /** The live preview (an isolated view of a live dev deployment; main reads the port itself). */
+  previewOpen: (deploymentId: string, bounds: { x: number; y: number; width: number; height: number }): Promise<{ ok: boolean; reason?: string }> =>
+    ipcRenderer.invoke('preview:open', deploymentId, bounds),
+  previewBounds: (bounds: { x: number; y: number; width: number; height: number }): Promise<{ ok: boolean }> => ipcRenderer.invoke('preview:bounds', bounds),
+  previewVisible: (visible: boolean): Promise<{ ok: boolean }> => ipcRenderer.invoke('preview:visible', visible),
+  previewReload: (): Promise<{ ok: boolean }> => ipcRenderer.invoke('preview:reload'),
+  previewClose: (): Promise<{ ok: boolean }> => ipcRenderer.invoke('preview:close'),
+  onPreviewState: (cb: (s: { state: 'loading' | 'ready' | 'failed' | 'closed'; deploymentId: string | null }) => void): (() => void) => {
+    const listener = (_e: IpcRendererEvent, s: { state: 'loading' | 'ready' | 'failed' | 'closed'; deploymentId: string | null }) => {
+      if (s && typeof s.state === 'string') cb({ state: s.state, deploymentId: typeof s.deploymentId === 'string' ? s.deploymentId : null });
+    };
+    ipcRenderer.on('preview:state', listener);
+    return () => ipcRenderer.removeListener('preview:state', listener);
+  },
   openExternal: (url: string): Promise<{ ok: boolean; error?: string }> =>
     ipcRenderer.invoke('app:openExternal', url),
   /** Toggle macOS "Open at Login". Resolves to the resulting state (no prompt). */

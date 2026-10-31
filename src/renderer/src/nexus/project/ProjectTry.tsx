@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { TryIt } from './TryIt';
+import { ProjectPreview } from './ProjectPreview';
 import { TRY_PAGE_TITLE, TRY_PROJECT_NOW, TRY_PROJECT_NOTE, TRY_CHANGE_CHOICE } from './tryModel';
 
 /**
@@ -19,6 +20,7 @@ export function ProjectTry({ projectId, change }: { projectId: string; change: {
   return (
     <section className="nx-surface nx-try-page" aria-label={TRY_PAGE_TITLE}>
       <h2 className="nx-surface__title">{TRY_PAGE_TITLE}</h2>
+      <ProjectPreview projectId={projectId} />
       {change && (
         <div className="nx-try__targets" role="group" aria-label="What to run">
           <button type="button" className="nx-btn nx-btn--quiet" aria-pressed={target === 'project'} onClick={() => choose('project')}>{TRY_PROJECT_NOW}</button>

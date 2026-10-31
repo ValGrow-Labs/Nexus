@@ -30,6 +30,8 @@ import { restoreClaudeSettings, claudeSettingsKeysPresent } from './claudeSettin
 import { listDir, readFileText, readFileBinary, writeFileText, statAbs, expandTilde } from './fs';
 import { resolveAllowedRoot, derivedRootListsFolder } from './fsRoots';
 import { decidePermission, decidePermissionCheck, isAllowedExternalUrl, isInAppNavigation, externalUrlForShell } from './windowPolicy';
+import { closePreview, openPreview, reloadPreview, setPreviewBounds, setPreviewStateSink, setPreviewVisible } from './previewHost';
+import { isDeploymentPreviewable } from '../shared/nexus/previewPolicy';
 import {
   sanitizeSpawnRequest, classifySpawn, commandLineKey, resolveWorkerCommand, addTrustedEngine,
   engineConfirmText, autoFlagBlocked, ENGINE_NOT_ALLOWED, ENGINE_INVALID, ENGINE_FORBIDDEN, ENGINE_AUTO_FLAG_OFF
@@ -4579,6 +4581,42 @@ ipcMain.handle('app:openExternal', async (_evt, url: unknown) => {
   await shell.openExternal(href);
   return { ok: true };
 });
+// ─── IPC: the live preview (an isolated view of one live dev deployment, src/main/previewHost.ts) ──────────────────
+// The renderer names a DEPLOYMENT and the panel's bounds, never a port or an address: main reads the deployment's published port from its own
+// records and shows it only while it is live on 127.0.0.1. Only the main Nexus window may ask; one preview at a time.
+const PREVIEW_ID_RE = /^[0-9A-Za-z_-]{1,64}$/;
+let previewWatch: NodeJS.Timeout | null = null;
+/** The live deployment with this id as the platform knows it, or null (platform off, unknown id). */
+function previewDeployment(id: string): { status: string; bindAddress: string; hostPort: number | null } | null {
+  const nx = nexusPlatform;
+  if (!nx?.deployments) return null;
+  try { return nx.deployments.list(nx.principals.localUser(), {}).deployments.find((d) => d.id === id) ?? null; } catch { return null; }
+}
+setPreviewStateSink((state, target) => {
+  if (state === 'closed' && previewWatch) { clearInterval(previewWatch); previewWatch = null; }
+  const wc = mainWindow && !mainWindow.isDestroyed() ? mainWindow.webContents : null;
+  try { wc?.send('preview:state', { state, deploymentId: target ? target.deploymentId : null }); } catch { /* the window is going */ }
+});
+const fromMainWindow = (evt: Electron.IpcMainInvokeEvent): boolean => !!mainWindow && !mainWindow.isDestroyed() && evt.sender === mainWindow.webContents;
+ipcMain.handle('preview:open', (evt, deploymentId: unknown, bounds: unknown) => {
+  if (!fromMainWindow(evt) || !mainWindow) return { ok: false, reason: 'window' };
+  if (typeof deploymentId !== 'string' || !PREVIEW_ID_RE.test(deploymentId)) return { ok: false, reason: 'deployment' };
+  const d = previewDeployment(deploymentId);
+  if (!d || !isDeploymentPreviewable(d) || d.hostPort === null) return { ok: false, reason: 'not_live' };
+  if (!openPreview(mainWindow, { deploymentId, port: d.hostPort }, bounds)) return { ok: false, reason: 'bounds' };
+  if (previewWatch) clearInterval(previewWatch);
+  // The view goes when the deployment is no longer live on this port.
+  previewWatch = setInterval(() => {
+    const now = previewDeployment(deploymentId);
+    if (!now || !isDeploymentPreviewable(now) || now.hostPort !== d.hostPort) closePreview();
+  }, 3000);
+  return { ok: true };
+});
+ipcMain.handle('preview:bounds', (evt, bounds: unknown) => ({ ok: fromMainWindow(evt) && setPreviewBounds(bounds) }));
+ipcMain.handle('preview:visible', (evt, visible: unknown) => ({ ok: fromMainWindow(evt) && setPreviewVisible(visible === true) }));
+ipcMain.handle('preview:reload', (evt) => ({ ok: fromMainWindow(evt) && reloadPreview() }));
+ipcMain.handle('preview:close', (evt) => { if (fromMainWindow(evt)) closePreview(); return { ok: true }; });
+
 /** Toggle macOS "Open at Login" — fully programmatic, no permission prompt.
  *  Returns the resulting state so the renderer toggle reflects reality. */
 ipcMain.handle('app:setLoginItem', (_evt, enabled: unknown) => {
@@ -5888,6 +5926,7 @@ app.whenReady().then(() => {
 // at 10 s — so dev deployments do not survive a fast quit; then the quit is re-entered.
 let quittingForExecution = false;
 app.on('before-quit', (e) => {
+  closePreview();
   if (allowQuit || ptyManager.list().length === 0) {
     const h = nexusExecution;
     if (h && !quittingForExecution) {

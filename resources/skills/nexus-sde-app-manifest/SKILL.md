@@ -46,3 +46,13 @@ Keep the file under 16 KiB.
   environment variable default.
 - The app runs without network access to the outside; do not depend on a
   remote service to answer the health check.
+
+## When the person asks for an app, a website or a web page
+
+Nexus shows the running app beside the chat, so a request for an app is a request for something that RUNS. Make it runnable, with nothing to install:
+
+- Use only Node's standard library. No packages, no CDN, no remote fonts or scripts, no database server.
+- `package.json` with `scripts.build` (writes the finished files to `dist`) and `scripts.start`.
+- `src/server.js` listens on port 3000 on `0.0.0.0`, serves the files in `dist` and answers `GET /health` with 200.
+- `nexus.app.json` with `run: ["node", "src/server.js"]`, `port: 3000`, `healthPath: "/health"`, `env: []` and `build: { outputDir: "dist" }`.
+- Run the build in the sandbox, then check the server answers `/health` with a command that ends by itself, before you register the change.
