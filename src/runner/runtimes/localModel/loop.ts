@@ -52,6 +52,9 @@ export interface LoopTuning {
   toolResultMaxChars: number;
   /** The most characters of a command's output (each of stdout and stderr) given back to the model. */
   execOutputMaxChars: number;
+  /** False: a reply that only talks, before any tool was used, ends the turn (a capable model decides whether the person asked for work or only chatted).
+   *  Default true: a small model that talks instead of calling a tool is nudged to call one, twice at most. */
+  nudgeTextOnly?: boolean;
 }
 export const DEFAULT_TUNING: Readonly<LoopTuning> = Object.freeze({
   numCtx: 16384, numPredict: 4096, chatTimeoutMs: 15 * 60_000, chatMaxBytes: 4 * 1024 * 1024, toolResultMaxChars: 6_000, execOutputMaxChars: 3_500
@@ -304,7 +307,7 @@ export async function* runLoop(d: LoopDeps): AsyncGenerator<RuntimeEvent> {
           nudge = NUDGE_BAD_CALL; nudgesByKind.set('badcall', (nudgesByKind.get('badcall') ?? 0) + 1);
         } else if (usage.toolCalls === 0) {
           if (text.trim().length === 0) { if (nudgesEmpty < MAX_NUDGES) { nudge = NUDGE_EMPTY; nudgesEmpty++; } }
-          else if (nudgesNoTool < MAX_NUDGES) { nudge = nudgeNoTools(missing); nudgesNoTool++; }
+          else if (nudgesNoTool < MAX_NUDGES && d.tuning.nudgeTextOnly !== false) { nudge = nudgeNoTools(missing); nudgesNoTool++; }
         } else {
           let kind = '';
           if (registered) { /* the change is registered: nothing is left */ }

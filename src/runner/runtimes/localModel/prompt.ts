@@ -34,7 +34,13 @@ export interface PromptInput {
   newFiles?: readonly string[];
 }
 
-export function systemPrompt(i: Pick<PromptInput, 'hasSandbox' | 'hasChangeset'>): string {
+/** For a capable model that decides for itself whether the person asked for work or only talked, like any coding agent: it may answer in words. */
+export const CONVERSATION_RULES = [
+  'You are also a friendly assistant to the person you work for. If they only greet you, chat, or ask a question, answer in one or two plain, friendly sentences (for a greeting, ask what they would like to build or change) and do not call any tool.',
+  'Only when they ask for a change to the project, work through the steps below.'
+];
+
+export function systemPrompt(i: Pick<PromptInput, 'hasSandbox' | 'hasChangeset'> & { conversational?: boolean }): string {
   const steps = [
     'If the task names files to create, your FIRST action is write_file for them (the WHOLE file each time). Do not explore first. Otherwise look at the project with list_files and read_file, then write the files the task needs.',
     i.hasSandbox
@@ -47,6 +53,7 @@ export function systemPrompt(i: Pick<PromptInput, 'hasSandbox' | 'hasChangeset'>
   ];
   return [
     'You are a software engineer working inside a project through tools. You can only act by calling tools.',
+    ...(i.conversational ? ['', ...CONVERSATION_RULES] : []),
     '',
     'How to work:',
     ...steps.map((s, n) => `${n + 1}. ${s}`),

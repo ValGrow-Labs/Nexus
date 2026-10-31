@@ -39,7 +39,7 @@ export const ADAPTER_LABEL = 'Hosted free-API model';
 export const PROBE_VERSION = 'presets-1';
 
 /** A hosted model has a bigger window than a small local one, but the free tier's per-minute token budget is small: the history stays modest. */
-export const HOSTED_TUNING: Readonly<LoopTuning> = Object.freeze({ ...DEFAULT_TUNING, numCtx: 16384, numPredict: 4096, chatTimeoutMs: 120_000 });
+export const HOSTED_TUNING: Readonly<LoopTuning> = Object.freeze({ ...DEFAULT_TUNING, numCtx: 16384, numPredict: 4096, chatTimeoutMs: 120_000, nudgeTextOnly: false });
 
 export interface HostedModelAdapterOptions {
   /** The turn's bearer (the MCP `Authorization` header only). Empty for an adapter that only answers the probe. */
@@ -172,7 +172,7 @@ export class HostedModelAdapter implements AgentRuntime {
       const newFiles: string[] = [];
       for (const f of namedFiles(req.message)) if (!(await files.exists(f))) newFiles.push(f);
       const messages = [
-        { role: 'system' as const, content: systemPrompt({ hasSandbox: mcpSchemas.has('sandbox_exec'), hasChangeset: mcpSchemas.has('changeset_register') }) },
+        { role: 'system' as const, content: systemPrompt({ hasSandbox: mcpSchemas.has('sandbox_exec'), hasChangeset: mcpSchemas.has('changeset_register'), conversational: true }) },
         { role: 'user' as const, content: userMessage({ message: redactToken(req.message, token), context: scrubbed(context), skills: scrubbed(skills), newFiles,
           hasSandbox: mcpSchemas.has('sandbox_exec'), hasChangeset: mcpSchemas.has('changeset_register') }) }
       ];

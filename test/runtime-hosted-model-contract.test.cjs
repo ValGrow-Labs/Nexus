@@ -777,3 +777,16 @@ test('HM12 no vendor or provider word in a runtime event, and the runner\'s sour
     assert.ok(!/groq|gemini|googleapis|openai/i.test(text), `${f} names no provider (only presets.ts does)`);
   }
 });
+
+test('HM-chat a capable hosted model that only talks (a greeting, a question) ends the turn after its one reply, like any coding agent: no nudge, no repeated apology; its system prompt allows answering in words', async () => {
+  const w = await world();
+  try {
+    const events = await run(w, [{ text: 'Hi! What would you like to build or change?' }, { text: 'second reply that must never be asked for' }]);
+    assertRuntimeContract(events, { terminal: 'run.completed' });
+    assert.equal(w.model.chats().length, 1, 'one reply, no nudge');
+    assert.equal(events.filter((e) => e.t === 'message.delta').length, 1);
+    assert.equal(events.filter((e) => e.t === 'tool.started').length, 0);
+    const system = w.model.chats()[0].messages[0].content;
+    assert.match(system, /only greet you, chat, or ask a question, answer in one or two plain, friendly sentences/);
+  } finally { await w.stop(); }
+});
