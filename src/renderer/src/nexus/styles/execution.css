@@ -261,3 +261,36 @@
 .nx-ag__input .nx-intent__row { flex-wrap: wrap; row-gap: var(--nx-s2); }
 .nx-ag__input .nx-intent__field { order: -1; flex: 1 1 100%; min-height: 56px; max-height: 160px; }
 .nx-ag__input .nx-intent__chip { max-width: 100%; flex: 1 1 auto; }
+/* A calmer dock: one 12px rhythm, a subtle background for what you said, one rule for what the AI helper said, notices as plain rows,
+   and one quiet footer row (earlier conversations and today's use) above the request box. */
+.nx-ag__chat { gap: var(--nx-s3); padding: var(--nx-s3); }
+.nx-ag__bubble { border: 0; padding: var(--nx-s2) var(--nx-s3); border-radius: var(--nx-r-obj); }
+.nx-ag__bubble[data-from="you"] { background: var(--nx-sunken); }
+.nx-ag__bubble[data-from="helper"] { border-left: 2px solid var(--nx-border); border-radius: 0; padding-left: var(--nx-s3); }
+.nx-ag--dock :is(.nx-ag__end, .nx-ag__wait, .nx-ag__progress, .nx-passport__note) { border: 0; padding: 0; background: none; margin: 0; }
+.nx-ag--dock .nx-ag__reply { border-left: 2px solid var(--nx-border); padding-left: var(--nx-s3); margin-top: var(--nx-s2); }
+.nx-ag__footer { flex: none; padding: var(--nx-s2) var(--nx-s3); border-top: 1px solid var(--nx-divider); font-size: 12px; color: var(--nx-text-2); }
+.nx-ag__footer > summary { cursor: pointer; list-style-position: inside; }
+.nx-ag__footer[open] { max-height: 40%; overflow-y: auto; }
+.nx-ag__input { border-top: 1px solid var(--nx-divider); }
+.nx-ag__statusline .nx-passport__actions { margin-top: var(--nx-s2); display: flex; gap: var(--nx-s2); }
+.nx-intent__field:disabled { opacity: 0.75; cursor: not-allowed; }
+/* SIMPLE: the dock is a plain chat. One header line, speech bubbles with small grey step lines, one inline message at the end with its one
+   button, the request box with one grey hint. Two sizes (13px, 12px), one accent (the ink). Everything else is behind "i". */
+.nx-ag--dock { font-size: 13px; }
+.nx-ag__top { display: flex; align-items: center; gap: var(--nx-s2); padding: var(--nx-s2) var(--nx-s3); border-bottom: 1px solid var(--nx-divider); flex: none; }
+.nx-ag__name { font-weight: 700; }
+.nx-ag__word { flex: 1 1 auto; display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--nx-text-2); }
+.nx-ag__dot { width: 8px; height: 8px; border-radius: 50%; background: var(--nx-border-strong); flex: none; }
+.nx-ag__dot[data-tone="working"], .nx-ag__dot[data-tone="waiting"], .nx-ag__dot[data-tone="review"] { background: var(--nx-ink); }
+.nx-ag__more { flex: none; max-height: 45%; overflow-y: auto; display: grid; gap: var(--nx-s2); padding: var(--nx-s3); border-bottom: 1px solid var(--nx-divider); font-size: 12px; color: var(--nx-text-2); }
+.nx-ag__more p { margin: 0; }
+.nx-ag__chat { font-size: 13px; gap: var(--nx-s3); }
+.nx-ag__hint { margin: 0; color: var(--nx-text-3); }
+.nx-ag__step { margin: 0; font-size: 12px; color: var(--nx-text-3); }
+.nx-ag__who { font-size: 12px; color: var(--nx-text-3); }
+.nx-ag__tail { display: grid; gap: var(--nx-s2); justify-items: start; color: var(--nx-ink); }
+.nx-ag__input .nx-intent__mode, .nx-ag__input .nx-intent__chip, .nx-ag__input .nx-intent__suggest { display: none; }
+.nx-ag__input .nx-intent { border: 1px solid var(--nx-border-strong); }
+.nx-ag__input .nx-intent__status { font-size: 12px; color: var(--nx-text-3); margin: 0; }
+.nx-ag__input .nx-intent__status span[role="status"] { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }

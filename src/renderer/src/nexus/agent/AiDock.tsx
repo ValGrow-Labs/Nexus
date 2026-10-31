@@ -57,11 +57,7 @@ export function AiDock({ projectId, workspaceId, reviewReady, onReview }: { proj
           <div className="nx-dock__edge" role="separator" aria-orientation="vertical" aria-label="Resize the AI helper (arrow keys; double-click resets)" aria-valuenow={width}
             tabIndex={0} onPointerDown={onDown} onPointerMove={onMove} onPointerUp={onUp} onKeyDown={onResizeKey} onDoubleClick={() => save({ ...state, width: DOCK_DEFAULT_WIDTH })} />
         )}
-        <div className="nx-dock__bar">
-          <span className="nx-dock__title">AI helper</span>
-          <button type="button" className="nx-btn nx-btn--quiet" aria-label="Close the AI helper (Ctrl+L)" title="Close the AI helper (Ctrl+L)" onClick={toggle}><Icon name="close" size={15} /></button>
-        </div>
-        <AgentPanel projectId={projectId} workspaceId={workspaceId} reviewReady={reviewReady} onReview={onReview}
+        <AgentPanel projectId={projectId} workspaceId={workspaceId} reviewReady={reviewReady} onReview={onReview} onClose={toggle}
           onDock={(s) => { setTone(s.tone); setAttention(s.attention); }} />
       </aside>
     </>

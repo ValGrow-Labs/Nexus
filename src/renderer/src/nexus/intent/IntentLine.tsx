@@ -26,7 +26,7 @@ function newRequestId(): string { requestSeq += 1; return `r-${Date.now()}-${req
  *  project that is ready, the lead AI helper everywhere else. A label and one plain line say which. `summoned`: mounted on demand
  *  (Ctrl/Cmd+J or an "Ask" button) on a route that does not dock it, so it takes focus on mount and can close. `inline`: drawn in the
  *  flow of the page (inside the project page's next-step box) instead of docked at the bottom. */
-export function IntentLine({ summoned = false, inline = false, compact = false, onClose }: { summoned?: boolean; inline?: boolean; compact?: boolean; onClose?: () => void }) {
+export function IntentLine({ summoned = false, inline = false, compact = false, locked = false, onClose }: { summoned?: boolean; inline?: boolean; compact?: boolean; locked?: boolean; onClose?: () => void }) {
   const port = useAssistant();
   const route = useRoute();
   const projects = useStore((s) => s.projects);
@@ -101,7 +101,10 @@ export function IntentLine({ summoned = false, inline = false, compact = false, 
 
   const s = port.status;
   // ONE plain line that says who gets the message and what happens next, and a short label for the same thing.
-  const words = intentWords({ mode, lead: s, onSoftwareProject: route.name === 'project' && ctx.ws?.id === 'sde' && !canAsk, note: askable.note, replyHint: port.replyHint });
+  // In the project dock the box never reaches the lead AI helper: while the project's own AI helper is not ready it is locked, text kept.
+  const lockedBox = locked && mode !== 'agent';
+  const baseWords = intentWords({ mode: lockedBox ? 'agent' : mode, lead: s, onSoftwareProject: route.name === 'project' && ctx.ws?.id === 'sde' && !canAsk, note: askable.note, replyHint: port.replyHint });
+  const words = lockedBox ? { ...baseWords, placeholder: 'Get this computer ready first', explain: 'The AI helper for this project is not ready yet. Get this computer ready first, then ask here; what you typed is kept.' } : baseWords;
 
   const sendToAgent = async (text: string, projectId: string) => {
     if (sending) return;
@@ -122,7 +125,7 @@ export function IntentLine({ summoned = false, inline = false, compact = false, 
 
   const send = () => {
     const text = draft.trim();
-    if (!text) return;
+    if (!text || lockedBox) return;
     if (mode === 'agent' && ctx.project) { void sendToAgent(text, ctx.project.id); return; }
     const res = port.send({ text: draft, contextHeader: header });
     if (!res.ok) { setError(res.error); setSent(null); return; }
@@ -156,7 +159,7 @@ export function IntentLine({ summoned = false, inline = false, compact = false, 
         )}
         <label className="nx-visually-hidden" htmlFor={ids.field}>{words.ariaLabel}</label>
         <textarea
-          id={ids.field} ref={ta} className="nx-intent__field" rows={1}
+          id={ids.field} ref={ta} className="nx-intent__field" rows={1} disabled={lockedBox}
           placeholder={words.placeholder}
           value={draft}
           aria-describedby={error ? `${ids.error} ${ids.status}` : ids.status}
@@ -186,7 +189,7 @@ export function IntentLine({ summoned = false, inline = false, compact = false, 
             </ul>
           )}
         </div>
-        <button type="submit" className="nx-btn nx-btn--primary" aria-label={words.button} disabled={!draft.trim() || sending}>
+        <button type="submit" className="nx-btn nx-btn--primary" aria-label={words.button} disabled={!draft.trim() || sending || lockedBox}>
           <Icon name="send" size={15} /><span className="nx-intent__send-text">{words.button}</span>
         </button>
         {summoned && onClose && (
@@ -198,7 +201,7 @@ export function IntentLine({ summoned = false, inline = false, compact = false, 
       {error && <p id={ids.error} className="nx-intent__error" role="alert">{error}</p>}
       <p id={ids.status} className="nx-intent__status">
         {compact
-          ? <span className="nx-intent__details">Works in a safe copy of your project. <details><summary>Details</summary>{words.explain}</details></span>
+          ? <span className="nx-intent__details">{lockedBox ? words.explain : 'Works in a safe copy of your project.'}</span>
           : <span>{words.explain}</span>}
         <span role="status">
           {sent && <> {sent.lead} <a href={sent.href}>{sent.label}</a></>}

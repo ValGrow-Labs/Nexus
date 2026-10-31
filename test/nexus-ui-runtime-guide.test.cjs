@@ -193,8 +193,9 @@ test('RG6 the agent panel with no permission: one sentence and one button that p
   assert.equal(panel(agent({ state: 'off', offReason: 'not_enabled' })).chooseRuntime, false);
   // The panel renders it with exactly one button (the primary one that opens Setup).
   const tsx = read('src/renderer/src/nexus/agent/AgentPanel.tsx');
-  assert.match(tsx, /\{panel\.chooseRuntime \? CHOOSE_RUNTIME_BUTTON : GLOSSARY\.getReady\.name\}/);
-  assert.match(tsx, /onClick=\{ui\.openSetup\}/);
+  // Simple dock: the one button comes from dockTail (its label is CHOOSE_RUNTIME_BUTTON) and opens Setup.
+  assert.ok(tsx.includes("b.kind === 'setup'") && tsx.includes('ui?.openSetup()'));
+  assert.ok(read('src/renderer/src/nexus/project/nextStepModel.ts').includes('label: CHOOSE_RUNTIME_BUTTON'));
 });
 
 test('RG7 source pins: the sheet shows the guide while nothing is granted, the picker only after, and the program rows wait; one set of controls serves both', () => {

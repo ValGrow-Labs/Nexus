@@ -62,6 +62,11 @@ export function usageLine(u: AgentUsageView | null): string | null {
   return `${steps}, ${cost} (${USAGE_LABEL})`;
 }
 
+/** The short footer form: "Today: 1 request, $0.09". */
+export function usageShort(u: AgentSetupView['usageToday']): string {
+  return `Today: ${count(u.turns, 'request', 'requests')}, ${u.estimated ? 'about ' : ''}${money(u.usdCents)}`;
+}
+
 /** Today's usage on the setup row and the panel. */
 export function usageTodayLine(u: AgentSetupView['usageToday'], service?: string | null): string {
   const who = service ? `AI service: ${service}. ` : '';
@@ -87,23 +92,56 @@ export function elapsedText(ms: number): string {
 // ---------- what the AI helper said and what it is doing ----------
 
 /** The AI helper's last reply in a conversation, as plain text (whitespace folded, at most 600 characters), or null when it said nothing. */
+/** A reply an older version stored cut at 200 characters ends mid-word with an ellipsis: say so plainly instead. */
+export function tidyCut(text: string): string {
+  const t = text.trimEnd();
+  if (!t.endsWith('…')) return text;
+  const body = t.slice(0, -1);
+  const at = body.lastIndexOf(' ');
+  return `${(at > 20 ? body.slice(0, at) : body).trimEnd()} (shortened)`;
+}
+
 export function replyOf(d: Pick<SessionDetailView, 'messages'> | null | undefined): string | null {
   const m = d ? [...d.messages].reverse().find((x) => x.from === 'agent' && x.text.trim() !== '') : undefined;
   if (!m) return null;
-  const t = m.text.split(/[\t\n\r ]+/).join(' ').trim();
+  const t = tidyCut(m.text).split(/[\t\n\r ]+/).join(' ').trim();
   return t.length > 600 ? `${t.slice(0, 599)}…` : t;
 }
+/** One line of the chat: what you said, what the AI helper said, or the steps it took in between (small grey line). */
+export interface ChatItem { kind: 'you' | 'helper' | 'steps'; key: string; text: string; when: string }
+/** The conversation as a plain chat, oldest first: messages as bubbles and the steps between them as one short line each. */
+export function chatItems(d: Pick<SessionDetailView, 'messages' | 'toolCalls'> | null | undefined, limit = 40): ChatItem[] {
+  if (!d) return [];
+  const all: { ts: number; seq: number; msg?: SessionDetailView['messages'][number]; step?: string }[] = [
+    ...d.messages.map((m) => ({ ts: m.ts, seq: m.seq, msg: m })),
+    ...d.toolCalls.map((c) => ({ ts: c.ts, seq: c.seq, step: toolLabel(c.tool) }))
+  ].sort((a, b) => a.ts - b.ts || a.seq - b.seq);
+  const out: ChatItem[] = [];
+  for (const x of all) {
+    if (x.msg) {
+      out.push({ kind: x.msg.from === 'agent' ? 'helper' : 'you', key: `m${x.msg.seq}`, text: x.msg.from === 'agent' ? tidyCut(x.msg.text) : x.msg.text, when: clock(x.msg.ts) });
+    } else if (x.step) {
+      const last = out[out.length - 1];
+      if (last && last.kind === 'steps') { const labels = last.text.split(' · '); if (!labels.includes(x.step) && labels.length < 3) last.text = `${last.text} · ${x.step}`; }
+      else out.push({ kind: 'steps', key: `t${x.seq}`, text: x.step, when: '' });
+    }
+  }
+  return out.slice(-limit);
+}
+/** "40s", "3 min": the short elapsed time in the dock's header. */
+export function shortElapsed(ms: number): string {
+  if (!Number.isFinite(ms) || ms < 0) return '';
+  const s = Math.floor(ms / 1000);
+  return s < 60 ? `${s}s` : `${Math.floor(s / 60)} min`;
+}
+
 /** The first words of a reply for the one-line idle summary. */
 export const shortReply = (r: string | null, n = 80): string | null => (r === null ? null : r.length > n ? `${r.slice(0, n - 1).trimEnd()}…` : r);
 
-/** What the AI helper is doing now, in plain words, from its latest step (and the start of its latest message when it has one). */
-export function liveStepLine(d: Pick<SessionDetailView, 'toolCalls' | 'messages'> | null | undefined): string | null {
-  if (!d) return null;
-  const c = d.toolCalls.length > 0 ? d.toolCalls[d.toolCalls.length - 1] : null;
-  const step = c ? toolLabel(c.tool) : null;
-  const said = shortReply(replyOf(d), 100);
-  if (!step && !said) return null;
-  return [step ? `${step}.` : null, said ? `It said: “${said}”` : null].filter(Boolean).join(' ');
+/** What the AI helper is doing now, in plain words, from its latest step (its messages are shown as chat bubbles, never mixed in here). */
+export function liveStepLine(d: Pick<SessionDetailView, 'toolCalls'> | null | undefined): string | null {
+  const c = d && d.toolCalls.length > 0 ? d.toolCalls[d.toolCalls.length - 1] : null;
+  return c ? `${toolLabel(c.tool)}…` : null;
 }
 
 // ---------- the panel ----------
@@ -476,7 +514,7 @@ const clock = (t: number): string => (Number.isFinite(t) ? new Date(t).toLocaleT
 export function sessionLogModel(d: SessionDetailView): SessionLogView {
   return {
     note: DISPLAY_ONLY_NOTE,
-    messages: d.messages.map((m) => ({ key: String(m.seq), author: m.from === 'agent' ? 'AI helper (for reading only)' : 'You', text: m.text, when: clock(m.ts) })),
+    messages: d.messages.map((m) => ({ key: String(m.seq), author: m.from === 'agent' ? 'AI helper (for reading only)' : 'You', text: m.from === 'agent' ? tidyCut(m.text) : m.text, when: clock(m.ts) })),
     turns: d.turnHistory.map((t) => {
       const j = { state: t.state, outcome: t.outcome, phase: null, headline: t.headline, cancelRequested: false, error: t.error ?? null } as const;
       return { key: t.jobId, headline: agentTurnHeadline(j), next: agentTurnNext(j), usage: usageLine(t.usage), when: clock(t.createdAt) };

@@ -1053,15 +1053,14 @@ test('V9d-1 a failed turn says why, with the fixed sentence for its reason (neve
   assert.equal(panel([]).failure, null);
   const panelSrc = src('agent/AgentPanel.tsx');
   assert.ok(panelSrc.includes("actionId: 'sde.repository.snapshot'"));
-  assert.ok(panelSrc.includes('Save a starting point'));
-  assert.ok(panelSrc.includes('!snapshotStarted'), 'once the snapshot was started from the panel the old failure is not shown again');
+  assert.ok(src('project/nextStepModel.ts').includes("label: 'Save a starting point'"));
+  assert.ok(panelSrc.includes('snapshotStarted'), 'once the snapshot was started from the panel the old failure is not shown again');
 });
 
 test('V9d-2 a turn waiting for the repository-write approval says so in the panel and the approval is answered there; the strip leaves it out; the second step of the confirm is labelled', () => {
   assert.ok(A.REPO_APPROVAL_WAIT_TEXT.startsWith('The AI helper is waiting for your OK. Nexus wants to keep hidden Nexus notes in a small hidden area of your project.'));
   assert.doesNotMatch(A.REPO_APPROVAL_WAIT_TEXT, /refs|worktree|index|objects|branch|repository/i, 'no git word in the lead sentence of a blocking question');
   const panelSrc = src('agent/AgentPanel.tsx');
-  assert.ok(panelSrc.includes('REPO_APPROVAL_WAIT_TEXT'));
   assert.ok(panelSrc.includes("a.reason === 'repo.write_refs'"));
   assert.ok(panelSrc.includes('<ApprovalList approvals={repoWaiting}'));
   const ap = src('project/ApprovalsSection.tsx');
@@ -1164,7 +1163,7 @@ test('V9g the project page has no fixed bottom bar and no helper stack on top: t
   assert.ok(shell.includes("const docked = route.name === 'workspace';"));
   const panelSrc = src('agent/AgentPanel.tsx');
   const dockPart = panelSrc.slice(panelSrc.indexOf('nx-ag--dock'));
-  assert.ok(dockPart.indexOf('nx-ag__chat') < dockPart.indexOf('<IntentLine inline compact />'), 'the request box comes after the conversation: pinned at the bottom');
+  assert.ok(dockPart.indexOf('nx-ag__chat') < dockPart.indexOf('<IntentLine inline compact'), 'the request box comes after the conversation: pinned at the bottom');
   assert.ok(src('project/ProjectBench.tsx').includes('{!hasSde && <section className="nx-ag__next"'), 'a project without the AI helper keeps its lead-helper box, inline');
   assert.ok(src('intent/IntentLine.tsx').includes("inline ? 'nx-intent nx-intent--inline'"));
   assert.ok(fs.readFileSync(path.join(NEXUS, 'styles', 'agent.css'), 'utf8').includes('.nx-intent--inline { position: static;'));
@@ -1187,8 +1186,8 @@ test('V9j-1 what the AI helper said back is shown; a request that only answered 
   assert.equal(end('Hi! I can help.').text, 'The AI helper answered but did not suggest changes.');
   assert.equal(end(null).text, 'The AI helper answered but did not suggest changes.');
   assert.equal(end(null).next, 'Ask again, or describe a change you want.');
-  const live = A.liveStepLine(detail([{ seq: 1, ts: 1, from: 'agent', text: 'Looking at the tests now', displayOnly: true }], [{ seq: 1, ts: 1, jobId: 'J', tool: 'write_file', ok: null, resultBytes: null }]));
-  assert.equal(live, 'Writing a file. It said: “Looking at the tests now”');
+  const live = A.liveStepLine(detail([], [{ seq: 1, ts: 1, jobId: 'J', tool: 'write_file', ok: null, resultBytes: null }]));
+  assert.equal(live, 'Writing a file…', 'the step only: the helper’s words are a chat bubble, never mixed in');
   assert.equal(A.liveStepLine(null), null);
   assert.ok(A.usageTodayLine({ usdCents: 0, turns: 1, estimated: false }, 'Claude Code').includes('$0.00 means the AI service did not report a cost.'));
   assert.ok(A.usageTodayLine({ usdCents: 0, turns: 1, estimated: false }, 'Claude Code').startsWith('AI service: Claude Code. '));
@@ -1202,8 +1201,7 @@ test('V9j-2 earlier conversations are folded away, a stopped one says why in one
   assert.ok(rows.find((r) => r.id === 'S1').why.startsWith('Stopped early: Nexus was closed or restarted'));
   assert.equal(rows.find((r) => r.id === 'S2').why, null);
   const p = src('agent/AgentPanel.tsx');
-  assert.ok(p.includes('panel.sessions.slice(0, 1).map(row)') && p.includes('Earlier conversations ('));
-  assert.ok(p.includes('<details className="nx-ag__earlier">'), 'closed by default (a details element without open)');
+  assert.ok(p.includes("'This conversation' : 'Earlier'") && p.includes('const [more, setMore] = useState(false);'), 'earlier conversations are behind More, closed by default');
 });
 
 test('V9j-3 the dock: width bounds, remembered state, the narrow breakpoint, collapse and keyboard', () => {
@@ -1229,4 +1227,53 @@ test('V9j-3 the dock: width bounds, remembered state, the narrow breakpoint, col
   assert.ok(css.includes('.nx-ag__input { flex: none; border-top:'), 'the request box is pinned at the bottom');
   assert.ok(src('project/ProjectBench.tsx').includes('<AiDock projectId'));
   assert.ok(fs.readFileSync(path.join(NEXUS, 'styles', 'project.css'), 'utf8').includes('.nx-pbody { flex: 1 0 340px; min-height: 340px;'), 'the work area keeps at least 340px');
+});
+
+// ---------- V9k: a calmer dock ----------
+
+test('V9k-1 a blocker is said once, short, as one inline message with its one button; the header has the name and one status word', () => {
+  const docker = A.agentPanelModel({ health: health(), availability: { kind: 'setup', text: 'Tasks cannot start yet: Docker is not running. Press “Get this computer ready” to see what to do.', checking: false, advisories: [] }, sessions: [], sessionsFail: null });
+  const t = NS.dockTail({ panel: docker, reviewReady: 0, repoApprovalWaiting: false, canStop: false, liveLine: null });
+  assert.equal(t.text, 'Docker is not running. Open Docker Desktop, then press “Check again”.');
+  assert.deepEqual([t.button.kind, t.button.label], ['recheck', 'Check again']);
+  const p = src('agent/AgentPanel.tsx');
+  assert.ok(p.includes('className="nx-ag__name">AI helper</span>') && p.includes('className="nx-ag__word" role="status"'));
+  assert.ok(!p.includes('What the AI helper needs') && !p.includes('nx-ag__statusline'), 'no banner above the chat');
+  assert.ok(p.includes('checkAgain()'));
+});
+
+test('V9k-0 the dock is three parts: header, chat (bubbles, grey steps, one inline message), request box; the ready dock is almost empty', () => {
+  const readyPanel = A.agentPanelModel({ health: health(), availability: READY, sessions: [], sessionsFail: null });
+  assert.equal(NS.dockTail({ panel: readyPanel, reviewReady: 0, repoApprovalWaiting: false, canStop: false, liveLine: null }), null, 'nothing to say when ready: the greeting hint and the box');
+  assert.equal(NS.dockTail({ panel: readyPanel, reviewReady: 1, repoApprovalWaiting: false, canStop: false, liveLine: null }).button.kind, 'review');
+  const working = A.agentPanelModel({ health: health(), availability: READY, sessions: [session({ status: 'running', liveJobId: 'J1' })], sessionsFail: null, jobs: new Map([['J1', job({ state: 'running', createdAt: 5, startedAt: 5 })]]), now: 50_000 });
+  const w = NS.dockTail({ panel: working, reviewReady: 0, repoApprovalWaiting: false, canStop: true, liveLine: 'Reading a file…' });
+  assert.deepEqual([w.text, w.button.kind], ['Reading a file…', 'stop']);
+  const items = A.chatItems({ messages: [{ seq: 1, ts: 1, from: 'user', text: 'hi', displayOnly: true }, { seq: 2, ts: 5, from: 'agent', text: 'Hello! How can I help?', displayOnly: true }],
+    toolCalls: [{ seq: 1, ts: 2, jobId: 'J', tool: 'Read', ok: true, resultBytes: 1 }, { seq: 2, ts: 3, jobId: 'J', tool: 'Read', ok: true, resultBytes: 1 }, { seq: 3, ts: 4, jobId: 'J', tool: 'write_file', ok: true, resultBytes: 1 }] });
+  assert.deepEqual(items.map((x) => [x.kind, x.text]), [['you', 'hi'], ['steps', 'Reading a file · Writing a file'], ['helper', 'Hello! How can I help?']]);
+  assert.equal(A.shortElapsed(40_000), '40s'); assert.equal(A.shortElapsed(190_000), '3 min');
+  assert.equal(A.liveStepLine({ toolCalls: [{ seq: 1, ts: 1, jobId: 'J', tool: 'Read', ok: null, resultBytes: null }] }), 'Reading a file…');
+  const css = fs.readFileSync(path.join(NEXUS, 'styles', 'execution.css'), 'utf8');
+  assert.ok(css.includes('.nx-ag__input .nx-intent__mode, .nx-ag__input .nx-intent__chip, .nx-ag__input .nx-intent__suggest { display: none; }'), 'no label, chip or ideas button inside the box');
+  assert.ok(src('agent/AgentPanel.tsx').includes('PROGRESS_TICK_MS = 5_000'), 'the elapsed time moves every few seconds');
+});
+
+test('V9k-2 the request box in the dock never goes to the lead AI helper: locked with "Get this computer ready first" until the project helper is ready, text kept', () => {
+  const il = src('intent/IntentLine.tsx');
+  assert.ok(il.includes("const lockedBox = locked && mode !== 'agent';"));
+  assert.ok(il.includes("placeholder: 'Get this computer ready first'"));
+  assert.ok(il.includes('disabled={lockedBox}') && il.includes('sending || lockedBox'));
+  assert.ok(il.includes("if (!text || lockedBox) return;"));
+  assert.ok(src('agent/AgentPanel.tsx').includes("<IntentLine inline compact locked={panel.kind !== 'ready'} />"));
+});
+
+test('V9k-3 an older reply cut at 200 characters ends in "(shortened)", not mid-word with an ellipsis; the footer row holds earlier conversations and today in one line', () => {
+  assert.equal(A.tidyCut('Hi! I can help with the repository. What would you like me to work on? For exampl…'), 'Hi! I can help with the repository. What would you like me to work on? For (shortened)');
+  assert.equal(A.tidyCut('A whole reply.'), 'A whole reply.');
+  const d = { messages: [{ seq: 1, ts: 1, from: 'agent', text: 'Hello there, I can help with your project today, for exampl…', displayOnly: true }] };
+  assert.ok(A.replyOf(d).endsWith('(shortened)') && !A.replyOf(d).includes('…'));
+  assert.equal(A.usageShort({ usdCents: 9, turns: 1, estimated: false }), 'Today: 1 request, $0.09');
+  const p = src('agent/AgentPanel.tsx');
+  assert.ok(p.includes('usageShort(health.agent.usageToday)') && p.includes('nx-ag__more'), 'earlier conversations, cost and the service name are behind More');
 });
