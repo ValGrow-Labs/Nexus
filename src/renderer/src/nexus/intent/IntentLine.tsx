@@ -11,11 +11,11 @@ import { buildContextHeader } from '../assistant/context';
 import { SUGGESTIONS } from '../assistant/prompts';
 import { useAssistant } from '../assistant/useAssistant';
 import { selectionLabel } from './intentContext';
-import { nexusClient } from '../data/nexusClient';
 import { usePlatform } from '../data/platformStore';
 import { availabilityFrom } from '../data/executionModel';
-import { useExecStore, withIntent } from '../data/useExecution';
-import { agentFailText, agentPanelModel, continuableSession, intentRoute, intentWords, messageKey, startArgs } from '../agent/agentModel';
+import { useExecStore } from '../data/useExecution';
+import { agentPanelModel, intentRoute, intentWords } from '../agent/agentModel';
+import { sendToProjectAgent } from '../agent/sendToAgent';
 
 const TOOL_PAGE: Record<ProjectTool, string> = { bench: 'Work area', changes: 'Suggested changes', completion: 'Checklist', runs: 'Tasks' };
 
@@ -120,18 +120,11 @@ export function IntentLine({ summoned = false, inline = false, compact = false, 
   const sendToAgent = async (text: string, projectId: string) => {
     if (sending) return;
     setSending(true);
-    // Continue the project's newest conversation that has no live turn; start one only when there is none (or it cannot be read).
-    const list = await nexusClient.sessionsList({ projectId });
-    const sessionId = list.ok ? continuableSession(list.data)?.id ?? null : null;
-    const built = startArgs({ projectId, workspaceId: 'sde', sessionId, message: text, intentId: 'pending' });
-    if ('problem' in built) { setSending(false); setError(built.problem); setSent(null); return; }
-    // The pending-intent key holds a hash of the message, never the message itself.
-    const r = await withIntent(`intent:agent:${projectId}:${sessionId ?? 'new'}:${messageKey(text)}`, (intentId) => nexusClient.agentStart({ ...built.args, intentId }));
+    const r = await sendToProjectAgent(text, projectId);
     setSending(false);
-    if (!r.ok) { setError(agentFailText(r)); setSent(null); return; }
-    usePlatform.getState().bumpRev();
+    if (!r.ok) { setError(r.error); setSent(null); return; }
     setDraft(''); setError(null);
-    setSent({ href: formatRoute({ name: 'project', id: projectId, tool: 'bench' }), label: words.followLabel, lead: words.sentLead(sessionId !== null) });
+    setSent({ href: formatRoute({ name: 'project', id: projectId, tool: 'bench' }), label: words.followLabel, lead: words.sentLead(r.continued) });
   };
 
   const send = () => {

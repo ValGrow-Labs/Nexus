@@ -410,9 +410,12 @@ test('UA8 the intent line sends to the agent only on an SDE project route with t
   const il = src('intent/IntentLine.tsx');
   assert.match(il, /intentRoute\(/);
   assert.match(il, /port\.send\(/, 'the legacy send is still there');
-  // #42 is called in one place (sendToAgent), which is reached from one place: the agent branch of the route rule.
-  assert.equal((il.match(/nexusClient\.agentStart\(/g) || []).length, 1);
-  assert.equal((il.match(/\bsendToAgent\b/g) || []).length, 2, 'its definition and one call');
+  // #42 is called in one place for the whole renderer (the shared sendToProjectAgent, which the request box and the Home page's Start both use);
+  // the request box reaches it from one place: the agent branch of the route rule.
+  assert.equal((il.match(/nexusClient\.agentStart\(/g) || []).length, 0, 'the request box has no copy of the send');
+  assert.equal((il.match(/sendToProjectAgent\(/g) || []).length, 1);
+  assert.equal((src('agent/sendToAgent.ts').match(/nexusClient\.agentStart\(/g) || []).length, 1);
+  assert.equal((il.match(/\bsendToAgent\b/g) || []).length, 3, 'its definition, one call, and the name of the shared module it imports');
   assert.match(il, /if \(mode === 'agent' && ctx\.project\) \{ void sendToAgent\(text, ctx\.project\.id\); return; \}/);
   assert.ok(il.indexOf('port.send(') > il.indexOf("if (mode === 'agent' && ctx.project)"), 'the legacy send is the fallthrough');
   // The line reads what the bench loaded (no health or sessions request of its own on other routes).
@@ -628,8 +631,8 @@ test('R4-C1 a session main keeps `running` with no live turn reads "Ready for yo
   assert.equal(A.continuableSession([session({ id: 'A', status: 'running', liveJobId: null, updatedAt: 3 }), session({ id: 'B', status: 'open', updatedAt: 5 })]).id, 'B');
   assert.equal(A.continuableSession([session({ id: 'A', status: 'running', liveJobId: 'J1' }), session({ id: 'Z', status: 'completed' })]), null, 'a live turn or an ended one is not continued');
   assert.equal(A.continuableSession(null), null);
-  assert.match(src('intent/IntentLine.tsx'), /continuableSession\(list\.data\)/);
-  assert.match(src('intent/IntentLine.tsx'), /nexusClient\.sessionsList\(\{ projectId \}\)/);
+  assert.match(src('agent/sendToAgent.ts'), /continuableSession\(list\.data\)/);
+  assert.match(src('agent/sendToAgent.ts'), /nexusClient\.sessionsList\(\{ projectId \}\)/);
   // The panel opens itself only for a live turn.
   assert.match(src('agent/AgentPanel.tsx'), /const needsLook = panel\.working !== null \|\| repoWaiting\.length > 0/);
 });
@@ -1333,4 +1336,98 @@ test('V9n the review page: what the AI helper did, plain proof with ticks (no ha
   assert.ok(rv.includes("useNexusUi((x) => x.audience) === 'technical'") && rv.includes('Show what changed'), 'what changed is closed for a newcomer, open for a technical person');
   assert.ok(fs.readFileSync(path.join(NEXUS, 'styles', 'execution.css'), 'utf8').includes('.nx-cs__bar { position: sticky; bottom: 0;'));
   assert.ok(fs.readFileSync(path.join(NEXUS, 'styles', 'execution.css'), 'utf8').includes('.nx-review.nx-surface { padding-bottom: 0; }'), 'the sticky decision bar sits at the very bottom of the page, not above the project page bottom room');
+});
+
+// ---------- V10: Start begins the build, and the building page ----------
+
+const BM = loadTs('src/renderer/src/nexus/agent/buildModel.ts');
+const PEND = loadTs('src/renderer/src/nexus/agent/pendingStart.ts');
+
+const buildPanel = (jobs, sessions) => A.agentPanelModel({ health: health(), availability: READY, sessions, sessionsFail: null,
+  jobs: new Map(jobs.map((j) => [j.id, j])), now: NOW + 125_000 });
+const chat = (...x) => x.map(([kind, text], n) => ({ kind, key: `k${n}`, text, when: '' }));
+const bi = (o = {}) => ({ panel: buildPanel([], [session()]), items: [], liveLine: null, reviewReady: 0, starting: null, startFailed: null, sawLive: true, dismissed: false, ...o });
+
+test('V10a the building page: the request is the heading, the live state says what it does and for how long, Stop is offered, and there is no button until the work is over', () => {
+  const running = buildPanel([job({ id: 'J1', state: 'running', phase: 'agent', headline: 'running', startedAt: NOW })], [session({ status: 'running', liveJobId: 'J1' })]);
+  const v = BM.buildView(bi({ panel: running, items: chat(['you', 'add a function that squares a number'], ['steps', 'Looking at the project’s files · Reading a file']), liveLine: 'Running a command in the safe space…' }));
+  assert.equal(v.state, 'building');
+  assert.equal(v.heading, 'Building: add a function that squares a number');
+  assert.match(v.elapsed, /^Working for 2 minutes/);
+  assert.equal(v.canStop, true);
+  assert.equal(v.button, null);
+  assert.deepEqual(v.steps.map((s) => [s.text, s.now]), [['Looking at the project’s files', false], ['Reading a file', false], ['Running a command in the safe space', true]]);
+  // The step it is on is shown once, as "now", never also as a finished step.
+  const dup = BM.buildView(bi({ panel: running, items: chat(['you', 'x'], ['steps', 'Reading a file']), liveLine: 'Reading a file…' }));
+  assert.deepEqual(dup.steps.map((s) => [s.text, s.now]), [['Reading a file', true]]);
+  assert.equal(BM.requestHeading('  '), 'Building your request');
+  const long = BM.requestHeading('word '.repeat(60));
+  assert.ok(long.length <= 'Building: '.length + 91 && long.endsWith('…'));
+  // plain words only: no ids, no vendor names
+  const text = JSON.stringify(v);
+  assert.ok(!VENDOR.test(text) && !/\bJ1\b|S1|proj_|[0-9a-f]{12}/.test(text));
+});
+
+test('V10b the building page ends in every way and never stays on "building": changes ready (one big button), no changes, failed, stopped, a start that failed; an older request never takes the page over', () => {
+  const ended = (state, outcome = null, o = {}) => buildPanel([job({ id: 'J1', state, outcome, startedAt: NOW, finishedAt: NOW + 1000, ...o })], [session({ status: 'running', liveJobId: null })]);
+  const ready = BM.buildView(bi({ panel: ended('completed', 'handed_in'), items: chat(['you', 'add square']) }));
+  assert.equal(ready.state, 'ready'); assert.deepEqual(ready.button, { kind: 'review', label: 'Look at the suggested changes' }); assert.equal(ready.canStop, false);
+  const failed = BM.buildView(bi({ panel: ended('failed', null, { error: { code: 'x' }, headline: 'failed' }), items: chat(['you', 'add square']) }));
+  assert.equal(failed.state, 'ended'); assert.equal(failed.status, 'It did not work.'); assert.deepEqual(failed.button, { kind: 'back', label: 'Back to the project' }); assert.ok(failed.next);
+  const stopped = BM.buildView(bi({ panel: ended('cancelled'), items: chat(['you', 'add square']) }));
+  assert.equal(stopped.state, 'ended'); assert.equal(stopped.button.kind, 'back');
+  const said = BM.buildView(bi({ panel: ended('completed', 'no_change'), items: chat(['you', 'hi'], ['helper', 'Hello! What shall I build?']) }));
+  assert.equal(said.state, 'ended'); assert.equal(said.status, 'The AI helper finished without suggesting changes.');
+  // Changes waiting after the request is gone from the jobs still end in the one big button.
+  const gone = BM.buildView(bi({ panel: buildPanel([], [session()]), items: chat(['you', 'add square']), reviewReady: 1 }));
+  assert.equal(gone.state, 'ready');
+  // Never seen running on this page, or closed by the person: the project shows as usual.
+  assert.equal(BM.buildView(bi({ panel: ended('failed'), items: chat(['you', 'x']), sawLive: false })), null);
+  assert.equal(BM.buildView(bi({ panel: ended('completed', 'handed_in'), items: chat(['you', 'x']), dismissed: true })), null);
+  assert.equal(BM.buildView(bi({})), null);
+  // Starting, and a start that failed (with its sentence, and a way back).
+  const starting = BM.buildView(bi({ starting: 'add square', sawLive: false }));
+  assert.equal(starting.state, 'starting'); assert.equal(starting.heading, 'Building: add square'); assert.equal(starting.button, null);
+  const sf = BM.buildView(bi({ startFailed: { text: 'add square', error: 'Nexus needs an AI service to do the work.' }, sawLive: false }));
+  assert.equal(sf.state, 'ended'); assert.equal(sf.next, 'Nexus needs an AI service to do the work.'); assert.equal(sf.button.kind, 'back');
+  // A request that waits for you says so (and still offers Stop).
+  const wait = BM.buildView(bi({ panel: buildPanel([job({ id: 'J1', state: 'awaiting_approval' })], [session({ status: 'awaiting_approval', liveJobId: 'J1' })]), items: chat(['you', 'x']) }));
+  assert.equal(wait.state, 'waiting'); assert.ok(wait.next);
+});
+
+test('V10c a handed-over request is sent once, only when the project is ready and the words are unchanged; otherwise it waits or is dropped', () => {
+  const p = { projectId: 'p1', text: 'add square', at: NOW };
+  assert.equal(PEND.pendingAction({ pending: null, projectId: 'p1', ready: true, draft: 'add square', now: NOW }), 'wait');
+  assert.equal(PEND.pendingAction({ pending: p, projectId: 'p2', ready: true, draft: 'add square', now: NOW }), 'wait', 'another project page never sends it');
+  assert.equal(PEND.pendingAction({ pending: p, projectId: 'p1', ready: false, draft: 'add square', now: NOW }), 'wait', 'setup is still in the way');
+  assert.equal(PEND.pendingAction({ pending: p, projectId: 'p1', ready: true, draft: ' add square ', now: NOW }), 'send');
+  assert.equal(PEND.pendingAction({ pending: p, projectId: 'p1', ready: true, draft: 'add a cube', now: NOW }), 'drop', 'the person changed the words');
+  assert.equal(PEND.pendingAction({ pending: p, projectId: 'p1', ready: true, draft: '', now: NOW }), 'drop');
+  assert.equal(PEND.pendingAction({ pending: p, projectId: 'p1', ready: true, draft: 'add square', now: NOW + PEND.PENDING_START_MAX_MS + 1 }), 'drop');
+  // Taking it out for sending comes first: a second take gets nothing, so it is never sent twice.
+  PEND.usePendingStart.getState().hand('p1', ' add square ');
+  const first = PEND.usePendingStart.getState().begin();
+  assert.equal(first.text, 'add square');
+  assert.equal(PEND.usePendingStart.getState().begin(), null);
+  assert.equal(PEND.usePendingStart.getState().pending, null);
+  PEND.usePendingStart.getState().finish('Nexus needs an AI service to do the work.');
+  assert.deepEqual(PEND.usePendingStart.getState().failed, { projectId: 'p1', text: 'add square', error: 'Nexus needs an AI service to do the work.' });
+  PEND.usePendingStart.getState().clearFailed();
+  assert.equal(PEND.usePendingStart.getState().failed, null);
+});
+
+test('V10d the wiring: one shared send for the request box and Start, Start never queues to the old lead helper, the build page only on the project overview and only when the AI helper is in place', () => {
+  const intent = src('intent/IntentLine.tsx'); const panel = src('agent/AgentPanel.tsx'); const sender = src('agent/sendToAgent.ts');
+  assert.ok(sender.includes('export async function sendToProjectAgent') && sender.includes('nexusClient.agentStart('));
+  assert.ok(intent.includes("sendToProjectAgent } from '../agent/sendToAgent'") && !intent.includes('agentStart('), 'the request box uses the shared send, not its own copy');
+  assert.ok(panel.includes("import { sendToProjectAgent } from './sendToAgent'") && !panel.includes('agentStart('));
+  assert.ok(panel.indexOf('usePendingStart.getState().begin()') < panel.indexOf('void sendToProjectAgent(p.text, projectId)'), 'taken out of the store before it is sent: never twice');
+  assert.ok(panel.includes("panel.kind === 'ready' && sessions.data !== null"));
+  const bench = src('project/ProjectBench.tsx');
+  assert.ok(bench.includes("tool === 'bench' && hasSde && !card") && bench.includes('<BuildStage projectId={project.id}'), 'only the overview, only with the AI helper in place and no setup card');
+  const stage = src('agent/BuildStage.tsx');
+  assert.ok(stage.includes('nexusClient.sessionCancel(') && stage.includes('Stop</Button>') && stage.includes('setDismissed(true)') && stage.includes('LIVE_REFRESH_MS'));
+  assert.ok(!VENDOR.test(src('agent/buildModel.ts')));
+  const css = fs.readFileSync(path.join(NEXUS, 'styles', 'execution.css'), 'utf8');
+  assert.ok(css.includes('.nx-build__big { min-height: 48px;') && css.includes('prefers-reduced-motion: reduce) { .nx-build__dot'));
 });

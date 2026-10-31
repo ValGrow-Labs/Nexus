@@ -7,6 +7,9 @@ import { GLOSSARY } from '../data/glossary';
 import { useExecutionUi } from '../project/execContext';
 import { dockTail } from '../project/nextStepModel';
 import { IntentLine } from '../intent/IntentLine';
+import { useNexusUi } from '../state/uiStore';
+import { sendToProjectAgent } from './sendToAgent';
+import { pendingAction, usePendingStart } from './pendingStart';
 import { Icon } from '../icons';
 import { Button } from '../ui/Button';
 import { ApprovalList } from '../project/ApprovalsSection';
@@ -73,6 +76,25 @@ export function AgentPanel({ projectId, workspaceId, reviewReady = 0, onReview, 
       : panel.kind === 'ready' ? 'Ready' : panel.kind === 'off' ? 'Not available' : 'Not ready';
 
   const refresh = () => { usePlatform.getState().bumpRev(); useExecStore.getState().bump(['jobs']); sessions.reload(); };
+  // The Home page's Start handed a request over: it is sent here, once, as soon as this project's AI helper can take it (never twice:
+  // taking it out of the store comes first). If the words were changed meanwhile, the person took over and nothing is sent.
+  const handed = usePendingStart((p) => p.pending);
+  const draft = useNexusUi((u) => u.draft);
+  const ready = panel.kind === 'ready' && sessions.data !== null;
+  useEffect(() => {
+    const todo = pendingAction({ pending: handed, projectId, ready, draft, now: Date.now() });
+    if (todo === 'drop') { usePendingStart.getState().drop(); return; }
+    if (todo !== 'send') return;
+    const p = usePendingStart.getState().begin();
+    if (!p) return;
+    void sendToProjectAgent(p.text, projectId).then((r) => {
+      usePendingStart.getState().finish(r.ok ? null : r.error);
+      if (r.ok) useNexusUi.getState().setDraft('');
+      else setNote(r.error);
+      refresh();
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [handed, ready, draft, projectId]);
   const press = async () => {
     const b = tail?.button;
     if (!b || busy) return;

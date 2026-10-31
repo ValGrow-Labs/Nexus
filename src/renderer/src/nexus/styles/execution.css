@@ -313,3 +313,25 @@
 .nx-review.nx-surface { padding-bottom: 0; }
 .nx-cs__block > p, .nx-cs__block > h3 { margin: 0; }
 .nx-cs__bar { padding-bottom: var(--nx-s4); }
+
+/* The building page: the request as the heading, what the AI helper is doing, its steps, and one big button after the work. */
+.nx-build { display: grid; align-content: start; gap: var(--nx-s4); padding: var(--nx-s6) var(--nx-s6) var(--nx-s8); min-width: 0; overflow: auto; flex: 1 1 auto; }
+.nx-build__title { margin: 0; font: 700 26px/1.2 var(--nx-font-display); overflow-wrap: anywhere; }
+.nx-build__status { margin: 0; display: flex; align-items: center; gap: var(--nx-s2); font-size: 15px; flex-wrap: wrap; }
+.nx-build__time { color: var(--nx-text-3); font-size: 13px; }
+.nx-build__time::before { content: "·"; margin-right: var(--nx-s2); }
+.nx-build__dot { width: 10px; height: 10px; border-radius: 50%; background: var(--nx-border-strong); flex: none; }
+.nx-build__dot[data-state="building"], .nx-build__dot[data-state="starting"] { background: var(--nx-ink); animation: nx-build-pulse 1.4s ease-in-out infinite; }
+.nx-build__dot[data-state="waiting"], .nx-build__dot[data-state="ready"] { background: var(--nx-ink); }
+@keyframes nx-build-pulse { 0%, 100% { opacity: 1; } 50% { opacity: .35; } }
+@media (prefers-reduced-motion: reduce) { .nx-build__dot { animation: none !important; } }
+.nx-build__next { margin: 0; color: var(--nx-text-2); max-width: 64ch; }
+.nx-build__steps { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--nx-s2); border-left: 1px solid var(--nx-border); padding-left: var(--nx-s4); max-width: 64ch; }
+.nx-build__steps li { display: flex; gap: var(--nx-s2); align-items: baseline; color: var(--nx-text-2); }
+.nx-build__steps li[data-now="true"] { color: var(--nx-ink); font-weight: 600; }
+.nx-build__mark { width: 14px; flex: none; color: var(--nx-text-3); }
+.nx-build__steps li[data-now="true"] .nx-build__mark::before { content: ""; display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--nx-ink); animation: nx-build-pulse 1.4s ease-in-out infinite; }
+.nx-build__said { margin: 0; display: grid; gap: var(--nx-s1); padding: var(--nx-s3) var(--nx-s4); border: 1px solid var(--nx-border); border-radius: var(--nx-r-obj); max-width: 64ch; }
+.nx-build__who { font: 600 12px var(--nx-font); color: var(--nx-text-3); }
+.nx-build__acts { display: flex; gap: var(--nx-s3); align-items: center; flex-wrap: wrap; }
+.nx-build__big { min-height: 48px; padding: 0 var(--nx-s6); font-size: 16px; }

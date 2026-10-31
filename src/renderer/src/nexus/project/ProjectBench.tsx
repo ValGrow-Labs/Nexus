@@ -39,6 +39,7 @@ import { ExecutionSetupSheet } from '../components/ExecutionSetupSheet';
 import { JobLogSheet } from '../runs/JobLogSheet';
 import { ApprovalsSection } from './ApprovalsSection';
 import { AiDock } from '../agent/AiDock';
+import { BuildStage } from '../agent/BuildStage';
 import { RequirementSheet } from './RequirementSheet';
 import { FirstBuildLine } from './FirstBuildLine';
 import { firstBuildLine } from './firstBuildLineModel';
@@ -352,7 +353,13 @@ function Workbench({ project, tool }: { project: Project; tool: ProjectTool }) {
               <button type="button" className="nx-passport-btn" aria-haspopup="dialog" aria-expanded={detailsOpen} onClick={() => setDetailsOpen(true)}>Details</button>
             )} />
           {!wide && notice && <p className="nx-passport__note" role="alert">{notice}</p>}
-          <FocusSurface tool={tool} project={project} node={sourceNode} git={git} onRetryGit={refresh} />
+          {tool === 'bench' && hasSde && !card
+            ? (
+              <BuildStage projectId={project.id} blocked={false} reviewReady={reviewReady} onReview={() => navigate({ name: 'project', id: project.id, tool: 'changes' })}>
+                <FocusSurface tool={tool} project={project} node={sourceNode} git={git} onRetryGit={refresh} />
+              </BuildStage>
+            )
+            : <FocusSurface tool={tool} project={project} node={sourceNode} git={git} onRetryGit={refresh} />}
           {wide && <Passport project={project} node={node} headSha={head?.sha ?? null} onRefreshProject={refreshProject} onOpenTerminal={openTerminal} notice={notice} artifacts={artifacts} onSave={onSave} onHandOff={onHandOff} />}
         </div>
         </div>
