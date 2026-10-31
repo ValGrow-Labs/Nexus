@@ -6,7 +6,7 @@ import { useExecStore, useHealth, useJob, withIntent } from '../data/useExecutio
 import { Button } from '../ui/Button';
 import { useExecutionUi } from './execContext';
 import {
-  TRY_INTRO, TRY_MAX_LINES, TRY_NO_BUTTONS, TRY_NO_OUTPUT, TRY_OWN_EXAMPLE, TRY_OWN_HINT, TRY_OWN_SUMMARY, tryOutput, tryView
+  TRY_INTRO, TRY_MAX_LINES, TRY_NO_BUTTONS, TRY_NO_COMMIT, TRY_NO_OUTPUT, TRY_OWN_EXAMPLE, TRY_OWN_HINT, TRY_OWN_SUMMARY, tryOutput, tryView
 } from './tryModel';
 
 /** While a run is live its job and its output are read again this often (the output is the job's own log, read through the log reader). */
@@ -21,11 +21,13 @@ const lastRun = new Map<string, string>();
  * "Run the program" are the buttons Nexus found in the change; "Try your own command" is one text box. Nothing runs by itself: the press is
  * the OK. The run is the ordinary sandbox job (no internet, the same limits as a test run); Stop ends it; every way it can end has its words.
  */
-export function TryIt({ projectId, versionId }: { projectId: string; versionId: string }) {
+export function TryIt({ projectId, versionId = null, heading = true }: { projectId: string; /** A suggested change; null or none: the project as it stands. */ versionId?: string | null; heading?: boolean }) {
+  const target = versionId ?? `project:${projectId}`;
   const ui = useExecutionUi();
   const { availability } = useHealth();
   const [options, setOptions] = useState<TryOptionView[] | null>(null);
-  const [jobId, setJobId] = useState<string | null>(() => lastRun.get(versionId) ?? null);
+  const [noCommit, setNoCommit] = useState(false);
+  const [jobId, setJobId] = useState<string | null>(() => lastRun.get(target) ?? null);
   const [command, setCommand] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -35,14 +37,15 @@ export function TryIt({ projectId, versionId }: { projectId: string; versionId: 
   // The buttons Nexus found in this change (read once per change; main reads them from the change's own files).
   useEffect(() => {
     let alive = true;
-    setOptions(null);
-    void nexusClient.tryRun({ op: 'options', projectId, versionId }).then((r) => {
+    setOptions(null); setNoCommit(false);
+    void nexusClient.tryRun({ op: 'options', projectId, ...(versionId ? { versionId } : {}) }).then((r) => {
       if (!alive) return;
       setOptions(r.ok && 'options' in r.data ? r.data.options : []);
+      setNoCommit(r.ok && 'options' in r.data && r.data.noCommit === true);
     });
     return () => { alive = false; };
   }, [projectId, versionId]);
-  useEffect(() => { setJobId(lastRun.get(versionId) ?? null); setError(null); }, [versionId]);
+  useEffect(() => { setJobId(lastRun.get(target) ?? null); setError(null); }, [target]);
 
   const job = useJob(jobId);
   const detail = job.data ?? null;
@@ -97,12 +100,12 @@ export function TryIt({ projectId, versionId }: { projectId: string; versionId: 
     if (what === 'custom' && command.trim() === '') return;
     setBusy(true); setError(null);
     nonce.current += 1;
-    const r = await withIntent(`try:${versionId}:${what}:${nonce.current}:${Date.now()}`, (intentId) => nexusClient.tryRun({
-      op: 'run', projectId, versionId, what, ...(what === 'custom' ? { command: command.trim() } : {}), intentId
+    const r = await withIntent(`try:${target}:${what}:${nonce.current}:${Date.now()}`, (intentId) => nexusClient.tryRun({
+      op: 'run', projectId, ...(versionId ? { versionId } : {}), what, ...(what === 'custom' ? { command: command.trim() } : {}), intentId
     }));
     setBusy(false);
     if (!r.ok) { setError(execFailText(r)); return; }
-    if ('job' in r.data) { lastRun.set(versionId, r.data.job.id); setJobId(r.data.job.id); setNow(Date.now()); }
+    if ('job' in r.data) { lastRun.set(target, r.data.job.id); setJobId(r.data.job.id); setNow(Date.now()); }
   };
   const stop = async () => {
     if (!jobId || !view.canStop) return;
@@ -114,11 +117,12 @@ export function TryIt({ projectId, versionId }: { projectId: string; versionId: 
   const shown = tryOutput(out.text);
   const lines = shown.lines.length > TRY_MAX_LINES ? shown.lines.slice(-TRY_MAX_LINES) : shown.lines;
   const cutTop = shown.lines.length > TRY_MAX_LINES;
-  const disabled = busy || view.live || !ready;
+  const disabled = busy || view.live || !ready || noCommit;
   return (
     <div className="nx-try" data-state={view.state}>
-      <h3 className="nx-cs__sub">Try it</h3>
+      {heading && <h3 className="nx-cs__sub">Try it</h3>}
       <p className="nx-muted">{TRY_INTRO}</p>
+      {noCommit && <p className="nx-try__setup" role="status">{TRY_NO_COMMIT}</p>}
       {!ready && detail === null && (
         <p className="nx-try__setup" role="status">
           {view.headline}{' '}
@@ -133,13 +137,13 @@ export function TryIt({ projectId, versionId }: { projectId: string; versionId: 
             <span className="nx-try__shows">{o.shows}</span>
           </span>
         ))}
-        {options !== null && options.length === 0 && <span className="nx-muted">{TRY_NO_BUTTONS}</span>}
+        {options !== null && options.length === 0 && !noCommit && <span className="nx-muted">{TRY_NO_BUTTONS}</span>}
       </div>
       <details className="nx-try__own">
         <summary>{TRY_OWN_SUMMARY}</summary>
         <form onSubmit={(e) => { e.preventDefault(); void run('custom'); }}>
-          <label className="nx-visually-hidden" htmlFor={`nx-try-cmd-${versionId}`}>Your command</label>
-          <input id={`nx-try-cmd-${versionId}`} className="nx-try__cmd" type="text" value={command} maxLength={1000} spellCheck={false} autoComplete="off"
+          <label className="nx-visually-hidden" htmlFor={`nx-try-cmd-${target}`}>Your command</label>
+          <input id={`nx-try-cmd-${target}`} className="nx-try__cmd" type="text" value={command} maxLength={1000} spellCheck={false} autoComplete="off"
             placeholder={TRY_OWN_EXAMPLE} onChange={(e) => setCommand(e.target.value)} />
           <Button variant="secondary" type="submit" disabled={disabled || command.trim() === ''}>Run it</Button>
         </form>

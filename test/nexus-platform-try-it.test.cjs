@@ -7,6 +7,7 @@
 //   TI2  the person's own command: tokenized by main, one try-run job, the output in the job log, the sandbox record (no network, the
 //        fixed limits and wall clock, read-only root, dropped privileges), the activity record, and the staged change (src.tar)
 //   TI3  every way a run ends has its state: a non-zero exit fails with its exit code, a run that does not end is stopped (cancelled)
+//   TI5  the project as it stands (no versionId): its checked-out commit, the same job, no suggested change as input; none yet: a plain answer
 //   TI4  refusals: a second run while one is live (try_busy), a secret in the command, a helper command, an empty or unreadable command,
 //        a draft or foreign version, the generic job start and the agent's job_request can never start it
 const h = require('./helpers/sqlite.cjs');
@@ -101,6 +102,41 @@ test('TI1-TI4 Try it: buttons from the change, the own command, every ending, an
     assert.ok(['cancelled', 'running'].includes(stopped.state));
     await w.until(() => w.ended(held.id), 'the stopped run ends', 60_000);
     assert.equal(w.jobRow(held.id).state, 'cancelled');
+
+    // TI5: the project as it stands (no versionId): its checked-out commit, read by main, not the pending change
+    const projOpts = await w.x.ok('nexus:try', { op: 'options', projectId: w.PROJECT });
+    assert.deepEqual(projOpts, { options: [] }, 'the project as it stands has no test script or main file in this fixture, and it has a commit');
+    const here = await w.x.call('nexus:try', { op: 'run', projectId: w.PROJECT, what: 'custom', command: 'echo here', intentId: intent() });
+    assert.equal(here.ok, true, JSON.stringify(here));
+    assert.deepEqual(here.data.job.inputs, [], 'no suggested change is an input');
+    await w.until(() => w.ended(here.data.job.id), 'the project run ends', 60_000);
+    assert.equal(w.jobRow(here.data.job.id).state, 'completed');
+    const hereRun = w.played.at(-1);
+    assert.deepEqual(hereRun.argv, ['echo', 'here']);
+    assert.ok(hereRun.files.includes('package.json') && !hereRun.files.includes('src/index.js'), 'the project as it stands, not the change: ' + hereRun.files.join(','));
+    const hereParams = JSON.parse(w.jobRow(here.data.job.id).params_json);
+    assert.deepEqual(Object.keys(hereParams).sort(), ['argv', 'commit']);
+    assert.match(hereParams.commit, /^[0-9a-f]{40}$/);
+    // a project with no commit yet: no buttons and a plain answer, and a run is refused
+    const execDeps = w.nx.exec.deps;
+    const realHead = execDeps.resolveHead;
+    execDeps.resolveHead = async () => null;
+    try {
+      assert.deepEqual(await w.x.ok('nexus:try', { op: 'options', projectId: w.PROJECT }), { options: [], noCommit: true });
+      const none = await w.x.call('nexus:try', { op: 'run', projectId: w.PROJECT, what: 'custom', command: 'echo x', intentId: intent() });
+      assert.equal(none.ok, false); assert.equal(none.reason, 'try_no_commit');
+      const noneTests = await w.x.call('nexus:try', { op: 'run', projectId: w.PROJECT, what: 'tests', intentId: intent() });
+      assert.equal(noneTests.ok, false); assert.equal(noneTests.reason, 'try_no_commit');
+      // a suggested change still runs without it
+      assert.equal((await w.x.ok('nexus:try', { op: 'options', projectId: w.PROJECT, versionId: cs })).options.length, 2);
+    } finally { execDeps.resolveHead = realHead; }
+    // the one-at-a-time rule covers both targets
+    const first = (await run(w, cs, 'custom', 'hold-run')).data.job;
+    await w.until(() => w.jobRow(first.id).state === 'running', 'the held run is running', 60_000);
+    const second = await w.x.call('nexus:try', { op: 'run', projectId: w.PROJECT, what: 'custom', command: 'echo no', intentId: intent() });
+    assert.equal(second.ok, false); assert.equal(second.reason, 'try_busy');
+    await w.x.ok('nexus:job:cancel', first.id);
+    await w.until(() => w.ended(first.id), 'the held run is stopped', 60_000);
 
     // TI4: refusals
     const refuse = async (what, command, reason) => { const r = await run(w, cs, what, command); assert.equal(r.ok, false, JSON.stringify(r)); if (reason) assert.equal(r.reason, reason, JSON.stringify(r)); return r; };

@@ -118,7 +118,7 @@ test('TR5 the recipe and the action: the same sandbox as a test run, no network,
   assert.ok(r.limits.outputMaxBytes <= t.limits.outputMaxBytes, 'the output cap is never larger than a test run');
   assert.deepEqual(Object.keys(r.params.properties), [], 'the job start carries no parameter for it');
   const a = getUserAction('sde.try.run');
-  assert.deepEqual([a.domain, a.run, a.inputs.map((i) => [i.slot, i.kinds, i.min, i.max]), Object.keys(a.params.properties)], ['sde', { recipes: ['sde.try.run'] }, [['change', ['change_set'], 1, 1]], []]);
+  assert.deepEqual([a.domain, a.run, a.inputs.map((i) => [i.slot, i.kinds, i.min, i.max]), Object.keys(a.params.properties)], ['sde', { recipes: ['sde.try.run'] }, [['change', ['change_set'], 0, 1]], []]);
   assert.ok(a.prerequisites.includes('docker') && a.prerequisites.includes('git'));
   const sde = DOMAINS.find((d) => d.id === 'sde');
   assert.ok(sde.recipes.includes('sde.try.run') && sde.actions.includes('sde.try.run'));
@@ -177,4 +177,63 @@ test('TR6 the wiring: one request, no shell, no auto-run, in the right place on 
   }
   // main's git read is the only way the buttons are found
   assert.match(read('src/main/index.ts'), /readAtRev: async \(root, rev, rel\) => \{ const f = await getFileAtRev\(root, rev, rel\)/);
+});
+
+const RI = loadTs('src/renderer/src/nexus/agent/runIntent.ts');
+
+test('TR7 a message that is only "run it" is a run request; every near miss stays work for the AI helper', () => {
+  for (const yes of ['run', 'Run', 'run this', 'run it', 'Run it!', 'run that.', 'start it', 'start this', 'test it', 'try it', 'try this', 'Try it!!', 'run the tests', 'run tests', 'run the test',
+    'please run it', 'run it please', 'Please, run this.', 'ok run it', 'run the program', 'run the app', 'start the app', 'test the project', 'try my project', '  run   it  ', 'RUN THE TESTS?', "run it, please!"]) {
+    assert.equal(RI.isRunRequest(yes), true, yes);
+  }
+  for (const no of ['', '   ', 'run a migration that adds a column', 'add a run button', 'run the tests and fix what fails', 'run it again and then deploy', 'start', 'test', 'try',
+    'please add tests', 'how do I run this', 'run this through the linter', 'rerun it', 'do not run it', 'run it in production', 'try it with a dark theme', 'runit', 'start a new project',
+    'test the login page and tell me what is wrong', 'x'.repeat(200)]) {
+    assert.equal(RI.isRunRequest(no), false, no || '(empty)');
+  }
+  assert.equal(RI.isRunRequest(undefined), false);
+  assert.equal(RI.normalizeRunText('  Please, RUN it!  '), 'run it');
+  assert.doesNotMatch([RI.RUN_REPLY_TEXT, RI.RUN_REPLY_BUTTON].join(' '), VENDOR);
+  assert.equal(RI.RUN_REPLY_BUTTON, 'Try it');
+});
+
+test('TR8 the dock answers a run request itself (no helper turn), with one button to Try it; Try it also runs the project as it stands', () => {
+  const intent = read('src/renderer/src/nexus/intent/IntentLine.tsx');
+  const sendAt = intent.indexOf("if (mode === 'agent' && ctx.project && isRunRequest(text))");
+  assert.ok(sendAt > 0 && sendAt < intent.indexOf("if (mode === 'agent' && ctx.project) { void sendToAgent(text, ctx.project.id); return; }"), 'the run check comes before the send to the AI helper');
+  assert.match(intent, /isRunRequest\(text\)\) \{ useRunReply\.getState\(\)\.show\(ctx\.project\.id\); setDraft\(''\); setError\(null\); setSent\(null\); return; \}/, 'the words are cleared as after a send, nothing is sent');
+  assert.match(intent, /setDraft\(''\); setError\(null\);\n\s+useRunReply\.getState\(\)\.clear\(\);/, 'a normal send clears the reply');
+  const panel = read('src/renderer/src/nexus/agent/AgentPanel.tsx');
+  assert.match(panel, /Nexus: \{RUN_REPLY_TEXT\}/, 'labelled as Nexus, never as the AI helper');
+  assert.match(panel, /navigate\(\{ name: 'project', id: projectId, tool: 'try' \}\)/);
+  assert.equal((panel.match(/RUN_REPLY_BUTTON/g) || []).length, 2, 'one button');
+  // the project's Try it page
+  const routes = loadTs('src/renderer/src/nexus/router/routes.ts');
+  assert.deepEqual([...routes.PROJECT_TOOLS], ['bench', 'changes', 'completion', 'runs', 'try']);
+  assert.deepEqual(routes.parseHash('#/p/proj-1/try'), { name: 'project', id: 'proj-1', tool: 'try' });
+  assert.equal(routes.formatRoute({ name: 'project', id: 'proj-1', tool: 'try' }), '#/p/proj-1/try');
+  assert.match(read('src/renderer/src/nexus/project/FocusSurface.tsx'), /if \(tool === 'try'\) return <ProjectTry projectId=\{project\.id\} change=\{tryChange\} \/>;/);
+  assert.match(read('src/renderer/src/nexus/project/ToolRail.tsx'), /\{ tool: 'try', label: 'Try it', icon: 'rocket' \}/);
+  assert.match(read('src/renderer/src/nexus/project/ProjectBench.tsx'), /canTry=\{hasSde && !card\}/);
+  const pt = read('src/renderer/src/nexus/project/ProjectTry.tsx');
+  assert.ok(pt.includes("<TryIt key={versionId ?? 'project'} projectId={projectId} versionId={versionId} heading={false} />"), 'one Try it panel, not a second one');
+  assert.ok(pt.includes('Your project now') === false && pt.includes('TRY_PROJECT_NOW'), 'the words live in the model');
+  assert.equal(M.TRY_PROJECT_NOW, 'Your project now'); assert.equal(M.TRY_CHANGE_CHOICE, 'The suggested changes');
+  assert.doesNotMatch([M.TRY_PROJECT_NOTE, M.TRY_NO_COMMIT, M.TRY_PROJECT_NOW, M.TRY_CHANGE_CHOICE].join(' '), VENDOR);
+  // main: the project target is the commit main reads itself, written into the job (never a renderer value), checked as a full sha at the lease
+  const svc = read('src/main/nexus/exec/executionService.ts');
+  assert.match(svc, /\(r\.versionId === undefined\) === \(r\.commit === undefined\)/, 'exactly one of a change or a commit');
+  assert.match(svc, /params: r\.versionId !== undefined \? \{ argv \} : \{ argv, commit: r\.commit! \}/);
+  assert.match(svc, /reason: 'try_no_commit'/);
+  const pb = read('src/main/nexus/exec/planBuilder.ts');
+  assert.match(pb, /if \(recipe\.id === 'sde\.try\.run' && !source\) refuse\('bad_input', 'a try run needs a commit to run'\);/, 'a try run never runs without a commit');
+  assert.deepEqual(PB.tryRunSource({ commit: 'a'.repeat(40) }), { commit: 'a'.repeat(40) });
+  assert.equal(PB.tryRunSource({}), null); assert.equal(PB.tryRunSource(undefined), null);
+  for (const bad of [{ commit: 'HEAD' }, { commit: 'abc' }, { commit: 42 }, { commit: 'A'.repeat(40) }, { commit: '../..' }]) assert.throws(() => PB.tryRunSource(bad), (e) => e && e.code === 'invalid', JSON.stringify(bad));
+  const a = getUserAction('sde.try.run');
+  assert.deepEqual(a.inputs.map((i) => [i.slot, i.kinds, i.min, i.max]), [['change', ['change_set'], 0, 1]]);
+  // #52's key set is unchanged (versionId is optional now); no folder, no revision name, no argument array from the renderer
+  const handler = read('src/main/nexusIpc/registerNexusIpc.ts');
+  assert.match(handler, /V\.object\(args\[0\], \['op', 'projectId', 'versionId', 'what', 'command', 'intentId'\] as const, \['versionId', 'what', 'command', 'intentId'\] as const\)/);
+  for (const k of ['try_no_commit']) assert.equal(E.AGENT_REASON_TEXT[k], ENV.AGENT_REASON_MESSAGES[k], k);
 });

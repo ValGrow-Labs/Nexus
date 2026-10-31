@@ -7,7 +7,7 @@ import { plainDomainLabel } from '../workspaces/plainDomainCopy';
 /** A registry domain with no workspace (Data Scientist in B2a): `#/w/<id>` opens its honest domain page. */
 export type DomainPageId = string;
 
-export const PROJECT_TOOLS = ['bench', 'changes', 'completion', 'runs'] as const;
+export const PROJECT_TOOLS = ['bench', 'changes', 'completion', 'runs', 'try'] as const;
 export type ProjectTool = (typeof PROJECT_TOOLS)[number];
 
 export type Route =
@@ -88,7 +88,7 @@ const TITLES: Record<string, string> = {
   artifacts: 'Saved items', handoffs: 'Handoffs', deployments: 'Publishing', agents: 'Agents', 'not-found': 'Page not found'
 };
 
-const TOOL_TITLES: Record<ProjectTool, string> = { bench: 'Project', changes: 'Suggested changes', completion: 'Checklist', runs: 'Tasks' };
+const TOOL_TITLES: Record<ProjectTool, string> = { bench: 'Project', changes: 'Suggested changes', completion: 'Checklist', runs: 'Tasks', try: 'Try it' };
 
 export function routeTitle(r: Route): string {
   if (r.name === 'workspace') {

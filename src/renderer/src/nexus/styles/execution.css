@@ -353,3 +353,9 @@
 .nx-try__out { margin: 0; padding: var(--nx-s3); max-height: 320px; overflow: auto; border: 1px solid var(--nx-border); border-radius: var(--nx-r-obj); background: var(--nx-sunken); font: 12.5px/1.5 var(--nx-font-code); white-space: pre-wrap; overflow-wrap: anywhere; }
 .nx-try__line[data-stream="stderr"] { color: var(--nx-ink); font-weight: 600; }
 .nx-try__cut { color: var(--nx-text-3); }
+
+/* Try it as a project page, and the dock's reply to "run this". */
+.nx-try-page { align-content: start; }
+.nx-try__targets { display: flex; flex-wrap: wrap; gap: var(--nx-s2); }
+.nx-try__targets .nx-btn[aria-pressed="true"] { border: 1px solid var(--nx-border-strong); color: var(--nx-ink); font-weight: 600; }
+.nx-ag__run { display: grid; gap: var(--nx-s2); justify-items: start; }

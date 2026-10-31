@@ -38,7 +38,7 @@ import {
   getBranch, getStatus, getLog, getBranches, getAheadBehind, isRepo, initRepository, getDiff, mainRepoRoot,
   addWorktree, removeWorktree, worktreeHasUnintegratedWork, worktreeIsGcSafe,
   getLogGraph, getCommitFiles, getFileAtRev, compareRefs, listWorktrees, checkoutRef, repoToplevel,
-  repositoryCheck, resolveCommit
+  repositoryCheck, resolveCommit, resolveHead
 } from './git';
 import { HiveManager, type AgentMeta, type HiveMessage, type HiveTask } from './hive';
 import { HookServer } from './hooks';
@@ -5796,6 +5796,7 @@ app.whenReady().then(() => {
         isRepository: repositoryCheck,
         resolveCommit,
         readAtRev: async (root, rev, rel) => { const f = await getFileAtRev(root, rev, rel); return f.ok && !f.isBinary ? { exists: f.exists, content: f.content } : f.ok ? { exists: f.exists, content: '' } : null; },
+        resolveHead,
         appVersion: app.getVersion(),
         // B2b Task 14: the agent services (v10 on, execution on), their skill files, and a deferred scheduler tick for queued work.
         agents: persist.agentsAvailable,

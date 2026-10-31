@@ -333,6 +333,8 @@ async function flowWorld(o = {}) {
     imageContexts: images.imageContexts, acceptFsRoot, isRepository: repositoryCheck, resolveCommit, appVersion: '0.0.0-test',
     skillsResourcesDir: path.join(ROOT, 'resources'), runtimeHealthTtlMs: 365 * 24 * 3600_000, bootId: o.bootId,
     // "Try it": main's git read of one file or folder of a commit (src/main/git.ts getFileAtRev), for the buttons a change gets.
+    // "Try it" on the project as it stands: main's read of the checked-out commit (src/main/git.ts resolveHead).
+    resolveHead: async (root) => { try { return execFileSync('git', ['rev-parse', '--verify', '--quiet', 'HEAD^{commit}'], { cwd: root, encoding: 'utf8', windowsHide: true, stdio: ['ignore', 'pipe', 'ignore'] }).trim(); } catch { return null; } },
     readAtRev: async (root, rev, rel) => { try { return { exists: true, content: execFileSync('git', ['show', `${rev}:${rel}`], { cwd: root, encoding: 'utf8', windowsHide: true, stdio: ['ignore', 'pipe', 'ignore'] }) }; } catch { return { exists: false, content: '' }; } },
     // The user's existing local-server setting (main's reader: localModelSettings.ts): the address of the model server a turn is sent to.
     ...(lm || al ? { localModelConfig: () => ({ providerBaseUrls: { opencode: lmCfg.baseUrl } }) } : {}), ...(hm ? { hostedKeys } : {}) });

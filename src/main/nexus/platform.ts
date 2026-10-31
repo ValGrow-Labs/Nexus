@@ -197,6 +197,8 @@ export interface NexusPlatformOptions {
    * buttons (package.json, a main file, a tests folder). Null: no buttons are offered, but the person's own command still runs.
    */
   readAtRev?: ((root: string, rev: string, rel: string) => Promise<{ exists: boolean; content: string } | null>) | null;
+  /** main's read of the commit the project folder's checked-out version points at now (src/main/git.ts resolveHead): "Try it" on the project as it stands. */
+  resolveHead?: ((root: string) => Promise<string | null>) | null;
   /** This process's boot id (a ULID); default: a new one. */
   bootId?: string;
   /** Tests only: the registry check's problems (default: registryImpl's startup check). */
@@ -300,7 +302,7 @@ export function createNexusPlatform(db: Database.Database, opts?: NexusPlatformO
     approvals: opts?.approvals !== undefined ? opts.approvals : approvals, images: approvals, deployments,
     // With main's repository check wired in, a snapshot starts only through RepoService (which runs it first).
     snapshotsNeedRepositoryCheck: !!opts?.isRepository,
-    ingest, validation, appVersion: opts?.appVersion ?? null, findGit: opts?.findGit ?? null, readAtRev: opts?.readAtRev ?? null
+    ingest, validation, appVersion: opts?.appVersion ?? null, findGit: opts?.findGit ?? null, readAtRev: opts?.readAtRev ?? null, resolveHead: opts?.resolveHead ?? null
   });
   validation?.setSender((msg) => exec.sendToRunner(msg));
   // B2b Task 14: the agent flow actions of #24 answer by whether the agent services are composed (decided below).

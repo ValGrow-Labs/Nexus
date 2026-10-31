@@ -8,13 +8,14 @@ const ROUTES: { tool: ProjectTool; label: string; icon: NexusIconName }[] = [
   { tool: 'bench', label: 'Work area', icon: 'bench' },
   { tool: 'changes', label: 'Suggested changes', icon: 'changes' },
   { tool: 'completion', label: 'Checklist', icon: 'completion' },
-  { tool: 'runs', label: 'Tasks', icon: 'runs' }
+  { tool: 'runs', label: 'Tasks', icon: 'runs' },
+  { tool: 'try', label: 'Try it', icon: 'rocket' }
 ];
 
 /** Vertical project tools: the routed tools, then the two app actions. */
-export function ToolRail({ projectId, rootPath, tool, hasChanges, onOpenTerminal, extra }: { extra?: ReactNode; projectId: string; rootPath: string; tool: ProjectTool; hasChanges: boolean; onOpenTerminal: () => void }) {
+export function ToolRail({ projectId, rootPath, tool, hasChanges, canTry = true, onOpenTerminal, extra }: { extra?: ReactNode; canTry?: boolean; projectId: string; rootPath: string; tool: ProjectTool; hasChanges: boolean; onOpenTerminal: () => void }) {
   const actions = useShellActions();
-  const items = ROUTES.filter((r) => r.tool !== 'changes' || hasChanges || tool === 'changes');
+  const items = ROUTES.filter((r) => (r.tool !== 'changes' || hasChanges || tool === 'changes') && (r.tool !== 'try' || canTry || tool === 'try'));
   return (
     <nav className="nx-rail" aria-label="Project tools">
       {items.map((r) => (

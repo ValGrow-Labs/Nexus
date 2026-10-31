@@ -11,7 +11,8 @@ const read = (p) => fs.readFileSync(path.join(ROOT, p), 'utf8');
 const walk = (d) => fs.readdirSync(d, { withFileTypes: true }).flatMap((e) => e.isDirectory() ? walk(path.join(d, e.name)) : [path.join(d, e.name)]);
 
 test('the plan tool is gone; old plan links open Completion', () => {
-  assert.deepEqual([...PROJECT_TOOLS], ['bench', 'changes', 'completion', 'runs']);
+  // "Try it" joined the project tools (it runs the project as it stands, or a suggested change, in the safe space); the plan tool is still gone.
+  assert.deepEqual([...PROJECT_TOOLS], ['bench', 'changes', 'completion', 'runs', 'try']);
   assert.deepEqual(parseHash('#/p/proj-1/plan'), { name: 'project', id: 'proj-1', tool: 'completion' });
   assert.equal(formatRoute({ name: 'project', id: 'proj-1', tool: 'completion' }), '#/p/proj-1/completion');
 });

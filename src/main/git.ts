@@ -591,6 +591,18 @@ export async function resolveCommit(cwd: string, sha: string): Promise<ResolvedC
   return { commit: full, subject: rest.join(' ').trim(), committedAt: Number.isFinite(seconds) ? seconds * 1000 : 0 };
 }
 
+/**
+ * The commit the project folder's checked-out version points at now (HEAD), as a full sha, or null (no repository, or no commit yet). One fixed
+ * argv through runGit; nothing from a caller. "Try it" runs this version when the person tries the project as it stands.
+ */
+export async function resolveHead(cwd: string): Promise<string | null> {
+  if (typeof cwd !== 'string' || !cwd || cwd.includes('\0')) return null;
+  const r = await runGit(cwd, ['rev-parse', '--verify', '--quiet', 'HEAD^{commit}']);
+  if (!r.ok) return null;
+  const full = r.stdout.trim().toLowerCase();
+  return FULL_SHA.test(full) ? full : null;
+}
+
 /** What `initRepository` answers: the repository was set up on branch main, or why not (a plain reason; never git's own text). */
 export type InitRepositoryResult = { ok: true; branch: 'main' } | { ok: false; reason: 'not_absolute' | 'not_a_folder' | 'is_link' | 'already_a_repository' | 'git_missing' | 'failed' };
 

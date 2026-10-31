@@ -295,6 +295,14 @@ export function tryRunArgv(params: unknown): string[] {
   return t.argv;
 }
 
+/** The commit a try run of the project as it stands names in its params (a full sha), or null. */
+export function tryRunSource(params: unknown): { commit: string } | null {
+  const c = isPlainObject(params) ? params.commit : undefined;
+  if (c === undefined) return null;
+  if (typeof c !== 'string' || !COMMIT_RE.test(c)) return refuse('bad_input', 'the try run commit is not a full sha');
+  return { commit: c };
+}
+
 export function expandArgv(recipe: RecipeDef, framework: TestFramework | null, inputs: readonly PlanInput[], params?: unknown): string[] {
   const ids = framework === null ? recipe.argvTemplates : recipe.argvTemplates.filter((t) => t.startsWith(`${framework}.`));
   const out: string[] = [];
@@ -396,7 +404,10 @@ export function buildPlan(ctx: PlanContext): AttemptPlan {
   if (!profile || !recipe.profiles.includes(profile.id)) return refuse('image_missing', 'no sandbox profile for this recipe');
   if (!ctx.imageId || !/^sha256:[0-9a-f]{64}$/.test(ctx.imageId)) return refuse('image_missing', 'the profile image is not present');
   const framework = pickFramework(recipe, profile.id, ctx.framework, ctx.inputs);
-  const source = sourceOf(ctx.inputs);
+  // A try run of a suggested change has that change as its input; a try run of the project as it stands has the commit main resolved and wrote into the
+  // job's params (checked here as a full sha). A try run never runs without a commit to stage: it fails closed.
+  const source = sourceOf(ctx.inputs) ?? (recipe.id === 'sde.try.run' ? tryRunSource(ctx.params) : null);
+  if (recipe.id === 'sde.try.run' && !source) refuse('bad_input', 'a try run needs a commit to run');
   if (source && !ctx.repoPath) refuse('project_folder_unavailable', 'the project folder is not available');
   const deps = depsVolume(profile.id, ctx.inputs);
   const egress = recipe.network === 'egress-approved';

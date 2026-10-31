@@ -16,8 +16,9 @@ import { availabilityFrom } from '../data/executionModel';
 import { useExecStore } from '../data/useExecution';
 import { agentPanelModel, intentRoute, intentWords } from '../agent/agentModel';
 import { sendToProjectAgent } from '../agent/sendToAgent';
+import { isRunRequest, useRunReply } from '../agent/runIntent';
 
-const TOOL_PAGE: Record<ProjectTool, string> = { bench: 'Work area', changes: 'Suggested changes', completion: 'Checklist', runs: 'Tasks' };
+const TOOL_PAGE: Record<ProjectTool, string> = { bench: 'Work area', changes: 'Suggested changes', completion: 'Checklist', runs: 'Tasks', try: 'Try it' };
 
 let requestSeq = 0;
 function newRequestId(): string { requestSeq += 1; return `r-${Date.now()}-${requestSeq}`; }
@@ -126,12 +127,15 @@ export function IntentLine({ summoned = false, inline = false, compact = false, 
     setSending(false);
     if (!r.ok) { setError(r.error); setSent(null); return; }
     setDraft(''); setError(null);
+    useRunReply.getState().clear();
     setSent({ href: formatRoute({ name: 'project', id: projectId, tool: 'bench' }), label: words.followLabel, lead: words.sentLead(r.continued) });
   };
 
   const send = () => {
     const text = draft.trim();
     if (!text || lockedBox) return;
+    // A message that is only "run it" is not work for the AI helper: the dock answers it itself, with the one button that opens Try it. The words are cleared as after a send.
+    if (mode === 'agent' && ctx.project && isRunRequest(text)) { useRunReply.getState().show(ctx.project.id); setDraft(''); setError(null); setSent(null); return; }
     if (mode === 'agent' && ctx.project) { void sendToAgent(text, ctx.project.id); return; }
     const res = port.send({ text: draft, contextHeader: header });
     if (!res.ok) { setError(res.error); setSent(null); return; }

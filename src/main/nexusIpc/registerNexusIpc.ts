@@ -701,9 +701,10 @@ export function registerNexusIpc(registrar: IpcRegistrar, deps: NexusIpcDeps): v
   // limits and wall clock, one at a time per project; its output is read through the job log channel.
   reg('nexus:try', (args) => {
     V.arity(args, 1);
-    const o = V.object(args[0], ['op', 'projectId', 'versionId', 'what', 'command', 'intentId'] as const, ['what', 'command', 'intentId'] as const);
+    const o = V.object(args[0], ['op', 'projectId', 'versionId', 'what', 'command', 'intentId'] as const, ['versionId', 'what', 'command', 'intentId'] as const);
     const op = V.enumOf(o.op, 'op', ['options', 'run'] as const);
-    const base = { projectId: V.projectId(o.projectId), versionId: V.platformId(o.versionId, 'versionId') };
+    // No versionId: the project as it stands (its checked-out commit, which main reads); with one: that suggested change.
+    const base = { projectId: V.projectId(o.projectId), versionId: o.versionId === undefined ? undefined : V.platformId(o.versionId, 'versionId') };
     if (op === 'options') {
       if (o.what !== undefined) throw new RequestError('what', 'is sent only with run');
       if (o.command !== undefined) throw new RequestError('command', 'is sent only with run');
@@ -715,8 +716,12 @@ export function registerNexusIpc(registrar: IpcRegistrar, deps: NexusIpcDeps): v
     if (what !== 'custom' && o.command !== undefined) throw new RequestError('command', 'is sent only with a command of your own');
     return { op, ...base, what, command: o.command === undefined ? undefined : V.tryCommand(o.command), intentId: V.intentId(o.intentId) };
   }, async (nx, me, q) => {
-    if (q.op === 'options') return ok({ options: await nx.exec.tryOptions(me, { projectId: q.projectId, versionId: q.versionId }) });
-    const r = await nx.exec.tryStart(me, { projectId: q.projectId, versionId: q.versionId, what: q.what, ...(q.command !== undefined ? { command: q.command } : {}), intentId: q.intentId });
+    const target = q.versionId === undefined ? {} : { versionId: q.versionId };
+    if (q.op === 'options') {
+      const t = await nx.exec.tryOptions(me, { projectId: q.projectId, ...target });
+      return ok({ options: t.options, ...(t.noCommit ? { noCommit: true } : {}) });
+    }
+    const r = await nx.exec.tryStart(me, { projectId: q.projectId, ...target, what: q.what, ...(q.command !== undefined ? { command: q.command } : {}), intentId: q.intentId });
     return ok({ job: jobView(r.job), created: r.created });
   });
 

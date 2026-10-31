@@ -319,6 +319,8 @@ function Workbench({ project, tool }: { project: Project; tool: ProjectTool }) {
   const reviewReady = useMemo(() => changeSetRows(artifacts).filter((r) => r.reviewable).length, [artifacts]);
   const card = setupCard({ inSoftware: (idx.byProject.get(project.id) ?? []).some((r) => r.status === 'active' && r.workspaceId === 'sde'), git: git.status === 'ready' ? 'ready' : git.status === 'error' ? 'error' : 'loading', isRepo: git.status === 'ready' && git.isRepo });
   const hasSde = (idx.byProject.get(project.id) ?? []).some((r) => r.status === 'active' && r.workspaceId === 'sde');
+  // The newest suggested change waiting for a decision: Try it can run it as well as the project as it stands.
+  const tryChange = useMemo(() => { const r = changeSetRows(artifacts).find((x) => x.reviewable); return r ? { versionId: r.versionId, name: r.name } : null; }, [artifacts]);
   // A brand-new project: the three steps of "Your first build", until it has any suggested changes.
   // The same test the request box uses: once the AI helper can take a request, the three steps are done and the card goes away.
   const helperCanAsk = agentPanelModel({ health, availability, sessions: [], sessionsFail: null }).canAsk;
@@ -351,7 +353,7 @@ function Workbench({ project, tool }: { project: Project; tool: ProjectTool }) {
           <ApprovalsSection projectId={project.id} except={hasSde ? ['repo.write_refs'] : []} />
         </div>
         <div className="nx-bench">
-          <ToolRail projectId={project.id} rootPath={project.rootPath} tool={tool} hasChanges={hasChanges} onOpenTerminal={openTerminal}
+          <ToolRail projectId={project.id} rootPath={project.rootPath} tool={tool} hasChanges={hasChanges} canTry={hasSde && !card} onOpenTerminal={openTerminal}
             extra={!wide && (
               <button type="button" className="nx-passport-btn" aria-haspopup="dialog" aria-expanded={detailsOpen} onClick={() => setDetailsOpen(true)}>Details</button>
             )} />
@@ -359,10 +361,10 @@ function Workbench({ project, tool }: { project: Project; tool: ProjectTool }) {
           {tool === 'bench' && hasSde && !card
             ? (
               <BuildStage projectId={project.id} blocked={false} reviewReady={reviewReady} onReview={() => navigate({ name: 'project', id: project.id, tool: 'changes' })}>
-                <FocusSurface tool={tool} project={project} node={sourceNode} git={git} onRetryGit={refresh} />
+                <FocusSurface tool={tool} project={project} node={sourceNode} git={git} onRetryGit={refresh} tryChange={tryChange} />
               </BuildStage>
             )
-            : <FocusSurface tool={tool} project={project} node={sourceNode} git={git} onRetryGit={refresh} />}
+            : <FocusSurface tool={tool} project={project} node={sourceNode} git={git} onRetryGit={refresh} tryChange={tryChange} />}
           {wide && <Passport project={project} node={node} headSha={head?.sha ?? null} onRefreshProject={refreshProject} onOpenTerminal={openTerminal} notice={notice} artifacts={artifacts} onSave={onSave} onHandOff={onHandOff} />}
         </div>
         </div>

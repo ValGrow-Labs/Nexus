@@ -508,9 +508,10 @@ export interface AcceptResultView { version: VersionView; accept: ChangeSetAccep
  * "Try it" (#52, `nexus:try`): run a suggested change in the safe space because the person pressed a button. `options` answers the buttons main
  * found in the change (what each runs is shown with it); `run` starts one: a detected button (`tests`, `program`: main works out the command from
  * the change, the renderer never names it) or the person's own typed command (`custom`: text only; main cuts it into an argument array, with
- * quotes and no shell). The one channel of the family that carries typed command text.
+ * quotes and no shell). The one channel of the family that carries typed command text. Without `versionId` the target is the project as it
+ * stands (the commit its folder has checked out, which main reads itself; `noCommit` answers a project with no saved version yet).
  */
-export type TryArgs = { op: 'options'; projectId: string; versionId: string }
-  | { op: 'run'; projectId: string; versionId: string; what: 'tests' | 'program' | 'custom'; command?: string; intentId: string };
+export type TryArgs = { op: 'options'; projectId: string; versionId?: string }
+  | { op: 'run'; projectId: string; versionId?: string; what: 'tests' | 'program' | 'custom'; command?: string; intentId: string };
 export interface TryOptionView { what: 'tests' | 'program'; label: string; shows: string }
-export type TryResultView = { options: TryOptionView[] } | { job: JobView; created: boolean };
+export type TryResultView = { options: TryOptionView[]; noCommit?: true } | { job: JobView; created: boolean };

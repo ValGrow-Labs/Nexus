@@ -22,6 +22,11 @@ export interface TryView {
 }
 
 export const TRY_INTRO = 'Run the suggested changes in the safe space: a locked box with no internet. Your real files are not touched, and nothing runs until you press a button.';
+export const TRY_PAGE_TITLE = 'Try it';
+export const TRY_PROJECT_NOW = 'Your project now';
+export const TRY_CHANGE_CHOICE = 'The suggested changes';
+export const TRY_PROJECT_NOTE = 'This runs your project as it was last saved with git. Changes you have not saved yet are not included.';
+export const TRY_NO_COMMIT = 'This project has no saved starting point yet, so there is nothing to run. Use the setup card on the project page first.';
 export const TRY_SETUP_TEXT = 'The safe space is not ready on this computer yet. Open “Get this computer ready”, then try again.';
 export const TRY_NO_BUTTONS = 'Nexus did not find a test or a program to run in these changes. You can still run your own command below.';
 export const TRY_NO_OUTPUT = 'It printed nothing.';

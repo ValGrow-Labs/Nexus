@@ -171,6 +171,7 @@ export const AGENT_REASON_TEXT: Readonly<Record<string, string>> = Object.freeze
   try_command: 'Nexus could not read that command. Check the quotes and try again.',
   try_secret: 'The command looks like it contains a password or secret key, so nothing was run. Remove it and try again.',
   try_nothing: 'This change has nothing to run that way. Try your own command instead.',
+  try_no_commit: 'This project has no saved version to try yet. Set it up first, then try again.',
   unknown_skill: 'That skill is not available.',
   secret_in_comment: 'The comment looks like it contains a password or secret key, so nothing was saved. Remove it and try again.',
   comment_required: 'Say what should change. This choice needs a comment.',

@@ -10,6 +10,8 @@ import { IntentLine } from '../intent/IntentLine';
 import { useNexusUi } from '../state/uiStore';
 import { sendToProjectAgent } from './sendToAgent';
 import { pendingAction, usePendingStart } from './pendingStart';
+import { RUN_REPLY_BUTTON, RUN_REPLY_TEXT, useRunReply } from './runIntent';
+import { navigate } from '../router/useRoute';
 import { Icon } from '../icons';
 import { Button } from '../ui/Button';
 import { ApprovalList } from '../project/ApprovalsSection';
@@ -67,9 +69,11 @@ export function AgentPanel({ projectId, workspaceId, reviewReady = 0, onReview, 
   const showTail = tail !== null && !(snapshotStarted && tail.button?.kind === 'snapshot');
   const tone = repoWaiting.length > 0 || panel.waiting ? 'waiting' : running ? 'working' : reviewReady > 0 ? 'review' : panel.kind === 'ready' ? 'ready' : 'setup';
   useEffect(() => { onDock?.({ attention: needsLook, tone }); }, [needsLook, tone]); // eslint-disable-line react-hooks/exhaustive-deps
+  // "Run this" typed in the box: Nexus answers it itself (a small grey line, never the AI helper's words) with the one button that opens Try it.
+  const showRunReply = useRunReply((r) => r.projectId) === projectId;
   const items = chatItems(detail.data);
   const bodyRef = useRef<HTMLDivElement | null>(null);
-  useEffect(() => { const e = bodyRef.current; if (e) e.scrollTop = e.scrollHeight; }, [items.length, tail?.text, repoWaiting.length]);
+  useEffect(() => { const e = bodyRef.current; if (e) e.scrollTop = e.scrollHeight; }, [items.length, tail?.text, repoWaiting.length, showRunReply]);
   const elapsed = (panel.progress?.running ?? '').split(' for ').pop()?.replace(/\.$/, '') ?? '';
   const word = repoWaiting.length > 0 || panel.waiting ? 'Waiting for you'
     : running ? (elapsed ? `Working · ${elapsed}` : 'Working')
@@ -164,6 +168,12 @@ export function AgentPanel({ projectId, workspaceId, reviewReady = 0, onReview, 
           <div className="nx-ag__tail" role="status">
             <span>{tail.text}</span>
             {tail.button && <Button variant="primary" disabled={busy !== null} onClick={() => { void press(); }}>{tail.button.label}</Button>}
+          </div>
+        )}
+        {showRunReply && (
+          <div className="nx-ag__run" role="status">
+            <span className="nx-ag__step">Nexus: {RUN_REPLY_TEXT}</span>
+            <Button variant="primary" onClick={() => { useRunReply.getState().clear(); navigate({ name: 'project', id: projectId, tool: 'try' }); }}>{RUN_REPLY_BUTTON}</Button>
           </div>
         )}
         {note && <p className="nx-ag__step" role="status">{note}</p>}

@@ -389,6 +389,8 @@ export interface ExecutionDeps {
   findGit?: (() => Promise<string | null>) | null;
   /** One file or folder of a commit in the project folder (main's git read); what "Try it" detects its buttons from. */
   readAtRev?: ((root: string, rev: string, rel: string) => Promise<{ exists: boolean; content: string } | null>) | null;
+  /** The commit the project folder's checked-out version points at now (main's git read, src/main/git.ts resolveHead); null: none yet. */
+  resolveHead?: ((root: string) => Promise<string | null>) | null;
   /**
    * B2b (Task 5): the MCP gateway; null drops `mcp.call` and `agent.exec.done` with one log line each (no agent
    * services in this build). Platform.ts builds this AFTER the execution core (ExecQueries needs `exec`), so it is
@@ -1747,7 +1749,9 @@ export class ExecutionService {
     const inputs = this.planInputs(j.id);
     // A dev deployment stages the commit its build was made from, beside the build's files.
     // A diagnosis reads Docker and the data home only: no project folder.
-    const needsRepo = (recipe.executor === 'engine' && recipe.id !== 'sde.diagnose') || recipe.executor === 'service' || inputs.some((i) => i.storage?.kind === 'git');
+    const needsRepo = (recipe.executor === 'engine' && recipe.id !== 'sde.diagnose') || recipe.executor === 'service' || inputs.some((i) => i.storage?.kind === 'git')
+      // A try run of the project as it stands has no input: its commit is in the job's params, and its folder is staged all the same.
+      || recipe.id === TRY_ACTION_ID;
     const repoPath = needsRepo ? this.repoPathOf(j.project_id) : null;
     const workRel = home.attemptWorkRel(j.id, n);
     const logRel = home.attemptLogPath(j.id, n);
@@ -2561,9 +2565,13 @@ export class ExecutionService {
    * activity record). One try run at a time per project; the pressed button is the person's OK (no approval is needed: nothing leaves the
    * computer). The agent's `job_request` can never ask for it: the recipe is in no agent capability scope.
    */
-  startTry(p: Principal, r: { projectId: string; versionId: string; argv: readonly string[]; intentId: string }): { job: ExecJob; created: boolean } {
+  startTry(p: Principal, r: { projectId: string; versionId?: string; commit?: string; argv: readonly string[]; intentId: string }): { job: ExecJob; created: boolean } {
     this.requireAvailable();
-    if (!isPlainObject(r) || !isStr(r.projectId) || !isStr(r.versionId) || !Array.isArray(r.argv)) throw new PlatformError('invalid', 'projectId, versionId and argv are required');
+    // A suggested change (versionId), or the project as it stands (a full-sha commit main resolved): exactly one of the two.
+    if (!isPlainObject(r) || !isStr(r.projectId) || !Array.isArray(r.argv) || (r.versionId === undefined) === (r.commit === undefined)
+      || (r.versionId !== undefined && !isStr(r.versionId)) || (r.commit !== undefined && !(isStr(r.commit) && /^[0-9a-f]{40}$/.test(r.commit)))) {
+      throw new PlatformError('invalid', 'projectId, argv and either versionId or commit are required');
+    }
     const pw = requireActiveParticipation(this.access, this.db, p, r.projectId, 'sde', 'job.create');
     const key = validateKey(r.intentId);
     const action = getUserAction(TRY_ACTION_ID);
@@ -2579,8 +2587,8 @@ export class ExecutionService {
         .get(pw.project_id, TRY_ACTION_ID, ...LIVE_JOB_STATES);
       if (live) throw new PlatformError('conflict', 'a try run of this project is already waiting or running', { reason: 'try_busy' });
     }
-    return this.createExecJob(p, { action, projectId: pw.project_id, workspaceId: pw.workspace_id, key, params: { argv }, inputs: [{ versionId: r.versionId, slot: 'change' }],
-      retryOf: null, onlyRecipe: TRY_ACTION_ID });
+    return this.createExecJob(p, { action, projectId: pw.project_id, workspaceId: pw.workspace_id, key, params: r.versionId !== undefined ? { argv } : { argv, commit: r.commit! },
+      inputs: r.versionId !== undefined ? [{ versionId: r.versionId, slot: 'change' }] : [], retryOf: null, onlyRecipe: TRY_ACTION_ID });
   }
 
   /** The commit of a suggested change (a change set version of this project the caller may read), or a refusal. */
@@ -2598,16 +2606,31 @@ export class ExecutionService {
     return st.commit;
   }
 
+  /** The commit a try run looks at: the suggested change's (versionId), or the project as it stands (its checked-out commit, read by main). Refused with try_no_commit when there is none. */
+  private async tryCommit(p: Principal, projectId: string, versionId: string | undefined): Promise<string> {
+    if (versionId !== undefined) return this.changeCommit(p, projectId, versionId);
+    const root = this.repoPathOf(projectId);
+    let head: string | null = null;
+    try { head = root && this.deps.resolveHead ? await this.deps.resolveHead(root) : null; } catch { head = null; }
+    if (head === null || !/^[0-9a-f]{40}$/.test(head)) throw new PlatformError('invalid', 'the project has no saved version yet', { reason: 'try_no_commit' });
+    return head;
+  }
+
   /**
    * "Try it": the buttons a suggested change gets, read by main from the change's own commit (never from the renderer): package.json's scripts
    * and main file, a main.py, a tests folder. Nothing is run. Without main's git read there are no buttons (the person's own command still works).
    */
-  async tryOptions(p: Principal, r: { projectId: string; versionId: string }): Promise<{ what: 'tests' | 'program'; label: string; shows: string }[]> {
+  async tryOptions(p: Principal, r: { projectId: string; versionId?: string }): Promise<{ options: { what: 'tests' | 'program'; label: string; shows: string }[]; noCommit: boolean }> {
     this.requireAvailable();
-    if (!isPlainObject(r) || !isStr(r.projectId) || !isStr(r.versionId)) throw new PlatformError('invalid', 'projectId and versionId are required');
+    if (!isPlainObject(r) || !isStr(r.projectId) || (r.versionId !== undefined && !isStr(r.versionId))) throw new PlatformError('invalid', 'projectId is required');
     const pw = requireActiveParticipation(this.access, this.db, p, r.projectId, 'sde', 'job.create');
-    const commit = this.changeCommit(p, pw.project_id, r.versionId);
-    return (await this.tryFacts(pw.project_id, commit)).map(({ what, label, shows }) => ({ what, label, shows }));
+    let commit: string;
+    try { commit = await this.tryCommit(p, pw.project_id, r.versionId); } catch (e) {
+      // The project as it stands has no commit yet: no buttons, and the page says so (the setup card is the way forward).
+      if (r.versionId === undefined && e instanceof PlatformError && e.detail?.reason === 'try_no_commit') return { options: [], noCommit: true };
+      throw e;
+    }
+    return { options: (await this.tryFacts(pw.project_id, commit)).map(({ what, label, shows }) => ({ what, label, shows })), noCommit: false };
   }
 
   private async tryFacts(projectId: string, commit: string): Promise<TryOption[]> {
@@ -2634,11 +2657,11 @@ export class ExecutionService {
    * "Try it" (the try request, op run): the person pressed "Run the tests", "Run the program" or typed their own command. For the two buttons main
    * works out the command from the change itself; for their own it tokenizes the text (quotes, no shell). Then the one try-run job (startTry).
    */
-  async tryStart(p: Principal, r: { projectId: string; versionId: string; what: TryWhat; command?: string; intentId: string }): Promise<{ job: ExecJob; created: boolean }> {
+  async tryStart(p: Principal, r: { projectId: string; versionId?: string; what: TryWhat; command?: string; intentId: string }): Promise<{ job: ExecJob; created: boolean }> {
     this.requireAvailable();
-    if (!isPlainObject(r) || !isStr(r.projectId) || !isStr(r.versionId)) throw new PlatformError('invalid', 'projectId and versionId are required');
+    if (!isPlainObject(r) || !isStr(r.projectId) || (r.versionId !== undefined && !isStr(r.versionId))) throw new PlatformError('invalid', 'projectId is required');
     const pw = requireActiveParticipation(this.access, this.db, p, r.projectId, 'sde', 'job.create');
-    const commit = this.changeCommit(p, pw.project_id, r.versionId);
+    const commit = await this.tryCommit(p, pw.project_id, r.versionId);
     let argv: readonly string[];
     if (r.what === 'custom') {
       const t = tokenizeCommand(r.command);
@@ -2649,7 +2672,7 @@ export class ExecutionService {
       if (!opt) return invalid('try_nothing', 'this change has nothing to run that way');
       argv = opt.argv;
     }
-    return this.startTry(p, { projectId: pw.project_id, versionId: r.versionId, argv, intentId: r.intentId });
+    return this.startTry(p, r.versionId !== undefined ? { projectId: pw.project_id, versionId: r.versionId, argv, intentId: r.intentId } : { projectId: pw.project_id, commit, argv, intentId: r.intentId });
   }
 
   retry(p: Principal, jobId: string, intentId: string): { job: ExecJob } {
