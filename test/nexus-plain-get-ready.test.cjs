@@ -209,3 +209,15 @@ test('PC10 the approval rows: "Allow once" / "Do not allow" (never "Approve once
   const am = read('src/renderer/src/nexus/project/actionModel.ts');
   assert.match(am, /answers: \('Allow once' \| 'Do not allow'\)\[\]/);
 });
+
+test('the project page\'s "Your first build" line goes away once the AI helper can take a request, and while there are no steps to show it stays for a new project', () => {
+  const { firstBuildLine } = loadTs('src/renderer/src/nexus/project/firstBuildLineModel.ts');
+  const base = { hasAiHelper: true, loaded: true, artifacts: [] };
+  assert.equal(firstBuildLine(base).title, 'Your first build', 'a new project that is not ready yet shows the three steps');
+  assert.equal(firstBuildLine({ ...base, ready: false }).steps.length, 3);
+  assert.equal(firstBuildLine({ ...base, ready: true }), null, 'ready: the three steps are done, so the card is gone');
+  assert.equal(firstBuildLine({ ...base, loaded: false }), null);
+  assert.equal(firstBuildLine({ ...base, hasAiHelper: false }), null);
+  const pb = read('src/renderer/src/nexus/project/ProjectBench.tsx');
+  assert.match(pb, /ready: helperCanAsk/, 'the bench passes the same ready test the request box uses');
+});

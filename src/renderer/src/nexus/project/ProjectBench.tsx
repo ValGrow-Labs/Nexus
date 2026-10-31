@@ -33,6 +33,7 @@ import { SaveArtifactSheet } from './SaveArtifactSheet';
 import type { SaveSource } from './saveSheetModel';
 import { nexusClient } from '../data/nexusClient';
 import { useDeployments, useDomains, useExecStore, useHealth, useJobs } from '../data/useExecution';
+import { agentPanelModel } from '../agent/agentModel';
 import { liveActionsOf, railFor, type RailView } from '../workspaces/lifecycleModel';
 import { ExecutionNotice } from '../components/ExecutionNotice';
 import { ExecutionSetupSheet } from '../components/ExecutionSetupSheet';
@@ -305,7 +306,7 @@ function Workbench({ project, tool }: { project: Project; tool: ProjectTool }) {
   // Writes turned off (the platform became unavailable): the sheets go and do not come back by themselves.
   useEffect(() => { if (!canWrite) { setSaveSource(null); setHandoffStart(null); } }, [canWrite]);
   // B2a execution: the setup sheet, the writing sheet and the log reader live at the bench; the Folio opens them.
-  const { availability } = useHealth();
+  const { availability, health } = useHealth();
   const versionChecks = useVersionChecks(artifacts);
   const projectDeployments = useDeployments(project.id);
   const projectJobs = useJobs(project.id);
@@ -319,7 +320,9 @@ function Workbench({ project, tool }: { project: Project; tool: ProjectTool }) {
   const card = setupCard({ inSoftware: (idx.byProject.get(project.id) ?? []).some((r) => r.status === 'active' && r.workspaceId === 'sde'), git: git.status === 'ready' ? 'ready' : git.status === 'error' ? 'error' : 'loading', isRepo: git.status === 'ready' && git.isRepo });
   const hasSde = (idx.byProject.get(project.id) ?? []).some((r) => r.status === 'active' && r.workspaceId === 'sde');
   // A brand-new project: the three steps of "Your first build", until it has any suggested changes.
-  const firstLine = firstBuildLine({ hasAiHelper: hasSde, loaded: artifactsLoaded, artifacts });
+  // The same test the request box uses: once the AI helper can take a request, the three steps are done and the card goes away.
+  const helperCanAsk = agentPanelModel({ health, availability, sessions: [], sessionsFail: null }).canAsk;
+  const firstLine = firstBuildLine({ hasAiHelper: hasSde, loaded: artifactsLoaded, artifacts, ready: helperCanAsk });
   const [setupOpen, setSetupOpen] = useState(false);
   const [write, setWrite] = useState<{ workspaceId: string; kind: 'requirement' | 'problem_statement' } | null>(null);
   const [log, setLog] = useState<{ jobId: string; range?: LogRange | null } | null>(null);
