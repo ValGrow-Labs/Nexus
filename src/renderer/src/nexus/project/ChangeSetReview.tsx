@@ -198,8 +198,9 @@ export function ChangeSetReview({ versionId, projectId, status, name, withEviden
     else { setAsking(b); setNote(null); }
   };
 
-  const proof = proofLines(checks.data);
   const counts = changeCounts(diff.text);
+  const fileCount = counts ? Number(counts.split(' ')[1]) || null : null;
+  const proof = proofLines(checks.data, fileCount);
   const technical = useNexusUi((x) => x.audience) === 'technical';
   const [showDiff, setShowDiff] = useState<boolean | null>(null);
   const diffOpen = showDiff ?? technical;
@@ -219,8 +220,9 @@ export function ChangeSetReview({ versionId, projectId, status, name, withEviden
       {proof.length > 0 && (
         <div className="nx-cs__block">
           <h3 className="nx-cs__sub">Proof</h3>
+          <p className="nx-muted">All of these must pass before you can press “Looks good”.</p>
           <ul className="nx-cs__proof" aria-label="Proof">
-            {proof.map((p) => <li key={p.id} data-ok={p.ok ? 'true' : 'false'}><span aria-hidden="true">{p.ok ? '✓' : '✗'}</span> {p.text}</li>)}
+            {proof.map((p) => <li key={p.id} data-ok={p.ok ? 'true' : 'false'}><span aria-hidden="true">{p.pending ? '…' : p.ok ? '✓' : '✗'}</span> {p.text}</li>)}
           </ul>
         </div>
       )}
@@ -230,7 +232,7 @@ export function ChangeSetReview({ versionId, projectId, status, name, withEviden
         {diffOpen && <Diff d={diff} />}
       </div>
       <details className="nx-cs__details">
-        <summary>More details</summary>
+        <summary>Technical details (for developers)</summary>
         <p className="nx-muted">Version {detail.data?.versionNo ?? ''}{view.diff.head ? <> · {headLine(view.diff.head)}</> : null}</p>
         {withEvidence && detail.data && <EvidenceSection key={versionId} version={detail.data} kind="change_set" checked />}
       </details>

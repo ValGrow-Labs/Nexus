@@ -15,7 +15,7 @@ import { blockingValidatorsFor } from '@shared/nexus/validators';
 import { AGENT_REASON_TEXT } from '../data/errorCopy';
 import { GLOSSARY } from '../data/glossary';
 import { sizeLabel } from '../data/executionModel';
-import { statusWord, validatorLine } from './evidenceModel';
+import { statusWord, validatorLabel, validatorLine } from './evidenceModel';
 
 export const REVIEW_DECISION_WORDS = ['approve', 'request_changes', 'reject'] as const;
 
@@ -321,23 +321,24 @@ export function changeCounts(diffText: string | null | undefined): string | null
   return `Changed ${files} ${files === 1 ? 'file' : 'files'}: ${parts.join(', ')}`;
 }
 
-/** The proof, one plain line each with whether it is fine: the tests, the fit with the project, the secret-key scan. No ids, no hashes. */
-export interface ProofLine { id: string; ok: boolean; text: string }
-export function proofLines(validations: readonly ValidationResultView[] | null | undefined): ProofLine[] {
+/** The proof, one plain line per check with a mark (ok / not ok / not run yet): no evidence rows, no ids, no hashes, no "by Nexus". */
+export interface ProofLine { id: string; ok: boolean; pending?: boolean; text: string }
+export function proofLines(validations: readonly ValidationResultView[] | null | undefined, fileCount: number | null = null): ProofLine[] {
   const out: ProofLine[] = [];
   if (!validations) return out;
   const by = new Map(validations.filter((r) => r.blocking).map((r) => [r.validatorId, r]));
   for (const d of blockingValidatorsFor('change_set')) {
     const r = by.get(d.id);
-    if (!r || r.status === null || r.status === undefined) continue;
+    if (!r || r.status === null || r.status === undefined) { out.push({ id: d.id, ok: false, pending: true, text: `${validatorLabel(d.id)}: not run yet` }); continue; }
     const ok = r.status === 'passed';
-    if (d.id === 'cs.tests_pass' && ok) {
+    if (d.id === 'cs.tests_pass') {
       const counts = r.evidence.find((e) => e.type === 'junit');
-      const m = counts && typeof counts.value === 'string' ? /(\d+)\/(\d+) passed/.exec(counts.value) : null;
-      out.push({ id: 'tests-ran', ok: true, text: 'Your tests ran in the safe space' });
-      out.push({ id: d.id, ok: true, text: m ? `${m[1]} of ${m[2]} tests passed` : validatorLine(d.id, r.status) });
-    } else if (d.id === 'git.diff_nonempty' || d.id === 'git.paths_in_scope') {
-      if (!ok) out.push({ id: d.id, ok: false, text: validatorLine(d.id, r.status) });
+      const m = counts && typeof counts.value === 'string' ? new RegExp('([0-9]+)/([0-9]+) passed').exec(counts.value) : null;
+      out.push({ id: d.id, ok, text: ok ? (m ? `Your tests passed: ${m[1]} of ${m[2]}` : 'Your tests passed') : validatorLine(d.id, r.status) });
+    } else if (d.id === 'git.diff_nonempty') {
+      out.push({ id: d.id, ok, text: ok ? `The AI helper really changed files${fileCount ? `: ${fileCount} ${fileCount === 1 ? 'file' : 'files'}` : ''}` : validatorLine(d.id, r.status) });
+    } else if (d.id === 'git.paths_in_scope') {
+      out.push({ id: d.id, ok, text: ok ? 'Only files that belong to the project were touched' : validatorLine(d.id, r.status) });
     } else out.push({ id: d.id, ok, text: validatorLine(d.id, r.status) });
   }
   return out;

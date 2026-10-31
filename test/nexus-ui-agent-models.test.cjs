@@ -1308,11 +1308,14 @@ test('V9n the review page: what the AI helper did, plain proof with ticks (no ha
   const results = [validation('git.diff_nonempty', 'passed'), validation('git.paths_in_scope', 'passed'), validation('sec.secret_scan', 'passed'), validation('git.applies_cleanly', 'passed'),
     validation('cs.tests_pass', 'passed', { evidence: [{ type: 'hash', name: 'image', value: 'sha256:7d5e932eb45d1111' }, { type: 'junit', name: null, value: '13/13 passed, 0 failed, 0 errored' }] })];
   const lines = CS.proofLines(results).map((p) => p.text);
-  assert.ok(lines.includes('13 of 13 tests passed') && lines.includes('Your tests ran in the safe space'));
+  assert.ok(lines.includes('Your tests passed: 13 of 13'));
+  assert.ok(CS.proofLines(results, 2).map((p) => p.text).includes('The AI helper really changed files: 2 files') && lines.includes('Only files that belong to the project were touched'));
+  assert.ok(CS.proofLines([validation('git.applies_cleanly', 'passed')]).some((p) => p.pending && /not run yet/.test(p.text)), 'a check that has not run reads "not run yet"');
+  assert.ok(!CS.proofLines(results, 2).some((p) => /by Nexus|integration|Required/i.test(p.text)));
   assert.ok(lines.includes('The changes fit your project without conflicts') && lines.includes('No common secret keys found'));
   assert.ok(!lines.join(' ').match(/sha256|junit|image|[0-9a-f]{12}|errored/i), 'no hash, tool name or count breakdown in the proof');
   assert.deepEqual(CS.proofLines(null), []);
-  assert.equal(CS.proofLines([validation('git.applies_cleanly', 'failed')]).find((p) => p.ok === false).text, 'The changes clash with your project');
+  assert.equal(CS.proofLines([validation('git.applies_cleanly', 'failed')]).find((p) => p.ok === false && !p.pending).text, 'The changes clash with your project');
   assert.equal(CS.railLine(CS.railOf('looks_good')), 'Read what changed below, then press “Looks good”.');
   assert.equal(CS.railLine(CS.railOf('keep')), 'Press “Keep these changes” to save them in Nexus’s copy.');
   assert.equal(CS.railLine(CS.railOf('add')), 'Press “Add to my project” to put them in your files.');
@@ -1321,7 +1324,8 @@ test('V9n the review page: what the AI helper did, plain proof with ticks (no ha
   assert.ok(rv.includes('nx-cs__title nx-visually-hidden'), 'the heading "Suggested changes" is said once (the page title)');
   assert.ok(!rv.includes('Version {r.versionNo}'), 'no version number in the list row');
   assert.ok(rv.indexOf('What the AI helper did') < rv.indexOf('>Proof<') && rv.indexOf('>Proof<') < rv.indexOf('<h3 className="nx-cs__sub">What changed</h3>') && rv.indexOf('<h3 className="nx-cs__sub">What changed</h3>') < rv.indexOf('<div className="nx-cs__bar">'), 'the decision bar comes last');
-  assert.ok(rv.includes('<details className="nx-cs__details">') && !rv.includes('<details className="nx-cs__details" open'), 'technical facts are behind More details, closed');
+  assert.ok(rv.includes('<details className="nx-cs__details">') && !rv.includes('<details className="nx-cs__details" open'), 'technical facts are behind one closed disclosure');
+  assert.ok(rv.includes('Technical details (for developers)') && rv.includes('All of these must pass before you can press “Looks good”.'));
   assert.ok(rv.includes("useNexusUi((x) => x.audience) === 'technical'") && rv.includes('Show what changed'), 'what changed is closed for a newcomer, open for a technical person');
   assert.ok(fs.readFileSync(path.join(NEXUS, 'styles', 'execution.css'), 'utf8').includes('.nx-cs__bar { position: sticky; bottom: 0;'));
 });
