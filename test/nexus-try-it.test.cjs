@@ -218,6 +218,7 @@ test('TR8 the dock answers a run request itself (no helper turn), with one butto
   const pt = read('src/renderer/src/nexus/project/ProjectTry.tsx');
   assert.ok(pt.includes("<TryIt key={versionId ?? 'project'} projectId={projectId} versionId={versionId} heading={false} />"), 'one Try it panel, not a second one');
   assert.ok(pt.includes('Your project now') === false && pt.includes('TRY_PROJECT_NOW'), 'the words live in the model');
+  assert.ok(pt.includes("useState<'project' | 'change'>(change ? 'change' : 'project')") && pt.includes('if (change && !chosen.current) setTarget(\'change\')'), 'a waiting suggested change is what the page opens on, unless the person already picked (a new project has no files of its own yet)');
   assert.equal(M.TRY_PROJECT_NOW, 'Your project now'); assert.equal(M.TRY_CHANGE_CHOICE, 'The suggested changes');
   assert.doesNotMatch([M.TRY_PROJECT_NOTE, M.TRY_NO_COMMIT, M.TRY_PROJECT_NOW, M.TRY_CHANGE_CHOICE].join(' '), VENDOR);
   // main: the project target is the commit main reads itself, written into the job (never a renderer value), checked as a full sha at the lease
