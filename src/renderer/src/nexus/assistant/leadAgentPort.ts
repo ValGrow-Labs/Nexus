@@ -3,6 +3,7 @@ import { useStore } from '@/store/store';
 import { navigate } from '../router/useRoute';
 import { useCanonicalAgents, useRegistryIds } from '../agents/agentIdentity';
 import { displayAgents, leadAgentId } from '@shared/agentDisplay';
+import { terminalAutomationBlockFor } from '@/components/terminalPool';
 import { resolveAssistantStatus, type AssistantPort } from './port';
 
 /** Mirrors MessageQueueComposer's useDeliveryPaused: poll the control snapshot. */
@@ -23,6 +24,19 @@ function useDeliveryPaused(agentId: string | null): boolean {
   return paused;
 }
 
+/** True once the lead agent's terminal has ended (the pool's own flag, polled like the queue does). */
+function useTerminalExited(ptyId: string | undefined): boolean {
+  const [exited, setExited] = useState(false);
+  useEffect(() => {
+    if (!ptyId) { setExited(false); return; }
+    const read = () => setExited(terminalAutomationBlockFor(ptyId) === 'exited');
+    read();
+    const iv = setInterval(read, 2000);
+    return () => clearInterval(iv);
+  }, [ptyId]);
+  return exited;
+}
+
 export function useLeadAgentPort(): AssistantPort {
   const agents = useStore((s) => s.agents);
   const hint = useRegistryIds();
@@ -34,7 +48,8 @@ export function useLeadAgentPort(): AssistantPort {
   const godLabel = god ? displayAgents(canon, hint).get(god.id)?.label ?? 'Lead AI helper' : null;
   const godStatus = useStore((s) => s.godStatus);
   const paused = useDeliveryPaused(god?.id ?? null);
-  const status = resolveAssistantStatus({ god: god && godLabel ? { id: god.id, name: godLabel } : null, godStatus, deliveryPaused: paused });
+  const exited = useTerminalExited(god?.ptyId);
+  const status = resolveAssistantStatus({ god: god && godLabel ? { id: god.id, name: godLabel } : null, godStatus, deliveryPaused: paused, exited });
   return {
     status,
     replyHint: 'Its reply shows up in Agents.',

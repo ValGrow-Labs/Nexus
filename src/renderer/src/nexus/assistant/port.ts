@@ -16,8 +16,10 @@ export interface AssistantPort {
   replyHint: string;
 }
 
-export function resolveAssistantStatus(input: { god: { id: string; name: string } | null; godStatus: string; deliveryPaused: boolean }): AssistantStatus {
+export function resolveAssistantStatus(input: { god: { id: string; name: string } | null; godStatus: string; deliveryPaused: boolean; exited?: boolean }): AssistantStatus {
   if (!input.god) return { state: 'unavailable', reason: 'The lead AI helper is not running. Open Agents to start it.' };
+  // Its terminal has ended: a message would wait there forever, so nothing is sent to it.
+  if (input.exited) return { state: 'unavailable', reason: 'The lead AI helper has stopped. Open Agents to start it again.' };
   const target: AssistantTarget = { id: input.god.id, name: input.god.name, kind: 'lead-agent' };
   if (input.godStatus === 'booting') return { state: 'starting', target };
   return { state: 'ready', target, deliveryPaused: input.deliveryPaused };

@@ -23,6 +23,13 @@ test('status: ready reflects delivery pause', () => {
   assert.deepEqual(s, { state: 'ready', target: { id: 'g', name: 'Lead', kind: 'lead-agent' }, deliveryPaused: true });
 });
 
+test('status: a lead agent whose terminal has ended is unavailable, so no request box queues to it', () => {
+  const s = resolveAssistantStatus({ god: { id: 'g', name: 'Lead' }, godStatus: 'ready', deliveryPaused: false, exited: true });
+  assert.equal(s.state, 'unavailable');
+  assert.equal(s.reason, 'The lead AI helper has stopped. Open Agents to start it again.');
+  assert.equal(resolveAssistantStatus({ god: { id: 'g', name: 'Lead' }, godStatus: 'ready', deliveryPaused: false, exited: false }).state, 'ready');
+});
+
 test('context header contains only provided facts', () => {
   assert.equal(buildContextHeader({}), null);
   assert.equal(buildContextHeader({ page: 'Home' }), null);
