@@ -299,3 +299,13 @@
 .nx-setup { display: grid; gap: var(--nx-s3); align-content: start; font-size: 13px; }
 .nx-setup__title { margin: 0; font: 700 15px var(--nx-font); }
 .nx-setup__text, .nx-setup__note { margin: 0; color: var(--nx-text-2); }
+
+/* The review page, plain: what the AI helper did, the proof as ticks, what changed on request, and the decision bar pinned at the bottom. */
+.nx-cs__block { display: grid; gap: var(--nx-s2); margin-top: var(--nx-s3); }
+.nx-cs__did { margin: 0; font-size: 15px; }
+.nx-cs__instruction { margin: var(--nx-s2) 0 0; color: var(--nx-text-2); }
+.nx-cs__proof { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--nx-s1); }
+.nx-cs__proof li[data-ok="false"] { font-weight: 600; }
+.nx-cs__details { margin-top: var(--nx-s3); }
+.nx-cs__details > summary { cursor: pointer; font: 600 12.5px var(--nx-font); color: var(--nx-text-2); }
+.nx-cs__bar { position: sticky; bottom: 0; margin-top: var(--nx-s4); padding: var(--nx-s3) 0; background: var(--nx-surface); border-top: 1px solid var(--nx-border); display: grid; gap: var(--nx-s2); z-index: 2; }

@@ -163,7 +163,7 @@ test('P-D7 what changed: a plain summary above it, "what changed" and "suggested
   assert.equal(CS.diffSummary('diff --git a/x b/x\n--- a/x\n+++ b/x\n@@ -1 +1 @@\n-a\n+b\ndiff --git a/y b/y\n--- a/y\n+++ b/y\n@@ -0,0 +1 @@\n+c\n', false), 'So far: 2 files, 2 lines added, 1 line removed.');
   assert.equal(CS.diffSummary(''), 'There are no edits to show.');
   const rv = fs.readFileSync(path.join(ROOT, 'src/renderer/src/nexus/project/ChangeSetReview.tsx'), 'utf8');
-  assert.match(rv, /<h2 id="nx-cs-title" className="nx-cs__title">Suggested changes<\/h2>/);
+  assert.match(rv, /<h2 id="nx-cs-title" className="nx-cs__title nx-visually-hidden">Suggested changes<\/h2>/);
   assert.match(rv, /<h3 className="nx-cs__sub">What changed<\/h3>/);
   assert.match(rv, /aria-label="What changed \(read only\)"/);
   assert.match(rv, /Loading what changed…/);

@@ -10,8 +10,9 @@ import { useExecStore, useRead, withIntent } from '../data/useExecution';
 import { Button } from '../ui/Button';
 import { EvidenceSection } from './EvidenceSection';
 import { useExecutionUi } from './execContext';
+import { useNexusUi } from '../state/uiStore';
 import {
-  BUTTON_LABEL, DIFF_REDACTED_NOTE, acceptedText, changeSetModel, changeSetRows, classifyDiff, diffHasRedaction, diffSummary, headLine, headTitle, mergeModel, mergedOnBranch, mergedText, mergedTitle, reviewOf,
+  BUTTON_LABEL, DIFF_REDACTED_NOTE, acceptedText, changeCounts, changeSetModel, proofLines, railLine, changeSetRows, classifyDiff, diffHasRedaction, diffSummary, headLine, headTitle, mergeModel, mergedOnBranch, mergedText, mergedTitle, reviewOf,
   type ChangeSetButton, type ChangeSetRow, type MergeModel, type RailStep
 } from './changeSetModel';
 
@@ -122,7 +123,6 @@ const DECISION_KEY: Record<ReviewDecision, string> = { approve: 'approve', reque
 
 /** The three steps in plain words, with the next one marked in words (never by colour alone) and what it will do. */
 function Rail({ steps }: { steps: RailStep[] }) {
-  const current = steps.find((x) => x.state === 'current');
   return (
     <>
       <ol className="nx-cs__rail" aria-label="Your three steps">
@@ -134,7 +134,7 @@ function Rail({ steps }: { steps: RailStep[] }) {
           </li>
         ))}
       </ol>
-      {current && <p className="nx-muted">{current.label}: {current.help}</p>}
+      {railLine(steps) && <p className="nx-cs__instruction">{railLine(steps)}</p>}
     </>
   );
 }
@@ -198,44 +198,69 @@ export function ChangeSetReview({ versionId, projectId, status, name, withEviden
     else { setAsking(b); setNote(null); }
   };
 
+  const proof = proofLines(checks.data);
+  const counts = changeCounts(diff.text);
+  const technical = useNexusUi((x) => x.audience) === 'technical';
+  const [showDiff, setShowDiff] = useState<boolean | null>(null);
+  const diffOpen = showDiff ?? technical;
   return (
     <section className="nx-cs" aria-label={name ? `Suggested changes: ${name}` : 'Suggested changes'}>
-      <p className="nx-cs__headline">{view.headline}</p>
-      {view.rail && <Rail steps={view.rail} />}
+      {view.rail ? <Rail steps={view.rail} /> : <p className="nx-cs__headline">{view.headline}</p>}
       {view.blocking.length > 0 && (
         <ul className="nx-cs__blocking" aria-label="Required checks that need attention">
           {view.blocking.map((b) => <li key={b.id}><span>{b.label}</span> <span className="nx-xe__word">{b.word}</span> <span className="nx-xe__tag">Required</span></li>)}
         </ul>
       )}
-      {view.diff.head && <p className="nx-muted" title={headTitle(view.diff.head)}>{headLine(view.diff.head)}</p>}
-      {view.buttons.length > 0 && (
-        <div className="nx-passport__actions">
-          {view.buttons.map((b) => (
-            <Button key={b} variant={b === 'accept' || b === 'approve' ? 'primary' : 'quiet'} disabled={busy !== null} onClick={() => press(b)}>
-              {busy === b ? 'Working…' : BUTTON_LABEL[b]}
-            </Button>
-          ))}
+      <div className="nx-cs__block">
+        <h3 className="nx-cs__sub">What the AI helper did</h3>
+        <p className="nx-cs__did"><strong>{name ?? 'Suggested changes'}</strong></p>
+        {counts && <p className="nx-muted">{counts}</p>}
+      </div>
+      {proof.length > 0 && (
+        <div className="nx-cs__block">
+          <h3 className="nx-cs__sub">Proof</h3>
+          <ul className="nx-cs__proof" aria-label="Proof">
+            {proof.map((p) => <li key={p.id} data-ok={p.ok ? 'true' : 'false'}><span aria-hidden="true">{p.ok ? '✓' : '✗'}</span> {p.text}</li>)}
+          </ul>
         </div>
       )}
-      {asking && (
-        <div className="nx-xq__confirm">
-          <label htmlFor={commentId}>{asking === 'reject' ? 'Why are you saying no to these changes?' : 'What should the AI helper change?'}</label>
-          <textarea id={commentId} ref={commentBox} className="nx-cs__comment" rows={3} maxLength={4000} value={comment} onChange={(e) => setComment(e.target.value)} />
-          <div className="nx-xq__acts">
-            <Button variant="primary" disabled={busy !== null || comment.trim() === ''} onClick={() => { void decide(asking, comment); }}>
-              {asking === 'reject' ? 'Say no to these changes' : 'Send to the AI helper'}
-            </Button>
-            <Button variant="quiet" disabled={busy !== null} onClick={() => { setAsking(null); setComment(''); }}>Cancel</Button>
-          </div>
-          {comment.trim() === '' && <p className="nx-muted">Write a short note first. The AI helper reads it.</p>}
-        </div>
-      )}
+      <div className="nx-cs__block">
+        <h3 className="nx-cs__sub">What changed</h3>
+        <Button variant="quiet" ariaExpanded={diffOpen} onClick={() => setShowDiff(!diffOpen)}>{diffOpen ? 'Hide what changed' : 'Show what changed'}</Button>
+        {diffOpen && <Diff d={diff} />}
+      </div>
+      <details className="nx-cs__details">
+        <summary>More details</summary>
+        <p className="nx-muted">Version {detail.data?.versionNo ?? ''}{view.diff.head ? <> · {headLine(view.diff.head)}</> : null}</p>
+        {withEvidence && detail.data && <EvidenceSection key={versionId} version={detail.data} kind="change_set" checked />}
+      </details>
       {view.sentences.length > 0 && <ul className="nx-xa__why">{view.sentences.map((s) => <li key={s}>{s}</li>)}</ul>}
-      {note && <p className={note.alert ? 'nx-passport__note' : 'nx-muted'} role={note.alert ? 'alert' : 'status'}>{note.text}</p>}
       {view.merge && shown === 'active' && <MergeBlock projectId={projectId} model={view.merge} onDone={refresh} />}
-      {withEvidence && detail.data && <EvidenceSection key={versionId} version={detail.data} kind="change_set" checked />}
-      <h3 className="nx-cs__sub">What changed</h3>
-      <Diff d={diff} />
+      <div className="nx-cs__bar">
+        {asking && (
+          <div className="nx-xq__confirm">
+            <label htmlFor={commentId}>{asking === 'reject' ? 'Why are you saying no to these changes?' : 'What should the AI helper change?'}</label>
+            <textarea id={commentId} ref={commentBox} className="nx-cs__comment" rows={3} maxLength={4000} value={comment} onChange={(e) => setComment(e.target.value)} />
+            <div className="nx-xq__acts">
+              <Button variant="primary" disabled={busy !== null || comment.trim() === ''} onClick={() => { void decide(asking, comment); }}>
+                {asking === 'reject' ? 'Say no to these changes' : 'Send to the AI helper'}
+              </Button>
+              <Button variant="quiet" disabled={busy !== null} onClick={() => { setAsking(null); setComment(''); }}>Cancel</Button>
+            </div>
+            {comment.trim() === '' && <p className="nx-muted">Write a short note first. The AI helper reads it.</p>}
+          </div>
+        )}
+        {view.buttons.length > 0 && (
+          <div className="nx-passport__actions">
+            {view.buttons.map((b) => (
+              <Button key={b} variant={b === 'accept' || b === 'approve' ? 'primary' : 'quiet'} disabled={busy !== null} onClick={() => press(b)}>
+                {busy === b ? 'Working…' : BUTTON_LABEL[b]}
+              </Button>
+            ))}
+          </div>
+        )}
+        {note && <p className={note.alert ? 'nx-passport__note' : 'nx-muted'} role={note.alert ? 'alert' : 'status'}>{note.text}</p>}
+      </div>
     </section>
   );
 }
@@ -261,7 +286,7 @@ function ChangeSetList({ projectId, rows }: { projectId: string; rows: ChangeSet
   const shown = useMemo(() => rows.map((r) => (r.status === 'active' && mergedOnBranch(repo.data) ? { ...r, word: 'Added to your project' } : r)), [rows, repo.data]);
   return (
     <section className="nx-cs__list" aria-labelledby="nx-cs-title">
-      <h2 id="nx-cs-title" className="nx-cs__title">Suggested changes</h2>
+      <h2 id="nx-cs-title" className="nx-cs__title nx-visually-hidden">Suggested changes</h2>
       <p className="nx-review__note">The AI helper made each suggestion in a safe copy of your project. Nothing here touches your files until you press “Add to my project”.</p>
       {merge && <MergeBlock projectId={projectId} model={merge} onDone={repo.reload} />}
       <ul className="nx-cs__rows">
@@ -270,7 +295,7 @@ function ChangeSetList({ projectId, rows }: { projectId: string; rows: ChangeSet
           return (
             <li key={r.versionId} className="nx-cs__row">
               <p className="nx-cs__rowhead">
-                <span className="nx-cs__name" title={r.name}>{r.name}</span> <span className="nx-id">Version {r.versionNo}</span> <span className="nx-xe__word">{r.word}</span>
+                <span className="nx-cs__name" title={r.name}>{r.name}</span> <span className="nx-xe__word">{r.word}</span>
                 <Button variant="quiet" onClick={() => setOpen((o) => ({ ...o, [r.versionId]: !expanded }))} ariaLabel={`${expanded ? 'Hide' : 'Show'} ${r.name}`} ariaExpanded={expanded}>
                   {expanded ? 'Hide' : 'Show'}
                 </Button>

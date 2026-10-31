@@ -302,3 +302,52 @@ export function diffSummary(text: string, whole = true): string {
   const parts = `${n(files, 'file', 'files')}, ${n(added, 'line', 'lines')} added, ${n(removed, 'line', 'lines')} removed`;
   return whole ? `In all: ${parts}.` : `So far: ${parts}.`;
 }
+
+// ---------- the plain review page: what the AI helper did, the proof, one instruction ----------
+
+/** "Changed 2 files: added 1, edited 1" from the patch text; null when the patch names no file. */
+export function changeCounts(diffText: string | null | undefined): string | null {
+  if (typeof diffText !== 'string') return null;
+  let files = 0; let added = 0; let removed = 0;
+  const blocks = diffText.split(/^diff --git /m).slice(1);
+  for (const b of blocks) {
+    files++;
+    const head = b.split(/^@@/m)[0];
+    if (/^new file mode/m.test(head)) added++; else if (/^deleted file mode/m.test(head)) removed++;
+  }
+  if (files === 0) return null;
+  const edited = files - added - removed;
+  const parts = [added ? `added ${added}` : null, edited ? `edited ${edited}` : null, removed ? `removed ${removed}` : null].filter(Boolean);
+  return `Changed ${files} ${files === 1 ? 'file' : 'files'}: ${parts.join(', ')}`;
+}
+
+/** The proof, one plain line each with whether it is fine: the tests, the fit with the project, the secret-key scan. No ids, no hashes. */
+export interface ProofLine { id: string; ok: boolean; text: string }
+export function proofLines(validations: readonly ValidationResultView[] | null | undefined): ProofLine[] {
+  const out: ProofLine[] = [];
+  if (!validations) return out;
+  const by = new Map(validations.filter((r) => r.blocking).map((r) => [r.validatorId, r]));
+  for (const d of blockingValidatorsFor('change_set')) {
+    const r = by.get(d.id);
+    if (!r || r.status === null || r.status === undefined) continue;
+    const ok = r.status === 'passed';
+    if (d.id === 'cs.tests_pass' && ok) {
+      const counts = r.evidence.find((e) => e.type === 'junit');
+      const m = counts && typeof counts.value === 'string' ? /(\d+)\/(\d+) passed/.exec(counts.value) : null;
+      out.push({ id: 'tests-ran', ok: true, text: 'Your tests ran in the safe space' });
+      out.push({ id: d.id, ok: true, text: m ? `${m[1]} of ${m[2]} tests passed` : validatorLine(d.id, r.status) });
+    } else if (d.id === 'git.diff_nonempty' || d.id === 'git.paths_in_scope') {
+      if (!ok) out.push({ id: d.id, ok: false, text: validatorLine(d.id, r.status) });
+    } else out.push({ id: d.id, ok, text: validatorLine(d.id, r.status) });
+  }
+  return out;
+}
+
+/** The ONE instruction under the step rail: what to do now. */
+export function railLine(rail: readonly RailStep[] | null): string | null {
+  if (!rail) return null;
+  const cur = rail.find((x) => x.state === 'current');
+  if (!cur) return 'These changes are in your project.';
+  return cur.id === 'looks_good' ? 'Read what changed below, then press “Looks good”.'
+    : cur.id === 'keep' ? 'Press “Keep these changes” to save them in Nexus’s copy.' : 'Press “Add to my project” to put them in your files.';
+}
