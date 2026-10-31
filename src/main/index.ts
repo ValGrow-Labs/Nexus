@@ -3724,7 +3724,7 @@ function acceptGitCwd(cwd: string): boolean {
 // "Set it up": git in a new project folder. Only the registered root of a project the caller names, never a path of the caller's own;
 // the folder must not be a repository yet (initRepository refuses that, links and non-folders). The press of the button after the plain
 // card is the person's consent; nothing else calls this.
-ipcMain.handle('git:initProject', async (_evt, projectId: unknown) => {
+ipcMain.handle('project:initGit', async (_evt, projectId: unknown) => {
   if (typeof projectId !== 'string' || !projectId) return { ok: false, reason: 'invalid' };
   let root: string | null = null;
   try { root = projectManager.getProject(projectId)?.rootPath ?? null; } catch { root = null; }

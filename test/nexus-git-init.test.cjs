@@ -63,7 +63,7 @@ test('GI3 it refuses an existing repository, a folder inside one, a link, a file
 
 test('GI4 the channel takes a project id only (main looks up the registered root); the renderer sends nothing else', () => {
   const idx = fs.readFileSync(path.join(__dirname, '..', 'src', 'main', 'index.ts'), 'utf8');
-  assert.ok(idx.includes("ipcMain.handle('git:initProject', async (_evt, projectId: unknown) => {"));
+  assert.ok(idx.includes("ipcMain.handle('project:initGit', async (_evt, projectId: unknown) => {"));
   assert.ok(idx.includes('projectManager.getProject(projectId)?.rootPath'));
   assert.ok(fs.readFileSync(path.join(__dirname, '..', 'src', 'preload', 'index.ts'), 'utf8').includes("gitInitProject: (projectId: string)"));
 });

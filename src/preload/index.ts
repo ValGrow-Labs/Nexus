@@ -834,7 +834,7 @@ const api = {
   // ─── Git ─────────────────────────────────────────────────────────────────
   gitIsRepo: (cwd: string): Promise<boolean> => ipcRenderer.invoke('git:isRepo', cwd),
   /** Set up git in a new project's folder (main checks the project's registered root; refuses an existing repository). */
-  gitInitProject: (projectId: string): Promise<{ ok: true; branch: 'main' } | { ok: false; reason: string }> => ipcRenderer.invoke('git:initProject', projectId),
+  gitInitProject: (projectId: string): Promise<{ ok: true; branch: 'main' } | { ok: false; reason: string }> => ipcRenderer.invoke('project:initGit', projectId),
   /** Absolute path of the MAIN working tree `cwd` belongs to — a linked worktree
    *  resolves to the original repo, not to itself. null when not a git repo. */
   gitMainRepo: (cwd: string): Promise<string | null> => ipcRenderer.invoke('git:mainRepo', cwd),
