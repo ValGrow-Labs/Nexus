@@ -44,7 +44,6 @@ export function ContextBar() {
       <button type="button" className="nx-btn nx-btn--quiet nx-bar__search cth-titlebar-nodrag" onClick={() => setPaletteOpen(true)} aria-label="Search projects, workspaces and pages">
         <Icon name="search" size={15} />
         <span className="nx-bar__search-text">Search</span>
-        <kbd className="nx-kbd">{IS_MAC ? '⌘ K' : 'Ctrl K'}</kbd>
       </button>
       <button
         type="button"
