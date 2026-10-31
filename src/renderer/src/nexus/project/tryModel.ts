@@ -21,7 +21,7 @@ export interface TryView {
   ended: boolean;
 }
 
-export const TRY_INTRO = 'Run the suggested changes in the safe space: a locked box with no internet. Your real files are not touched, and nothing runs until you press a button.';
+export const TRY_INTRO = 'Run it in the safe space: a locked box with no internet. Your real files are not touched, and nothing runs until you press a button.';
 export const TRY_PAGE_TITLE = 'Try it';
 export const TRY_PROJECT_NOW = 'Your project now';
 export const TRY_CHANGE_CHOICE = 'The suggested changes';

@@ -357,5 +357,5 @@
 /* Try it as a project page, and the dock's reply to "run this". */
 .nx-try-page { align-content: start; }
 .nx-try__targets { display: flex; flex-wrap: wrap; gap: var(--nx-s2); }
-.nx-try__targets .nx-btn[aria-pressed="true"] { border: 1px solid var(--nx-border-strong); color: var(--nx-ink); font-weight: 600; }
+.nx-try__targets .nx-btn[aria-pressed="true"] { border: 1px solid var(--nx-border-strong); background: var(--nx-sunken); color: var(--nx-ink); font-weight: 600; }
 .nx-ag__run { display: grid; gap: var(--nx-s2); justify-items: start; }
