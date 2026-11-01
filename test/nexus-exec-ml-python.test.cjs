@@ -12,6 +12,11 @@
 // - XM3: a Machine learning project's data (phase 2): a CSV the person added through main's DatasetService is read by the helper's own
 //   container at /data/x.csv with pandas, and the folder is READ-ONLY there (writing, appending and deleting all fail; the copy is
 //   unchanged on the host), with the network off.
+// - XM4: a Machine learning project's results (phase 3): the helper's own container writes a report, a matplotlib (Agg) PNG chart, a
+//   joblib model and a predictions CSV to /results; the host folder results/<project>/files gets them and main's ResultsService lists,
+//   shows and saves them; /data is still read-only; the network is off; the project's files are not touched (the turn changes nothing).
+//   Adversarial files written from inside (a symbolic link, a hard-linked pair, a folder, a fake PNG, an HTML page, a control character
+//   and a Windows device name in a name) are never listed or read.
 // Each test removes the containers, volumes and networks it made (by this run's nexus.home label) and its temp folders. The built
 // image nexus-local/ml-python:<context12> is KEPT: it is the kit the app uses.
 const test = require('node:test');
@@ -290,6 +295,139 @@ print("ML-JOB " + json.dumps(m))
       assert.equal(hashOf(csv), before, 'the person\'s original is unchanged');
       assert.equal(at.state, 'succeeded');
       sound(w, 'XM3');
+    } finally {
+      try { await w.close(); } catch { /* best effort */ }
+      const left = labelled(home);
+      assert.deepEqual([left.containers.length, left.volumes.length, left.networks.length], [0, 0, 0], 'nothing of this world is left in Docker');
+    }
+  });
+
+  test('XM4 an ML project\'s results: the helper\'s container writes a report, a chart, a model and predictions to /results; main lists, shows and saves them; /data read-only; nothing else touched', LONG, async () => {
+    const { flowWorld, useFixture, sound } = require('./helpers/agentFlowWorld.cjs');
+    const { homeLabel } = loadTs('src/shared/nexus/homeLabel.ts');
+    const { resultIdOf } = loadTs('src/main/nexus/results/resultsService.ts');
+    const crypto = require('node:crypto');
+    const w = await flowWorld({ real: true });
+    const home = homeLabel(w.dataHome.root);
+    try {
+      await useFixture(w, 'pytest-app');
+      w.db.transaction(() => {
+        w.db.prepare('UPDATE project_workspaces SET is_primary = 0 WHERE project_id = ? AND is_primary = 1').run(w.PROJECT);
+        const row = w.db.prepare("SELECT id FROM project_workspaces WHERE project_id = ? AND workspace_id = 'ml'").get(w.PROJECT);
+        if (row) w.db.prepare("UPDATE project_workspaces SET status = 'active', is_primary = 1 WHERE id = ?").run(row.id);
+        else w.db.prepare(`INSERT INTO project_workspaces (id, project_id, workspace_id, objective, status, is_primary, source, created_by, created_at, updated_at)
+          VALUES ('pw-ml-xm4', ?, 'ml', NULL, 'active', 1, 'user', 'user:local', ?, ?)`).run(w.PROJECT, Date.now(), Date.now());
+      })();
+      const src = h.tmpDir('nx-ml-res-');
+      const csv = path.join(src, 'x.csv');
+      fs.writeFileSync(csv, trainCsv(800));
+      const me = w.nx.principals.localUser();
+      await w.nx.datasets.add(me, w.PROJECT, async () => csv);
+      const dataCopy = path.join(w.dataHome.root, 'datasets', w.PROJECT, 'files', 'x.csv');
+      const hashOf = (p) => crypto.createHash('sha256').update(fs.readFileSync(p)).digest('hex');
+      const dataBefore = hashOf(dataCopy);
+      await w.snapshot();
+      await w.consent();
+      await w.until(() => (w.nx.exec.health().images.find((i) => i.profile === 'ml-python') ?? {}).matches === true, 'the ML kit is seen by the probe', 3 * MIN);
+      const job = [
+        'import json, os, socket',
+        'import matplotlib',
+        'matplotlib.use("Agg")',
+        'import matplotlib.pyplot as plt',
+        'import pandas as pd, joblib',
+        'from sklearn.linear_model import LogisticRegression',
+        'from sklearn.model_selection import train_test_split',
+        'r = {}',
+        'def attempt(name, fn):',
+        '    try:',
+        '        fn()',
+        '        r[name] = "done"',
+        '    except Exception as e:',
+        '        r[name] = "refused " + type(e).__name__ + " " + str(getattr(e, "errno", ""))',
+        'df = pd.read_csv("/data/x.csv")',
+        'X = pd.get_dummies(df.drop(columns=["label"]), columns=["segment"])',
+        'y = df["label"]',
+        'Xtr, Xte, ytr, yte = train_test_split(X, y, test_size=0.25, random_state=42)',
+        'm = LogisticRegression(max_iter=500, random_state=42).fit(Xtr, ytr)',
+        'acc = round(float(m.score(Xte, yte)), 4)',
+        'r["accuracy"] = acc',
+        'open("/results/report.md", "w").write("# Who leaves\\n\\nAccuracy on the held-out quarter: **" + str(acc) + "**\\n\\n<script>alert(1)</script>\\n")',
+        'fig, ax = plt.subplots(figsize=(5, 3))',
+        'df["label"].value_counts().plot.bar(ax=ax)',
+        'fig.tight_layout()',
+        'fig.savefig("/results/chart.png", dpi=80)',
+        'joblib.dump(m, "/results/model.joblib", compress=3)',
+        'pd.DataFrame({"p": m.predict_proba(Xte)[:, 1]}).to_csv("/results/predictions.csv", index=False)',
+        '# Adversarial files the listing must leave out (an attempt may fail on some file systems: that is fine).',
+        'open("/results/fake.png", "w").write("<svg onload=alert(1)>")',
+        'open("/results/page.html", "w").write("<script>alert(1)</script>")',
+        'attempt("symlink", lambda: os.symlink("/etc/passwd", "/results/link.md"))',
+        'open("/results/hl_src.md", "w").write("twice")',
+        'attempt("hardlink", lambda: os.link("/results/hl_src.md", "/results/hl.md"))',
+        'attempt("folder", lambda: (os.mkdir("/results/sub"), open("/results/sub/inner.md", "w").write("x")))',
+        'attempt("control", lambda: open("/results/a" + chr(1) + "b.md", "w").write("x"))',
+        'attempt("device", lambda: open("/results/CON.png", "w").write("x"))',
+        'attempt("data_write", lambda: open("/data/new.txt", "w").write("x"))',
+        'attempt("network", lambda: socket.create_connection(("pypi.org", 443), timeout=3))',
+        'r["listing"] = sorted(os.listdir("/results"))',
+        'print("RESULTS-JOB " + json.dumps(r))'
+      ].join('\n');
+      w.script(() => [{ op: 'call', tool: 'sandbox_exec', args: { argv: ['python', '-c', job], cwd: '/workspace', timeoutMs: 5 * MIN } }, { op: 'complete' }]);
+      const r = await w.turn('Which customers are likely to leave?', { ms: 15 * MIN });
+      const at = w.db.prepare('SELECT state, environment_json, sandbox_json FROM job_attempts WHERE job_id = ? ORDER BY n DESC').get(r.jobId);
+      const env = JSON.parse(at.environment_json);
+      const sb = JSON.parse(at.sandbox_json);
+      assert.equal(env.profile, 'ml-python');
+      assert.equal(sb.network.mode, 'none');
+      assert.deepEqual(sb.mounts.filter((m) => m.containerPath === '/results' || m.containerPath === '/data'),
+        [{ kind: 'datasets', containerPath: '/data', readOnly: true }, { kind: 'results', containerPath: '/results', readOnly: false }], 'the record names no host path');
+      const ex = w.execResults(r.jobId);
+      assert.equal(ex.length, 1, JSON.stringify(ex));
+      assert.equal(ex[0].exit, 0, JSON.stringify(ex[0]));
+      const line = ex[0].stdout.split('\n').find((l) => l.startsWith('RESULTS-JOB '));
+      assert.ok(line, ex[0].stdout);
+      const got = JSON.parse(line.slice('RESULTS-JOB '.length));
+      console.log(`# XM4 ${JSON.stringify(got)}`);
+      assert.ok(got.accuracy >= 0.7, `accuracy ${got.accuracy}`);
+      assert.match(got.data_write, /^refused (OSError|PermissionError) 30$/, '/data is still read-only (EROFS)');
+      assert.match(got.network, /^refused /, 'no network');
+      for (const n of ['report.md', 'chart.png', 'model.joblib', 'predictions.csv']) assert.ok(got.listing.includes(n), `${n} written in the container`);
+      // The host folder holds them.
+      const dir = path.join(w.dataHome.root, 'results', w.PROJECT, 'files');
+      const png = fs.readFileSync(path.join(dir, 'chart.png'));
+      assert.deepEqual([...png.subarray(0, 8)], [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a], 'a real PNG on the host');
+      assert.ok(fs.statSync(path.join(dir, 'model.joblib')).size > 200);
+      assert.match(fs.readFileSync(path.join(dir, 'predictions.csv'), 'utf8'), /^p\r?\n0\./);
+      // Main lists them (the adversarial files left out), shows the report and the chart, and saves the model.
+      const l = await w.nx.results.list(me, w.PROJECT);
+      const names = l.results.map((x) => x.name).sort();
+      assert.deepEqual(names, ['chart.png', 'fake.png', 'model.joblib', 'predictions.csv', 'report.md'], JSON.stringify(l));
+      const kinds = Object.fromEntries(l.results.map((x) => [x.name, [x.kind, x.shown]]));
+      assert.deepEqual(kinds, { 'chart.png': ['chart', true], 'fake.png': ['file', false], 'model.joblib': ['model', false], 'predictions.csv': ['table', false], 'report.md': ['report', true] });
+      assert.ok(l.skipped >= 2, `left out: page.html and the hard-linked pair at least, then whatever else the file system let the container make (${l.skipped})`);
+      const rep = await w.nx.results.read(me, w.PROJECT, resultIdOf('report.md'));
+      assert.ok(rep.text.includes(`Accuracy on the held-out quarter: **${got.accuracy}**`), rep.text);
+      assert.ok(rep.text.includes('<script>alert(1)</script>'), 'kept as letters, shown as text');
+      const chart = await w.nx.results.read(me, w.PROJECT, resultIdOf('chart.png'));
+      assert.deepEqual(Buffer.from(chart.dataUrl.slice('data:image/png;base64,'.length), 'base64'), png);
+      const out = h.tmpDir('nx-ml-save-');
+      const dest = path.join(out, 'churn.joblib');
+      assert.deepEqual(await w.nx.results.save(me, w.PROJECT, resultIdOf('model.joblib'), async () => dest), { saved: true, name: 'model.joblib' });
+      assert.equal(hashOf(dest), hashOf(path.join(dir, 'model.joblib')), 'the saved model is byte for byte');
+      for (const n of ['page.html', 'link.md', 'hl.md', `a${String.fromCharCode(1)}b.md`, 'CON.png', 'inner.md']) {
+        await assert.rejects(w.nx.results.read(me, w.PROJECT, resultIdOf(n)), (e) => e.detail?.reason === 'results_not_found', n);
+      }
+      // Nothing else touched: the data copy, and the project's files (the turn changed no file).
+      assert.equal(hashOf(dataCopy), dataBefore, 'Nexus\'s data copy is unchanged');
+      assert.deepEqual([r.job.state, r.job.outcome], ['partial', 'no_change'], `the project's files are not touched: ${r.job.state} ${r.job.error_json}`);
+      const sess = w.db.prepare('SELECT session_id FROM jobs WHERE id = ?').get(r.jobId).session_id;
+      const wt = path.join(w.dataHome.root, 'wt', String(sess).toLowerCase());
+      if (fs.existsSync(wt)) {
+        const status = execFileSync('git', ['status', '--porcelain', '--untracked-files=all'], { cwd: wt, encoding: 'utf8', windowsHide: true }).trim();
+        assert.equal(status, '', 'the worktree holds no output');
+      }
+      assert.equal(at.state, 'succeeded');
+      sound(w, 'XM4');
     } finally {
       try { await w.close(); } catch { /* best effort */ }
       const left = labelled(home);
