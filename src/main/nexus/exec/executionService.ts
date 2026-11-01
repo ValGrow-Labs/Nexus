@@ -98,7 +98,7 @@
 import type Database from 'better-sqlite3';
 import type { AgentPlan, ImageStatus, SandboxProfile, SandboxProfileId, StagedOutput, ParsedOutput, ExitInfo, ResourceLimits } from '../../../shared/nexus/execution';
 import { DIAGNOSE_MAX_RANGES } from '../../../shared/nexus/execution';
-import { profileFromFacts } from './sandboxProfile';
+import { agentProfileFromFacts, anyMachineLearningProject, ML_PROFILE, profileFromFacts } from './sandboxProfile';
 import type { RuntimeEvent } from '../../../shared/nexus/runtime';
 import type { Job, JobKind, JobState, Principal, ScopeRef } from '../../../shared/nexus/platform';
 import { getUserAction, USER_ACTIONS, type UserActionDef } from '../../../shared/nexus/actions';
@@ -1919,7 +1919,7 @@ export class ExecutionService {
 
   /** The first guard a queued turn fails (the agent service's policy guards, then the container guards), or null. */
   private agentGuard(j: ExecJobRow, use: LiveUse, preparing: number): AgentWaitReason | null {
-    const profile = this.profileFor(j.project_id, this.repositoryFacts(j.project_id));
+    const profile = this.agentProfileFor(j.project_id);
     return this.agents!.guard(j, { runnerReady: this.runnerReady() && this.mcpUrl !== null, profile, probe: this.probe, live: use, caps: this.caps, preparing });
   }
 
@@ -2005,7 +2005,7 @@ export class ExecutionService {
     if (!home || this.bootId === null) return false;
     const j0 = this.row(jobId);
     if (!j0) return false;
-    const profileId = this.profileFor(j0.project_id, this.repositoryFacts(j0.project_id));
+    const profileId = this.agentProfileFor(j0.project_id);
     const profile = (this.deps.profiles ?? []).find((p) => p.id === profileId) ?? null;
     const image = usableImage(this.probe, profileId);
     const attemptId = newId(now);
@@ -2875,6 +2875,8 @@ export class ExecutionService {
     let id: string | null = null; let path: string | null = null; let key: string | null = null;
     if (lockSha) { key = lockSha; path = '$.lockfile.sha256'; id = profile === 'sde-python' ? 'sde.deps.python' : profile === 'sde-node' ? 'sde.deps.node' : null; }
     else if (man && profile === 'sde-node') { key = man; path = '$.manifest.sha256'; id = 'sde.deps.resolve'; }
+    // A Machine learning project runs on the packages of its locked kit, the same for every ML project: nothing is installed for it.
+    if (profile === ML_PROFILE) return invalid('no_dependencies', 'a machine learning project uses the packages of its kit; nothing is installed for it');
     if (!id || !key || !path) return invalid('no_dependencies', 'this project lists no add-ons to install');
     const done = this.db.prepare(`SELECT 1 FROM jobs j JOIN job_inputs ji ON ji.job_id = j.id JOIN artifact_versions v ON v.id = ji.version_id
       WHERE j.project_id = ? AND j.recipe_id = ? AND j.state = 'completed' AND json_extract(v.metadata_json, '${path}') = ? LIMIT 1`).get(projectId, id, key);
@@ -2968,9 +2970,26 @@ export class ExecutionService {
     if (n >= this.caps.perProjectQueue) invalid('queue_full', `a project holds at most ${this.caps.perProjectQueue} waiting or running jobs`);
   }
 
-  /** The sandbox profile for this project's repository: an input's recorded profile, else the project's languages, else node. */
+  /**
+   * The sandbox profile for this project's repository: an input's recorded profile, else the project's languages, else node; a
+   * Machine learning project's Python runs use the machine learning kit (sandboxProfile.ts).
+   */
   private profileFor(projectId: string, facts: { kind: string; metadata: unknown }[]): SandboxProfileId {
     return profileFromFacts(this.db, projectId, facts);
+  }
+
+  /** The AI helper's own container profile: the repository's, and the machine learning kit in a Machine learning project (sandboxProfile.ts). */
+  private agentProfileFor(projectId: string): SandboxProfileId {
+    return agentProfileFromFacts(this.db, projectId, this.repositoryFacts(projectId));
+  }
+
+  /**
+   * Whether this computer needs a profile's image now. Every image is needed, except the machine learning kit: it is part of getting
+   * this computer ready only once a Machine learning project exists (it is large, and nobody else needs it). Health and the setup
+   * checks leave an image that is not needed out; a job or turn that runs in it still waits for it (`waiting:image`).
+   */
+  private imageNeeded(profile: string): boolean {
+    return profile !== ML_PROFILE || anyMachineLearningProject(this.db);
   }
 
   /**
@@ -3152,15 +3171,17 @@ export class ExecutionService {
     const floor = leaseFloorBytes(0);
     let schemaVersion: number | null = null;
     try { const v = this.db.pragma('user_version', { simple: true }); schemaVersion = typeof v === 'number' ? v : null; } catch { schemaVersion = null; }
+    // The images this computer needs now (the machine learning kit only once a Machine learning project exists): shown and gated.
+    const images = c ? c.images.filter((i) => this.imageNeeded(i.profile)) : [];
     return {
       execution: { available: this.deps.available, reason: this.deps.available ? null : (this.deps.unavailableReason ?? 'not_enabled') },
       runner: { state: runnerState, attached: this.port !== null, faults: this.faults },
       docker: c ? { state: c.probe.docker, version: c.probe.version, cpus: c.probe.cpus, memoryBytes: c.probe.memoryBytes,
         ...(c.probe.os !== undefined ? { os: c.probe.os } : {}), ...(c.probe.wsl2 !== undefined ? { wsl2: c.probe.wsl2 } : {}) } : { state: 'unknown' },
-      images: c ? c.images.map((i) => ({ profile: i.profile, present: i.present, matches: i.digestMatches,
-        ...(typeof i.sizeBytes === 'number' ? { sizeBytes: i.sizeBytes } : {}), ...(typeof i.imageId === 'string' ? { imageId: i.imageId } : {}) })) : [],
+      images: images.map((i) => ({ profile: i.profile, present: i.present, matches: i.digestMatches,
+        ...(typeof i.sizeBytes === 'number' ? { sizeBytes: i.sizeBytes } : {}), ...(typeof i.imageId === 'string' ? { imageId: i.imageId } : {}) })),
       disk: { freeBytes: c ? c.freeBytes : null, leaseFloorBytes: floor },
-      gate: c ? evaluateGate(c.probe, c.freeBytes ?? -1, c.images) : null,
+      gate: c ? evaluateGate(c.probe, c.freeBytes ?? -1, images) : null,
       checkedAt: c ? c.at : null,
       schemaVersion,
       gpu: c && c.probe.gpu ? { detected: c.probe.gpu.detected === true, ...(typeof c.probe.gpu.model === 'string' ? { model: c.probe.gpu.model } : {}) }
@@ -3186,7 +3207,7 @@ export class ExecutionService {
     if (!action || !('recipes' in action.run)) return { available: false, reason: 'not_applicable' };
     const recipes = action.run.recipes.map((id) => getRecipe(id)).filter((x): x is RecipeDef => x !== null).filter((x) => x.executor !== 'engine');
     if (recipes.length === 0) return { available: true, reason: null };
-    const profiles: SandboxProfileId[] = [...new Set(recipes.flatMap((x) => x.profiles))].filter((x) => x !== 'nexus-fwd');
+    const profiles: SandboxProfileId[] = [...new Set(recipes.flatMap((x) => x.profiles))].filter((x) => x !== 'nexus-fwd' && this.imageNeeded(x));
     // A dev deployment also runs the loopback forwarder.
     if (recipes.some((x) => x.executor === 'service')) profiles.push('nexus-fwd');
     for (const pr of profiles) {

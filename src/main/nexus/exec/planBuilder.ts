@@ -92,6 +92,12 @@ export const TMPFS_MB = 512;
 export const STEP_SEPARATOR = STEP_SEPARATOR_TOKEN;
 export const MAX_DISCOVERED_FILES = 5000;
 const FRAMEWORKS = ['node-test', 'jest', 'vitest', 'mocha', 'pytest'] as const;
+/**
+ * The Python profiles: sde-python, and ml-python (the machine learning kit: the same Python and tools plus the locked ML packages,
+ * baked into the image, so it takes no dependency volume and no PYTHONPATH: nothing is installed per project).
+ */
+export const PYTHON_PROFILES: readonly string[] = Object.freeze(['sde-python', 'ml-python']);
+const isPython = (profileId: string | null | undefined): boolean => typeof profileId === 'string' && PYTHON_PROFILES.includes(profileId);
 export type TestFramework = (typeof FRAMEWORKS)[number];
 
 /** argv templates by id: fixed arrays, run after the Nexus entry. Values main adds are appended by `expand`. */
@@ -265,7 +271,7 @@ export function pickFramework(recipe: RecipeDef, profileId: string | null, given
   const alternatives = recipe.argvTemplates.some((t) => FRAMEWORKS.some((f) => t.startsWith(`${f}.`)));
   if (!alternatives) return null;
   const meta = inputs.map((i) => (isPlainObject(i.metadata) ? i.metadata.framework : undefined)).find((x) => typeof x === 'string');
-  const want = given ?? (typeof meta === 'string' ? meta : null) ?? (profileId === 'sde-python' ? 'pytest' : 'node-test');
+  const want = given ?? (typeof meta === 'string' ? meta : null) ?? (isPython(profileId) ? 'pytest' : 'node-test');
   if (!(FRAMEWORKS as readonly string[]).includes(want)) refuse('bad_input', 'unknown test framework');
   if (!recipe.argvTemplates.some((t) => t.startsWith(`${want}.`))) refuse('bad_input', `the recipe has no ${want} template`);
   return want as TestFramework;
@@ -332,6 +338,7 @@ export function envFor(recipe: RecipeDef, profileId: string, framework: TestFram
     else if (recipe.id.startsWith('sde.test.')) env.NODE_ENV = 'test';
   }
   if (profileId === 'sde-python') { env.PIP_NO_INPUT = '1'; env.PYTHONPATH = '/deps'; env.PYTHONDONTWRITEBYTECODE = '1'; }
+  if (profileId === 'ml-python') { env.PIP_NO_INPUT = '1'; env.PYTHONDONTWRITEBYTECODE = '1'; }
   if (framework === 'jest') env.JEST_JUNIT_OUTPUT_FILE = '/out/junit.xml';
   return checkEnv(env);
 }
@@ -402,6 +409,8 @@ export function manifestSha256Of(inputs: readonly PlanInput[]): string | null {
  * add-ons but no lockfile, the hash of its package list.
  */
 export function depsVolumeName(profileId: string | null | undefined, inputs: readonly PlanInput[]): string | null {
+  // The machine learning kit carries its packages in the image: no dependency volume, whatever the project's lockfile says.
+  if (profileId === 'ml-python') return null;
   const lock = lockfileSha256Of(inputs) ?? (profileId === 'sde-node' ? manifestSha256Of(inputs) : null);
   return lock && typeof profileId === 'string' && /^[a-z][a-z0-9-]{0,31}$/.test(profileId) ? `nexus-deps-${profileId}-${lock.slice(0, 12)}` : null;
 }

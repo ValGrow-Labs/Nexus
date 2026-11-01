@@ -8,8 +8,8 @@
  *   container is created by the local image id the probe reports, never by a tag or the base digest: amendment A2).
  * - `entrypoint`: the Nexus entry the image's ENTRYPOINT names (one element: the Docker CLI sets it too, preflight
  *   compares it exactly).
- * - `imageEnv`: the ENV names the image config declares (the base image's; the Nexus Dockerfiles add none). Preflight
- *   refuses a container carrying any other name the plan did not set.
+ * - `imageEnv`: the ENV names the image config declares (the base image's, plus the names a Nexus Dockerfile declares itself:
+ *   only ml-python's MPLBACKEND and MPLCONFIGDIR). Preflight refuses a container carrying any other name the plan did not set.
  * - `imageContexts`: `{ contextSha256, baseDigest, estimatedBytes }` per profile, what the A2 approval shows and binds.
  * A lock that does not parse, or names a profile with a malformed field, yields NO profiles and a problem (logged once by
  * the caller), never a partial set.
@@ -20,8 +20,11 @@ import type { ResourceLimits, SandboxProfile, SandboxProfileId } from '../../sha
 import type { ImageContext } from '../nexus/approvals/approvalService';
 
 export const IMAGE_LOCK_FILE = 'lock.json';
-/** The profiles B2a pins (the order main hands them over). */
-export const LOCKED_PROFILE_IDS: readonly SandboxProfileId[] = Object.freeze(['sde-node', 'sde-python', 'nexus-fwd']);
+/**
+ * The profiles the lock pins (the order main hands them over): B2a's three, then `ml-python`, the machine learning kit (the Python
+ * kit's tools plus the locked ML packages; used by Machine learning projects, see src/main/nexus/exec/sandboxProfile.ts).
+ */
+export const LOCKED_PROFILE_IDS: readonly SandboxProfileId[] = Object.freeze(['sde-node', 'sde-python', 'nexus-fwd', 'ml-python']);
 
 const DIGEST_RE = /^sha256:[0-9a-f]{64}$/;
 const SHA_RE = /^[0-9a-f]{64}$/;
@@ -34,7 +37,8 @@ const MIB = 2 ** 20;
 const DEFAULTS: Readonly<Record<string, ResourceLimits>> = Object.freeze({
   'sde-node': { cpus: 2, memoryMb: 2048, pids: 512, wallClockMs: 15 * MIN, outputMaxBytes: 64 * MIB, tmpfsMb: 512 },
   'sde-python': { cpus: 2, memoryMb: 2048, pids: 512, wallClockMs: 15 * MIN, outputMaxBytes: 64 * MIB, tmpfsMb: 512 },
-  'nexus-fwd': { cpus: 0.5, memoryMb: 128, pids: 512, wallClockMs: 120 * MIN, outputMaxBytes: 1 * MIB, tmpfsMb: 16 }
+  'nexus-fwd': { cpus: 0.5, memoryMb: 128, pids: 512, wallClockMs: 120 * MIN, outputMaxBytes: 1 * MIB, tmpfsMb: 16 },
+  'ml-python': { cpus: 2, memoryMb: 2048, pids: 512, wallClockMs: 15 * MIN, outputMaxBytes: 64 * MIB, tmpfsMb: 512 }
 });
 
 export interface LockedProfile {

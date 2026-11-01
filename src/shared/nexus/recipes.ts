@@ -47,6 +47,10 @@ const MIN = 60_000;
 const MIB = 2 ** 20;
 const engine = { executor: 'engine' as const, profiles: [] as SandboxProfileId[], network: 'not-applicable' as const, limits: null };
 const NODE_OR_PY: SandboxProfileId[] = ['sde-node', 'sde-python'];
+// The project's own offline runs (discover, test, build, try) also run in the machine learning kit: a Machine learning project's
+// Python code runs there instead of sde-python (src/main/nexus/exec/sandboxProfile.ts). Never an install (no egress) and never a preview.
+const ML: SandboxProfileId = 'ml-python';
+const RUNS_ANY: SandboxProfileId[] = [...NODE_OR_PY, ML];
 
 export const RECIPES: readonly RecipeDef[] = deepFreeze([
   { id: 'repo.snapshot', version: '1', ...engine,
@@ -64,7 +68,7 @@ export const RECIPES: readonly RecipeDef[] = deepFreeze([
     retry: { idempotent: true, maxAttempts: 2 }, wallClockMs: 15 * MIN, limits: { cpus: 2, memoryMb: 2048, outputMaxBytes: 1 * MIB },
     outputContract: { required: ['lock.sha256'], description: 'The lockfile hash, equal to the lockfile in the checkout.' },
     parsers: [], produces: [], subPhase: 'B2a' },
-  { id: 'sde.test.discover', version: '1', executor: 'tool', profiles: NODE_OR_PY,
+  { id: 'sde.test.discover', version: '1', executor: 'tool', profiles: RUNS_ANY,
     argvTemplates: ['node-test.glob', 'jest.list-tests', 'vitest.list', 'mocha.dry-run', 'pytest.collect-only'],
     params: NO_PARAMS, network: 'none',
     retry: { idempotent: true, maxAttempts: 2 }, wallClockMs: 5 * MIN, limits: { cpus: 1, memoryMb: 1024, outputMaxBytes: 8 * MIB },
@@ -75,7 +79,7 @@ export const RECIPES: readonly RecipeDef[] = deepFreeze([
     retry: { idempotent: false, maxAttempts: 1 }, wallClockMs: 15 * MIN, limits: { cpus: 2, memoryMb: 2048, outputMaxBytes: 64 * MIB },
     outputContract: { required: ['junit.xml'], description: 'A JUnit report written by a forced reporter.' },
     parsers: ['junit'], produces: [], subPhase: 'B2a' },
-  { id: 'sde.test.pytest', version: '1', executor: 'tool', profiles: ['sde-python'],
+  { id: 'sde.test.pytest', version: '1', executor: 'tool', profiles: ['sde-python', ML],
     argvTemplates: ['pytest.junit'], params: NO_PARAMS, network: 'none',
     retry: { idempotent: false, maxAttempts: 1 }, wallClockMs: 15 * MIN, limits: { cpus: 2, memoryMb: 2048, outputMaxBytes: 64 * MIB },
     outputContract: { required: ['junit.xml'], description: 'A JUnit report.' },
@@ -85,7 +89,7 @@ export const RECIPES: readonly RecipeDef[] = deepFreeze([
     retry: { idempotent: false, maxAttempts: 1 }, wallClockMs: 15 * MIN, limits: { cpus: 2, memoryMb: 2048, outputMaxBytes: 256 * MIB },
     outputContract: { required: ['dist/**'], description: 'The build output tree.' },
     parsers: [], produces: ['build'], subPhase: 'B2a' },
-  { id: 'sde.build.python', version: '1', executor: 'tool', profiles: ['sde-python'],
+  { id: 'sde.build.python', version: '1', executor: 'tool', profiles: ['sde-python', ML],
     argvTemplates: ['python.build-wheel'], params: NO_PARAMS, network: 'none',
     retry: { idempotent: false, maxAttempts: 1 }, wallClockMs: 15 * MIN, limits: { cpus: 2, memoryMb: 2048, outputMaxBytes: 256 * MIB },
     outputContract: { required: ['dist/*.whl'], description: 'One or more wheels.' },
@@ -108,7 +112,7 @@ export const RECIPES: readonly RecipeDef[] = deepFreeze([
   // A try run (B2b, "Try it"): the person presses a button, a suggested change runs in the safe space and its output is shown. The command is an
   // argument array main wrote into the job (a detected button, or the person's own command tokenized by main); the lease checks it again. Same
   // limits and wall clock as a test run, no network, one run at a time per project; the output is capped at 4 MiB and shown redacted.
-  { id: 'sde.try.run', version: '1', executor: 'tool', profiles: NODE_OR_PY,
+  { id: 'sde.try.run', version: '1', executor: 'tool', profiles: RUNS_ANY,
     argvTemplates: ['try.run'], params: NO_PARAMS, network: 'none',
     retry: { idempotent: false, maxAttempts: 1 }, wallClockMs: 15 * MIN, limits: { cpus: 2, memoryMb: 2048, outputMaxBytes: 4 * MIB },
     outputContract: { required: [], description: 'None: the output is the log of the run, and the exit status says how it ended.' },

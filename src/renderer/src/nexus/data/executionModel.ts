@@ -168,7 +168,7 @@ const row = (id: string, label: string, state: SetupState, text: string, action:
 
 /** What each safe-space kit is for, in words a person knows (the profile ids stay in code and are never shown). */
 const KIT_FOR: Readonly<Record<string, string>> = Object.freeze({
-  'sde-node': 'JavaScript (Node) projects', 'sde-python': 'Python projects', 'nexus-fwd': 'trying your app'
+  'sde-node': 'JavaScript (Node) projects', 'sde-python': 'Python projects', 'nexus-fwd': 'trying your app', 'ml-python': 'machine learning projects'
 });
 /** "Safe-space kit for Python projects" (a row label). An unknown profile reads "Safe-space kit", never its id. */
 export const PROFILE_LABEL: Readonly<Record<string, string>> = Object.freeze(Object.fromEntries(

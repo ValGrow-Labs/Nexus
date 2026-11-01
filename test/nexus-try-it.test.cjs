@@ -111,7 +111,8 @@ test('TR4 the output panel shows what the program printed and its errors apart, 
 test('TR5 the recipe and the action: the same sandbox as a test run, no network, fixed limits, started only by its own request', () => {
   const r = getRecipe('sde.try.run');
   assert.ok(r);
-  assert.deepEqual([r.executor, r.network, r.profiles, r.argvTemplates, r.parsers, r.produces, r.retry], ['tool', 'none', ['sde-node', 'sde-python'], ['try.run'], [], [], { idempotent: false, maxAttempts: 1 }]);
+  // ml-python (the machine learning kit): a Machine learning project's Python program is tried in it (still no network).
+  assert.deepEqual([r.executor, r.network, r.profiles, r.argvTemplates, r.parsers, r.produces, r.retry], ['tool', 'none', ['sde-node', 'sde-python', 'ml-python'], ['try.run'], [], [], { idempotent: false, maxAttempts: 1 }]);
   const t = getRecipe('sde.test.node');
   assert.equal(r.wallClockMs, t.wallClockMs, 'the same wall clock as a test run');
   assert.deepEqual([r.limits.cpus, r.limits.memoryMb], [t.limits.cpus, t.limits.memoryMb]);

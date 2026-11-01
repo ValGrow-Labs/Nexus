@@ -72,7 +72,7 @@ const EXECUTION_SETTING_KEY = /^(network|networks|net|ports?|publish|expose|imag
 export const JOB_KINDS_ACCEPTED = ['agent.run', 'tool.run', 'validate', 'ingest'] as const;
 export const DEPLOYMENT_STATUSES_ACCEPTED = ['starting', 'healthy', 'unhealthy', 'stopped', 'failed'] as const;
 export const APPROVAL_STATUSES_ACCEPTED = ['pending', 'approved', 'denied', 'expired', 'withdrawn'] as const;
-export const IMAGE_PROFILES_ACCEPTED = ['sde-node', 'sde-python', 'nexus-fwd'] as const;
+export const IMAGE_PROFILES_ACCEPTED = ['sde-node', 'sde-python', 'nexus-fwd', 'ml-python'] as const;
 export const PREVIEW_PARTS = ['content', 'manifest', 'discovery', 'junit_summary', 'diff'] as const;
 /** B2b: the agent session statuses a list may filter by, the message and comment bounds, and the cap names of a consent grant. */
 export const SESSION_STATUSES_ACCEPTED = ['open', 'running', 'awaiting_approval', 'completed', 'failed', 'cancelled', 'timed_out', 'interrupted'] as const;

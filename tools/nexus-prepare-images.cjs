@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 'use strict';
 /**
- * tools/nexus-prepare-images.cjs (B2a Task 12; Verification only, after the user's go-ahead): builds the three pinned
+ * tools/nexus-prepare-images.cjs (B2a Task 12; Verification only, after the user's go-ahead): builds the four pinned
  * sandbox images exactly as the app does, through RunnerCore's image builder (src/runner/imageBuilder.ts): the context is
  * EXACTLY `<profile>/` and `common/` of infra/images, its hash recomputed and compared with infra/images/lock.json, the
  * labels `nexus.profile` and `nexus.context-sha256`, the tag `nexus-local/<profile>:<context12>`. Prints each image's
@@ -23,7 +23,8 @@ const { MessageChannel } = require('node:worker_threads');
 const ROOT = path.resolve(__dirname, '..');
 const IMAGES = path.join(ROOT, 'infra', 'images');
 const GIB = 2 ** 30;
-const PROFILES = ['sde-node', 'sde-python', 'nexus-fwd'];
+// ml-python (the machine learning kit) is the largest: about 1.1 GB on disk. `--profile` builds one profile only.
+const PROFILES = ['sde-node', 'sde-python', 'nexus-fwd', 'ml-python'];
 
 function arg(name) { const i = process.argv.indexOf(name); return i >= 0 ? process.argv[i + 1] : null; }
 

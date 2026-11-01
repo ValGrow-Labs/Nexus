@@ -476,7 +476,7 @@ export interface SaveInlineArgs {
 export interface DeploymentsListFilter { projectId?: ProjectId; status?: DeploymentStatus }
 export interface ApprovalsListFilter { projectId?: ProjectId; status?: ApprovalStatus }
 export type ApprovalDecisionArg = 'once' | 'deny';
-export type ImageProfileArg = 'sde-node' | 'sde-python' | 'nexus-fwd';
+export type ImageProfileArg = 'sde-node' | 'sde-python' | 'nexus-fwd' | 'ml-python';
 export type BlobGcArgs = { apply: false } | { apply: true; expectedCandidatesHash: string };
 /** The nexus:hint push: only the newest event seq (pull #31 for what changed). */
 export interface NexusHint { lastSeq: number }

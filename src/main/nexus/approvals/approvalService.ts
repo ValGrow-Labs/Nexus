@@ -75,8 +75,9 @@ export const PROGRESS_EVENT_MS = 60_000;
 export const MAX_EXPIRE_PER_SWEEP = 100;
 export const DEFAULT_APPROVAL_LIST = 100;
 export const MAX_APPROVAL_LIST = 500;
-export type ImageProfileId = 'sde-node' | 'sde-python' | 'nexus-fwd';
-export const IMAGE_PROFILES: readonly ImageProfileId[] = Object.freeze(['sde-node', 'sde-python', 'nexus-fwd'] as ImageProfileId[]);
+export type ImageProfileId = 'sde-node' | 'sde-python' | 'nexus-fwd' | 'ml-python';
+/** The images a person may ask Nexus to prepare (A2); ml-python is the machine learning kit. It never gets an approved install (no registry below). */
+export const IMAGE_PROFILES: readonly ImageProfileId[] = Object.freeze(['sde-node', 'sde-python', 'nexus-fwd', 'ml-python'] as ImageProfileId[]);
 /**
  * The hosts an approved install can reach, by sandbox profile: exactly the egress proxy's allow-list of the profile's
  * install recipe (src/shared/nexus/egressPolicy.ts; enforced since the B2a stabilization round, constraint 5).

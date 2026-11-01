@@ -15,7 +15,8 @@ import { ApprovalList } from '../project/ApprovalsSection';
 import { Sheet } from '../ui/Sheet';
 import { Button } from '../ui/Button';
 
-const PROFILES: readonly string[] = ['sde-node', 'sde-python', 'nexus-fwd'];
+// The kits a person can prepare here; main lists the machine learning kit only once a Machine learning project exists.
+const PROFILES: readonly string[] = ['sde-node', 'sde-python', 'nexus-fwd', 'ml-python'];
 
 /**
  * "Get this computer ready": the three steps of "Your first build" (get this computer ready, choose your AI helper, save a starting point), each
