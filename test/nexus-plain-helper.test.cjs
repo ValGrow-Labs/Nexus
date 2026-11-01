@@ -191,6 +191,11 @@ test('PH6 the conversation log is plain: requests, what was said, steps in plain
   assert.equal(A.toolLabel('read_file'), 'Reading a file');
   assert.equal(A.toolLabel('write_file'), 'Writing a file');
   assert.equal(A.toolLabel('review_request'), 'Sending the suggested changes for review');
+  // The built-in steps of the helper's own program (seen on a real build) read in plain words, not "A step".
+  for (const t of ['ToolSearch', 'TodoWrite', 'Task', 'Skill', 'NotebookEdit', 'WebFetch', 'WebSearch', 'ExitPlanMode', 'EnterPlanMode']) {
+    const w = A.toolLabel(t); assert.notEqual(w, 'A step', t); assert.doesNotMatch(w, JARGON); assert.ok(/^[A-Z]/.test(w) && !/_/.test(w), w);
+  }
+  assert.equal(A.toolLabel('mcp__claude__ToolSearch'), 'Getting its tools ready');
 });
 
 // ---------- PH7 tasks and the codes they end with ----------

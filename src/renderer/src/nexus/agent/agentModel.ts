@@ -527,7 +527,10 @@ const NEXUS_TOOL_LABEL: Readonly<Record<string, string>> = Object.freeze({
   changeset_register: 'Saving the suggested changes', requirement_draft: 'Writing down what is needed', review_request: 'Sending the suggested changes for review',
   read_file: 'Reading a file', write_file: 'Writing a file', list_files: 'Looking at the project’s files', delete_file: 'Deleting a file',
   Read: 'Reading a file', Write: 'Writing a file', Edit: 'Writing a file', MultiEdit: 'Writing a file', Glob: 'Looking at the project’s files', LS: 'Looking at the project’s files',
-  Grep: 'Searching the project’s files', Bash: 'Running a command'
+  Grep: 'Searching the project’s files', Bash: 'Running a command',
+  // The built-in steps of the helper's own program (it loads its tools, keeps a to-do list, hands a part to a helper) and of other programs.
+  ToolSearch: 'Getting its tools ready', TodoWrite: 'Planning the steps', Task: 'Asking a helper to look into it', Skill: 'Using a saved know-how',
+  NotebookEdit: 'Writing a file', WebFetch: 'Reading a web page', WebSearch: 'Searching the web', ExitPlanMode: 'Planning the steps', EnterPlanMode: 'Planning the steps'
 });
 /** One step as the log shows it, in plain words (any `mcp__<server>__` prefix removed). A step this build has no words for reads "A step". */
 export function toolLabel(tool: string): string {
