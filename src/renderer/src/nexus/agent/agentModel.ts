@@ -107,13 +107,19 @@ function isData(text: string): boolean {
   if (!(t.startsWith('{') || t.startsWith('['))) return false;
   try { return typeof JSON.parse(t) === 'object'; } catch { return false; }
 }
-function hasWords(text: string): boolean { return text.trim() !== '' && text.split('').every((ch) => ' \t\r\n{}[]'.includes(ch)) === false && !isData(text); }
+/** A weaker model sometimes types its own tool calls and results into the chat (`<tool_call>…</tool_call>`, `<tool_response>…</tool_response>`, an unclosed one runs to the end): that is not something it said. */
+const TOOL_MARKUP = /<(tool_call|tool_response|tool_result|function_call)>[\s\S]*?(?:<\/\1>|$)/gi;
+const withoutToolMarkup = (text: string): string => text.replace(TOOL_MARKUP, ' ');
+function hasWords(text: string): boolean {
+  const t = withoutToolMarkup(text);
+  return t.trim() !== '' && t.split('').every((ch) => ' \t\r\n{}[]'.includes(ch)) === false && !isData(t);
+}
 /** Ids the helper copied out of a tool result ("version ID 01M6...") are not words a person can use: they are removed from what it said. */
 const ID_WORD = String.raw`(?:[Vv]ersion|[Aa]rtifact|[Jj]ob|[Ss]ession)\s+[Ii][Dd]s?\s*:?\s*[0-9A-Z]{26}`;
 const ID_PHRASE = new RegExp(String.raw`\s*(?:with\s+)?${ID_WORD}(?:\s*(?:,|and)\s*(?:the\s+)?${ID_WORD})*`, 'g');
 const BARE_ID = /\b[0-9A-Z]{26}\b/g;
 export function plainHelperText(text: string): string {
-  return text.replace(ID_PHRASE, '').replace(BARE_ID, '').replace(/[ \t]{2,}/g, ' ').replace(/\s+([.,;:])/g, '$1');
+  return withoutToolMarkup(text).replace(ID_PHRASE, '').replace(BARE_ID, '').replace(/[ \t]{2,}/g, ' ').replace(/\s+([.,;:])/g, '$1').trim();
 }
 /** The one plain line shown when a conversation started from an earlier suggested change that is not in the project yet (no ids). */
 export function continuingLine(d: Pick<SessionDetailView, 'continuesFrom'> | null | undefined): string | null {

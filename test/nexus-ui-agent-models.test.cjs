@@ -1464,3 +1464,15 @@ test('a request that registered a change whose checks failed says it DID make ch
   assert.equal(A.chatItems({ messages: [{ seq: 1, ts: 1, from: 'agent', text: said, displayOnly: true }], toolCalls: [] })[0].text.includes('01M6'), false);
   assert.equal(A.replyOf({ messages: [{ seq: 1, ts: 1, from: 'agent', text: said, displayOnly: true }] }).includes('01M6'), false);
 });
+
+test('tool calls and results a weaker model typed into the chat are not shown as something the helper said; the words around them stay', () => {
+  const blob = '<tool_response>\n{"versionId":"","artifactId":"","status":"draft"}\n</tool_response>';
+  const msg = (text) => ({ messages: [{ seq: 1, ts: 1, from: 'agent', text, displayOnly: true }], toolCalls: [] });
+  assert.deepEqual(A.chatItems(msg(blob)), [], 'a message that is only a tool result is not shown');
+  assert.equal(A.replyOf(msg(blob)), null);
+  assert.equal(A.replyOf(msg('<tool_call>{"name":"validations_get"}</tool_call>')), null);
+  assert.equal(A.replyOf(msg('<tool_call>{"name":"x"')), null, 'an unclosed one runs to the end');
+  assert.equal(A.plainHelperText(`I wrote the page. ${blob} It is ready.`), 'I wrote the page. It is ready.');
+  assert.equal(A.chatItems(msg(`Done. ${blob}`))[0].text, 'Done.');
+  assert.equal(A.plainHelperText('Use the <b> tag for bold.'), 'Use the <b> tag for bold.');
+});
