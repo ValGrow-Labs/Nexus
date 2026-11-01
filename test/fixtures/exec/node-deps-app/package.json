@@ -1,0 +1,12 @@
+{
+  "name": "node-deps-app",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Live preview phase 2 fixture: one small package (ms), no lockfile, a build and an HTTP app with /health.",
+  "scripts": {
+    "build": "node build.js"
+  },
+  "dependencies": {
+    "ms": "2.1.3"
+  }
+}

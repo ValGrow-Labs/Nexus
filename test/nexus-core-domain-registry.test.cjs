@@ -282,10 +282,10 @@ test('DR8 the recipe and validator tables match the B2a plan and the B2b additio
   // B2b Task 1: the six git engine recipes and the six change-set validators follow the B2a rows (their own pins are in
   // test/nexus-core-agent-contracts.test.cjs, SC8 and SC8b).
   assert.deepEqual(RECIPES.map((r) => r.id), ['repo.snapshot', 'sde.deps.node', 'sde.deps.python', 'sde.test.discover', 'sde.test.node',
-    'sde.test.pytest', 'sde.build.node', 'sde.build.python', 'sde.app.assemble', 'sde.preview.start', 'sde.diagnose', 'sde.try.run',
+    'sde.test.pytest', 'sde.build.node', 'sde.build.python', 'sde.app.assemble', 'sde.preview.start', 'sde.diagnose', 'sde.try.run', 'sde.deps.resolve',
     'repo.worktree', 'changeset.collect', 'changeset.merge_check', 'changeset.accept', 'changeset.accept_rollback', 'repo.ff']);
   const r = (id) => RECIPES.find((x) => x.id === id);
-  assert.deepEqual([r('sde.deps.node').network, r('sde.deps.python').network], ['egress-approved', 'egress-approved']);
+  assert.deepEqual([r('sde.deps.node').network, r('sde.deps.python').network, r('sde.deps.resolve').network], ['egress-approved', 'egress-approved', 'egress-approved']);
   for (const x of RECIPES.filter((y) => !y.id.startsWith('sde.deps.') && y.id !== 'sde.preview.start'))
     assert.ok(['none', 'not-applicable'].includes(x.network), `${x.id} has no network`);
   for (const x of RECIPES) assert.equal(x.executor === 'engine', x.network === 'not-applicable', `${x.id} engine-side recipes run no container`);

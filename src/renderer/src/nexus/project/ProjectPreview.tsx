@@ -1,13 +1,14 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { nexusClient } from '../data/nexusClient';
 import { execFailText } from '../data/errorCopy';
-import { useDeployments, useExecStore, useHealth, withIntent } from '../data/useExecution';
+import { useApprovals, useDeployments, useExecStore, useHealth, withIntent } from '../data/useExecution';
 import { useNexusUi } from '../state/uiStore';
 import { Button } from '../ui/Button';
+import { ApprovalList } from './ApprovalsSection';
 import { useExecutionUi } from './execContext';
 import { PreviewPanel } from './PreviewPanel';
 import {
-  PREVIEW_ASK_HELPER, PREVIEW_INTRO, PREVIEW_LIMITS, PREVIEW_TITLE, isLive, runPreviewChain, stepWords, type ChainClient, type PreviewStep
+  PREVIEW_ASK_HELPER, PREVIEW_ASK_HELPER_DEPS, PREVIEW_DEPS_WAITING, PREVIEW_INTRO, PREVIEW_LIMITS, PREVIEW_TITLE, isLive, runPreviewChain, stepWords, type ChainClient, type PreviewStep
 } from './previewModel';
 import { TRY_SETUP_TEXT } from './tryModel';
 
@@ -28,11 +29,15 @@ export function ProjectPreview({ projectId }: { projectId: string }) {
   const { availability } = useHealth();
   const deployments = useDeployments(projectId);
   const [step, setStep] = useState<PreviewStep | null>(null);
-  const [fail, setFail] = useState<{ text: string; askHelper: boolean } | null>(null);
+  const [fail, setFail] = useState<{ text: string; askHelper: boolean; askKind?: 'deps' } | null>(null);
+  const approvals = useApprovals(projectId);
+  // The download question of the add-ons step, shown here while the steps run (the same question the Approvals list shows).
+  const depsQuestion = useMemo(() => (approvals.data ?? []).filter((a) => a.status === 'pending' && a.reason === 'egress.deps'), [approvals.data]);
   const [stopping, setStopping] = useState(false);
   const cancelled = useRef(false);
   const currentJob = useRef<string | null>(null);
   const nonce = useRef(0);
+  const asked = useRef(new Set<string>());
 
   const live = useMemo(() => [...(deployments.data ?? [])].filter(isLive).sort((a, b) => b.startedAt - a.startedAt)[0] ?? null, [deployments.data]);
   const ready = availability.kind === 'ready';
@@ -45,7 +50,7 @@ export function ProjectPreview({ projectId }: { projectId: string }) {
     async start(s, actionId, inputs) {
       nonce.current += 1;
       const r = await withIntent(`preview:${projectId}:${s}:${nonce.current}:${Date.now()}`, (intentId) => nexusClient.jobStart({ projectId, workspaceId: 'sde', actionId, inputs, params: {}, intentId }));
-      if (!r.ok) return { ok: false, text: execFailText(r) };
+      if (!r.ok) return { ok: false, text: execFailText(r), skip: r.reason === 'no_dependencies' || r.reason === 'deps_ready' };
       currentJob.current = r.data.job.id;
       return { ok: true, jobId: r.data.job.id };
     },
@@ -54,7 +59,11 @@ export function ProjectPreview({ projectId }: { projectId: string }) {
       while (Date.now() < until) {
         if (cancelled.current) return { state: 'cancelled', outputs: [], why: null };
         const r = await nexusClient.jobGet(jobId);
-        if (r.ok && (ENDED as readonly string[]).includes(r.data.state)) return { state: r.data.state as 'completed', outputs: r.data.outputs.map((o) => o.versionId), why: null };
+        if (r.ok && (ENDED as readonly string[]).includes(r.data.state)) {
+          return { state: r.data.state as 'completed', outputs: r.data.outputs.map((o) => o.versionId), why: null, code: r.data.error?.code ?? null };
+        }
+        // A job that waits for the download question: make sure the question is on the screen.
+        if (r.ok && r.data.headline === 'waiting_for_approval' && !asked.current.has(jobId)) { asked.current.add(jobId); useExecStore.getState().bump(['approvals', 'jobs']); }
         await sleep(POLL_MS);
       }
       return { state: 'timed_out', outputs: [], why: null };
@@ -104,7 +113,7 @@ export function ProjectPreview({ projectId }: { projectId: string }) {
     cancelled.current = false; setFail(null); setStep('snapshot');
     try {
       const res = await runPreviewChain(client(), (s) => setStep(s));
-      if (!res.ok && !cancelled.current) setFail({ text: res.text, askHelper: res.askHelper });
+      if (!res.ok && !cancelled.current) setFail({ text: res.text, askHelper: res.askHelper, ...(res.askKind ? { askKind: res.askKind } : {}) });
     } finally { setStep(null); currentJob.current = null; useExecStore.getState().bump(['deployments', 'jobs']); }
   };
   const cancel = async () => {
@@ -119,7 +128,7 @@ export function ProjectPreview({ projectId }: { projectId: string }) {
     setStopping(false);
     useExecStore.getState().bump(['deployments', 'jobs']);
   };
-  const askHelper = () => { useNexusUi.getState().setDraft(PREVIEW_ASK_HELPER); useNexusUi.getState().focusIntent(); };
+  const askHelper = () => { useNexusUi.getState().setDraft(fail?.askKind === 'deps' ? PREVIEW_ASK_HELPER_DEPS : PREVIEW_ASK_HELPER); useNexusUi.getState().focusIntent(); };
 
   return (
     <section className="nx-previewsec" aria-label={PREVIEW_TITLE}>
@@ -134,9 +143,15 @@ export function ProjectPreview({ projectId }: { projectId: string }) {
         {working && <Button variant="quiet" onClick={() => { void cancel(); }}>Cancel</Button>}
         {step && <span className="nx-previewsec__step" role="status">{stepWords(step)}</span>}
       </div>
+      {working && depsQuestion.length > 0 && (
+        <div className="nx-previewsec__ask">
+          <p className="nx-muted" role="status">{PREVIEW_DEPS_WAITING}</p>
+          <ApprovalList approvals={depsQuestion} label="The download question" />
+        </div>
+      )}
       {fail && (
         <p className="nx-passport__note" role="alert">{fail.text}{' '}
-          {fail.askHelper && <Button variant="quiet" onClick={askHelper}>Ask the AI helper to make it runnable</Button>}</p>
+          {fail.askHelper && <Button variant="quiet" onClick={askHelper}>{fail.askKind === 'deps' ? 'Ask the AI helper to fix the add-ons' : 'Ask the AI helper to make it runnable'}</Button>}</p>
       )}
       {live ? <PreviewPanel deployment={live} onStop={() => { void stop(); }} stopping={stopping} />
         : latest && !working && <PreviewPanel deployment={latest} onStop={() => undefined} stopping={false} />}

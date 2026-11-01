@@ -121,6 +121,8 @@ export interface GitFacts {
   commit: string; branch: string | null; dirty: boolean; tree: string;
   /** The lockfile at the commit, hashed by the runner (final batch item 1); null when the commit has none. */
   lockfile: { path: 'package-lock.json' | 'requirements.txt'; sha256: string } | null;
+  /** The npm package list at the commit (live preview phase 2): its hash and how many add-ons it names; null when there is none. */
+  manifest: { path: 'package.json'; sha256: string; dependencies: number } | null;
 }
 const LOCKFILE_NAMES: readonly string[] = ['package-lock.json', 'requirements.txt'];
 
@@ -141,7 +143,15 @@ export function checkGitFacts(x: unknown): Checked<GitFacts> {
       || typeof l.sha256 !== 'string' || !SHA256_RE.test(l.sha256)) return bad('the lockfile is not a known lockfile with its sha256');
     lockfile = { path: l.path as 'package-lock.json' | 'requirements.txt', sha256: l.sha256 };
   }
-  return { ok: true, value: { commit: x.commit, branch: x.branch as string | null, dirty: x.dirty, tree: x.tree, lockfile } };
+  let manifest: GitFacts['manifest'] = null;
+  if (x.manifest !== undefined && x.manifest !== null) {
+    const m = x.manifest;
+    if (!isObj(m) || Object.keys(m).some((k) => k !== 'path' && k !== 'sha256' && k !== 'dependencies') || m.path !== 'package.json'
+      || typeof m.sha256 !== 'string' || !SHA256_RE.test(m.sha256) || typeof m.dependencies !== 'number' || !Number.isSafeInteger(m.dependencies)
+      || m.dependencies < 0 || m.dependencies > 100_000) return bad('the package list is not package.json with its sha256 and a count');
+    manifest = { path: 'package.json', sha256: m.sha256, dependencies: m.dependencies };
+  }
+  return { ok: true, value: { commit: x.commit, branch: x.branch as string | null, dirty: x.dirty, tree: x.tree, lockfile, manifest } };
 }
 
 // ---------- application manifest (nexus.app.json) ----------

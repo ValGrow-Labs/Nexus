@@ -100,7 +100,7 @@ export interface ImageBuildRecord {
 
 /** What the request of an approval shows (known fields only). */
 export interface ApprovalRequestView {
-  recipeId?: string; profile?: string; profileId?: string; registries?: string[]; lockfileSha256?: string;
+  recipeId?: string; profile?: string; profileId?: string; registries?: string[]; lockfileSha256?: string; manifestSha256?: string;
   contextSha256?: string; baseDigest?: string; estimatedBytes?: number; freeBytesNow?: number | null;
 }
 export interface ApprovalView {
@@ -165,7 +165,7 @@ export { requireStoredUser };
 export function requestHoldsSecret(request: Record<string, unknown>): boolean {
   const rest: Record<string, unknown> = {};
   for (const [k, v] of Object.entries(request)) {
-    if (k === 'lockfileSha256' || k === 'contextSha256') { if (typeof v !== 'string' || !SHA_RE.test(v)) return true; continue; }
+    if (k === 'lockfileSha256' || k === 'manifestSha256' || k === 'contextSha256') { if (typeof v !== 'string' || !SHA_RE.test(v)) return true; continue; }
     if (k === 'baseDigest') { if (typeof v !== 'string' || !DIGEST_RE.test(v)) return true; continue; }
     rest[k] = v;
   }
@@ -269,7 +269,11 @@ export class ApprovalService {
     if (!a || !j || a.job_id !== job.id || a.n !== attempt.n || j.project_id !== job.projectId) throw invalid('bad_attempt', 'the attempt is not this job\'s');
     const env = parse(a.environment_json);
     const profile = isObj(env) && typeof env.profile === 'string' ? env.profile : null;
-    const lock = isObj(env) && typeof env.lockfileSha256 === 'string' ? env.lockfileSha256 : null;
+    const resolving = recipe.id === 'sde.deps.resolve';
+    const lock = isObj(env) && typeof (resolving ? env.manifestSha256 : env.lockfileSha256) === 'string' ? (resolving ? env.manifestSha256 : env.lockfileSha256) as string : null;
+    if (resolving && (!lock || !SHA_RE.test(lock))) {
+      throw invalid('lockfile_missing', 'the repository snapshot records no package list with add-ons to install');
+    }
     if (!lock || !SHA_RE.test(lock)) {
       throw invalid('lockfile_missing', 'the repository snapshot records no lockfile hash; dependencies are installed only from a locked list');
     }
@@ -279,7 +283,8 @@ export class ApprovalService {
     if (!profile || !registries || registries.length === 0 || !registries.every((r) => HOST_RE.test(r))) {
       throw invalid('no_registry', 'no package registry is known for this profile');
     }
-    const binding = { recipeId: recipe.id, recipeVersion: recipe.version, jobId: job.id, lockfileSha256: lock, profile };
+    const binding = resolving ? { recipeId: recipe.id, recipeVersion: recipe.version, jobId: job.id, manifestSha256: lock, profile }
+      : { recipeId: recipe.id, recipeVersion: recipe.version, jobId: job.id, lockfileSha256: lock, profile };
     const request = { ...binding, registries: [...registries] };
     if (requestHoldsSecret(request)) throw invalid('secret_in_request', 'the approval request would hold a secret-shaped value');
     const id = newId(now);
@@ -288,9 +293,13 @@ export class ApprovalService {
     // Exactly what is enforced (M8): one job; only the allow-listed hosts, over HTTPS, through the Nexus egress proxy (the
     // install container itself has no route out); no install scripts; packages matched against the lockfile hashes.
     const hosts = allow!.map((e) => `${e.host} (HTTPS, port ${e.port})`).join(' and ');
-    const summary = `Network access for this one ${what} dependency install job, through the Nexus egress proxy. Only ${hosts} `
-      + `can be reached; every other host, private and loopback addresses, cloud metadata and this computer are refused. `
-      + `Install scripts are disabled and packages must match the lockfile hashes (${lock.slice(0, 12)}).`;
+    const summary = resolving
+      ? `Network access for this one ${what} dependency install job, through the Nexus egress proxy. Only ${hosts} `
+        + `can be reached; every other host, private and loopback addresses, cloud metadata and this computer are refused. `
+        + `The project has no lockfile, so the exact versions are worked out from its package list (${lock.slice(0, 12)}) and then installed. Install scripts are disabled.`
+      : `Network access for this one ${what} dependency install job, through the Nexus egress proxy. Only ${hosts} `
+        + `can be reached; every other host, private and loopback addresses, cloud metadata and this computer are refused. `
+        + `Install scripts are disabled and packages must match the lockfile hashes (${lock.slice(0, 12)}).`;
     this.db.prepare(`INSERT INTO approvals (id, project_id, job_id, session_id, reason, summary, request_json, request_sha256, status,
         requested_by, on_behalf_of, requested_at, expires_at, status_changed_at)
       VALUES (?, ?, ?, NULL, 'egress.deps', ?, ?, ?, 'pending', ?, ?, ?, ?, ?)`)
@@ -299,7 +308,7 @@ export class ApprovalService {
     appendActivityRow(this.db, { actorKind: 'system', actorId: this.system().id, onBehalfOf: job.onBehalfOf, jobId: job.id, attemptN: attempt.n,
       projectId: job.projectId, workspaceId: j.workspace_id, entityType: 'approval', entityId: id, action: 'approval.request', status: 'succeeded',
       details: { reason: 'egress.deps', recipeId: recipe.id, recipeVersion: recipe.version, profile, registries: [...registries],
-        lockfile: { sha256: lock }, request: { sha256: requestSha }, expiresAt: now + APPROVAL_TTL_MS } }, now);
+        ...(resolving ? { packageList: { sha256: lock } } : { lockfile: { sha256: lock } }), request: { sha256: requestSha }, expiresAt: now + APPROVAL_TTL_MS } }, now);
     // The core writes the `approval` job event of this request in the same transaction.
     return id;
   }
@@ -716,7 +725,7 @@ export class ApprovalService {
     const req = parse(r.request_json);
     const request: ApprovalRequestView = {};
     if (isObj(req)) {
-      for (const k of ['recipeId', 'profile', 'profileId', 'lockfileSha256', 'contextSha256', 'baseDigest'] as const) {
+      for (const k of ['recipeId', 'profile', 'profileId', 'lockfileSha256', 'manifestSha256', 'contextSha256', 'baseDigest'] as const) {
         if (typeof req[k] === 'string') request[k] = req[k] as string;
       }
       if (Array.isArray(req.registries)) request.registries = req.registries.filter((x): x is string => typeof x === 'string').slice(0, 8);

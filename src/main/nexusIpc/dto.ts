@@ -328,7 +328,7 @@ export function approvalView(a: ServiceApprovalView): ApprovalView {
   const profile = label(r.profile) ?? label(r.profileId);
   if (profile) request.profile = profile;
   if (Array.isArray(r.registries)) request.registries = r.registries.slice(0, 8).map((x) => text(x, 120));
-  for (const k of ['lockfileSha256', 'contextSha256'] as const) if (typeof r[k] === 'string' && /^[0-9a-f]{64}$/.test(r[k]!)) request[k] = r[k];
+  for (const k of ['lockfileSha256', 'manifestSha256', 'contextSha256'] as const) if (typeof r[k] === 'string' && /^[0-9a-f]{64}$/.test(r[k]!)) request[k] = r[k];
   if (typeof r.baseDigest === 'string' && /^sha256:[0-9a-f]{64}$/.test(r.baseDigest)) request.baseDigest = r.baseDigest;
   if (num(r.estimatedBytes) !== null) request.estimatedBytes = r.estimatedBytes;
   if (r.freeBytesNow === null || num(r.freeBytesNow) !== null) request.freeBytesNow = r.freeBytesNow ?? null;

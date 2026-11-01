@@ -132,7 +132,7 @@ import { enqueueAcceptRollbackTx, preparedOf, rollbackNeeded } from '../repo/acc
 /** The git jobs a user (or anyone) cannot cancel through `cancel`, nor any cascade: they move a Nexus ref or the user's branch and end only through ingest (B5). */
 export const NOT_CANCELLABLE_RECIPES: readonly string[] = Object.freeze(['changeset.accept', 'changeset.accept_rollback', 'repo.ff', 'repo.worktree']);
 import {
-  AGENT_TURN_MEMORY_MB, boundedRecord, buildPlan, depsVolumeName, imageRef, lockfileSha256Of, RECORD_MAX_CHARS, sandboxRecord, tryRunArgv, underDataHome,
+  AGENT_TURN_MEMORY_MB, boundedRecord, buildPlan, depsVolumeName, imageRef, lockfileSha256Of, manifestSha256Of, RECORD_MAX_CHARS, sandboxRecord, tryRunArgv, underDataHome,
   type DiagnoseContext, type PlanApproval, type PlanInput, type ServiceContext
 } from './planBuilder';
 import { stat } from 'node:fs/promises';
@@ -473,6 +473,7 @@ const withoutKey = (r: Record<string, unknown>, max: number): Record<string, unk
 };
 /** The id of the try-run action and of its recipe (they are the same string). */
 const TRY_ACTION_ID = 'sde.try.run';
+const DEPS_PREPARE_ACTION = 'sde.deps.prepare';
 const invalid = (reason: string, message: string): never => { throw new PlatformError('invalid', message, { reason }); };
 
 /**
@@ -1802,6 +1803,8 @@ export class ExecutionService {
       imageVersions: image?.versions ?? null,
       dockerVersion: this.probe?.probe.version ?? null, runnerBootId: this.bootId, nexusVersion: this.deps.appVersion ?? null,
       lockfileSha256: lockfileSha256Of(inputs),
+      // A Node app with add-ons and no lockfile is keyed by its package list (sde.deps.resolve).
+      ...(recipe.id === 'sde.deps.resolve' ? { manifestSha256: manifestSha256Of(inputs) } : {}),
       // The dependency cache this attempt mounts (`nexus-deps-<profile>-<lock12>`; an install writes it), or null.
       depsVolume: depsVolumeName(cap.profile, inputs)
     };
@@ -2760,7 +2763,8 @@ export class ExecutionService {
       facts.push({ kind: v.kind, metadata: parseJson(v.metadata_json) });
     }
     const profile = this.profileFor(o.projectId, facts);
-    const recipe = recipes.find((rc) => rc.executor === 'engine' || rc.profiles.includes(profile)) ?? null;
+    const recipe = o.action.id === DEPS_PREPARE_ACTION && !prior ? this.pickDepsRecipe(o.projectId, facts, profile, recipes)
+      : recipes.find((rc) => rc.executor === 'engine' || rc.profiles.includes(profile)) ?? null;
     if (!recipe) return invalid('no_recipe', 'no recipe of this action fits the repository');
     if (recipe.executor === 'service') return invalid('not_in_this_build', 'this action arrives with dev deployments');
     // A diagnosis names its subject by params; it is resolved in this project and authorized (job.read) now.
@@ -2779,6 +2783,27 @@ export class ExecutionService {
       retry: { idempotent: recipe.retry.idempotent, maxAttempts: recipe.retry.maxAttempts, backoffMs: RETRY_BACKOFF_MS.slice(0, Math.max(recipe.retry.maxAttempts - 1, 0)) }
     };
     return this.insertExecJob(p, o, recipe, cap, limits, create, !!prior);
+  }
+
+  /**
+   * `sde.deps.prepare` (live preview phase 2): the install recipe from what the repository version recorded. A lockfile: the install from it. A package list that
+   * names add-ons and no lockfile (Node): the lock-only install. Otherwise nothing to do (`no_dependencies`). The same add-ons already installed for this key by an
+   * earlier job that completed (its evidence passed) are not asked for again (`deps_ready`). Nothing here runs or reaches the network: it only chooses.
+   */
+  private pickDepsRecipe(projectId: string, facts: { kind: string; metadata: unknown }[], profile: string, recipes: RecipeDef[]): RecipeDef | null {
+    const meta = facts.find((f) => f.kind === 'repository')?.metadata;
+    const m = isPlainObject(meta) ? meta : {};
+    const lockSha = isPlainObject(m.lockfile) && typeof m.lockfile.sha256 === 'string' && /^[0-9a-f]{64}$/.test(m.lockfile.sha256) ? m.lockfile.sha256 : null;
+    const man = isPlainObject(m.manifest) && typeof m.manifest.sha256 === 'string' && /^[0-9a-f]{64}$/.test(m.manifest.sha256)
+      && typeof m.manifest.dependencies === 'number' && m.manifest.dependencies > 0 ? m.manifest.sha256 : null;
+    let id: string | null = null; let path: string | null = null; let key: string | null = null;
+    if (lockSha) { key = lockSha; path = '$.lockfile.sha256'; id = profile === 'sde-python' ? 'sde.deps.python' : profile === 'sde-node' ? 'sde.deps.node' : null; }
+    else if (man && profile === 'sde-node') { key = man; path = '$.manifest.sha256'; id = 'sde.deps.resolve'; }
+    if (!id || !key || !path) return invalid('no_dependencies', 'this project lists no add-ons to install');
+    const done = this.db.prepare(`SELECT 1 FROM jobs j JOIN job_inputs ji ON ji.job_id = j.id JOIN artifact_versions v ON v.id = ji.version_id
+      WHERE j.project_id = ? AND j.recipe_id = ? AND j.state = 'completed' AND json_extract(v.metadata_json, '${path}') = ? LIMIT 1`).get(projectId, id, key);
+    if (done) return invalid('deps_ready', 'the add-ons for this project are already installed');
+    return recipes.find((rc) => rc.id === id) ?? null;
   }
 
   /** The job row with its capability and limits, one `job.transition` event (shared by every recipe action). */

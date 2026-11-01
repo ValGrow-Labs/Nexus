@@ -281,7 +281,7 @@ export interface DeploymentView {
 export interface ApprovalView {
   id: string; projectId: ProjectId | null; jobId: JobId | null; reason: string; summary: string; status: ApprovalStatus;
   /** Exactly what is asked: the recipe or image profile, the registries, the hashes it is bound to, the size. */
-  request: { recipeId?: string; profile?: string; registries?: string[]; lockfileSha256?: string; contextSha256?: string;
+  request: { recipeId?: string; profile?: string; registries?: string[]; lockfileSha256?: string; manifestSha256?: string; contextSha256?: string;
     baseDigest?: string; estimatedBytes?: number; freeBytesNow?: number | null };
   requestedAt: number; expiresAt: number; decidedAt: number | null; decision: 'once' | 'deny' | null; consumedAt: number | null;
   imageBuild: { id: string; status: string; imageIdShort: string | null; sizeBytes: number | null; error: string | null } | null;

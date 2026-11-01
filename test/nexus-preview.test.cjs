@@ -51,8 +51,11 @@ const fake = (o = {}) => {
   const calls = [];
   const c = {
     calls,
-    async start(step, actionId, inputs) { calls.push(['start', step, actionId, inputs]); return o.refuse === step ? { ok: false, text: 'Nexus refused.' } : { ok: true, jobId: `job-${step}` }; },
-    async waitJob(jobId) { calls.push(['waitJob', jobId]); const step = jobId.slice(4); return o.jobFails === step ? { state: 'failed', outputs: [], why: null } : { state: 'completed', outputs: [`ver-${step}`], why: null }; },
+    async start(step, actionId, inputs) { calls.push(['start', step, actionId, inputs]);
+      // Live preview phase 2: by default the app lists no add-ons (or they are installed already), so the add-ons step has nothing to do.
+      if (step === 'deps' && o.deps !== true) return { ok: false, text: 'Nothing to install.', skip: true };
+      return o.refuse === step ? { ok: false, text: 'Nexus refused.' } : { ok: true, jobId: `job-${step}` }; },
+    async waitJob(jobId) { calls.push(['waitJob', jobId]); const step = jobId.slice(4); return o.jobFails === step ? { state: 'failed', outputs: [], why: null, code: o.code ?? null } : { state: 'completed', outputs: [`ver-${step}`], why: null }; },
     async waitVersion(v) { calls.push(['waitVersion', v]); return o.versionStatus ?? 'candidate'; },
     async latestOf(kind) { calls.push(['latestOf', kind]); return o.noLatest ? null : `latest-${kind}`; },
     async stopLive() { calls.push(['stopLive']); },
@@ -61,13 +64,14 @@ const fake = (o = {}) => {
   return c;
 };
 
-test('PV3 one press runs snapshot, build, assemble, start in order, each from the one before, and stops any earlier preview first', async () => {
+test('PV3 one press runs snapshot, (add-ons), build, assemble, start in order, each from the one before, and stops any earlier preview first', async () => {
   const c = fake(); const steps = [];
   const r = await M.runPreviewChain(c, (s) => steps.push(s));
   assert.deepEqual(r, { ok: true, deploymentId: 'dep-1' });
-  assert.deepEqual(steps, ['snapshot', 'build', 'assemble', 'start']);
+  assert.deepEqual(steps, ['snapshot', 'build', 'assemble', 'start'], 'a skipped add-ons step shows nothing');
   assert.deepEqual(c.calls.filter((x) => x[0] === 'start').map((x) => [x[2], x[3]]), [
     ['sde.repository.snapshot', []],
+    ['sde.deps.prepare', [{ versionId: 'ver-snapshot', slot: 'repository' }]],
     ['sde.build.run', [{ versionId: 'ver-snapshot', slot: 'repository' }]],
     ['sde.app.assemble', [{ versionId: 'ver-build', slot: 'build' }]],
     ['sde.preview.start', [{ versionId: 'ver-assemble', slot: 'application' }]]
@@ -83,7 +87,7 @@ test('PV3b a step that made nothing new (the same files as before) continues fro
   c.waitJob = async (jobId) => { const r = await orig(jobId); return { ...r, outputs: [] }; };
   const r = await M.runPreviewChain(c, () => undefined);
   assert.equal(r.ok, true);
-  assert.deepEqual(c.calls.filter((x) => x[0] === 'start').map((x) => x[3]), [[], [{ versionId: 'latest-repository', slot: 'repository' }], [{ versionId: 'latest-build', slot: 'build' }], [{ versionId: 'latest-application', slot: 'application' }]]);
+  assert.deepEqual(c.calls.filter((x) => x[0] === 'start').map((x) => x[3]), [[], [{ versionId: 'latest-repository', slot: 'repository' }], [{ versionId: 'latest-repository', slot: 'repository' }], [{ versionId: 'latest-build', slot: 'build' }], [{ versionId: 'latest-application', slot: 'application' }]]);
   const none = fake({ noLatest: true }); none.waitJob = async () => ({ state: 'completed', outputs: [], why: null });
   const bad = await M.runPreviewChain(none, () => undefined);
   assert.equal(bad.ok, false); assert.equal(bad.step, 'snapshot');
@@ -106,6 +110,33 @@ test('PV4 a step that did not work stops the chain there with plain words and th
   for (const s of ['starting', 'healthy', 'unhealthy', 'stopped', 'failed']) assert.ok(M.deploymentWord({ status: s, stopReason: null }).length > 2, s);
   assert.equal(M.deploymentWord({ status: 'stopped', stopReason: 'idle' }), 'Stopped (two hours passed)');
   assert.equal(M.isLive({ status: 'healthy' }), true); assert.equal(M.isLive({ status: 'stopped' }), false);
+});
+
+test('PV4b the add-ons step (live preview phase 2): it asks through main, waits for the answer, builds from the same repository version, and says what went wrong in plain words', async () => {
+  const c = fake({ deps: true }); const steps = [];
+  const r = await M.runPreviewChain(c, (s) => steps.push(s));
+  assert.deepEqual(r, { ok: true, deploymentId: 'dep-1' });
+  assert.deepEqual(steps, ['snapshot', 'deps', 'build', 'assemble', 'start']);
+  const starts = c.calls.filter((x) => x[0] === 'start').map((x) => [x[2], x[3]]);
+  assert.deepEqual(starts[1], ['sde.deps.prepare', [{ versionId: 'ver-snapshot', slot: 'repository' }]]);
+  assert.deepEqual(starts[2], ['sde.build.run', [{ versionId: 'ver-snapshot', slot: 'repository' }]], 'the add-ons step makes no version: the build uses the repository one');
+  assert.deepEqual(c.calls.filter((x) => x[0] === 'waitVersion').map((x) => x[1]), ['ver-snapshot', 'ver-build'], 'no check is awaited for the add-ons');
+  const texts = {};
+  for (const code of ['approval_denied', 'denied', 'approval_expired', 'approval_stale', 'nonzero_exit', null]) {
+    const f = fake({ deps: true, jobFails: 'deps', code });
+    const res = await M.runPreviewChain(f, () => undefined);
+    assert.equal(res.ok, false); assert.equal(res.step, 'deps');
+    assert.ok(res.text.length > 20 && !VENDOR.test(res.text) && !/[0-9a-f]{12}|job-|ver-|denied|nonzero/i.test(res.text.replace(/did not allow the download/, '')), res.text);
+    assert.deepEqual(f.calls.filter((x) => x[0] === 'start').map((x) => x[1]), ['snapshot', 'deps'], 'it stops there');
+    texts[code] = [res.text, res.askHelper, res.askKind];
+  }
+  assert.match(texts.approval_denied[0], /did not allow the download/); assert.equal(texts.approval_denied[1], false); assert.equal(texts.denied[0], texts.approval_denied[0]);
+  assert.match(texts.approval_expired[0], /not answered in time/); assert.equal(texts.approval_expired[1], false);
+  assert.match(texts.nonzero_exit[0], /download did not finish/); assert.deepEqual([texts.nonzero_exit[1], texts.nonzero_exit[2]], [true, 'deps']);
+  const words = [M.PREVIEW_LIMITS, M.PREVIEW_DEPS_WAITING, M.PREVIEW_ASK_HELPER_DEPS, M.stepWords('deps')].join(' ');
+  assert.doesNotMatch(words, /npm|node_modules|lockfile|registry|proxy|sha256/i, 'the person sees plain words');
+  assert.match(M.PREVIEW_DEPS_WAITING, /from the package website only/);
+  assert.match(M.PREVIEW_INTRO, /no internet/);
 });
 
 test('PV5 the view is isolated: main-owned, own in-memory session, no preload, no Node, one origin; the renderer names a deployment, never a port', () => {

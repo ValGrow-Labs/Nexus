@@ -65,6 +65,8 @@ export interface RuntimeTurnContext {
   apiKey?: string;
   /** `hosted-model` only, TEST SEAM: how the allowed target is connected (a loopback mock, a test trust root); production never sets it. */
   hostedTestSeam?: HostedTestSeam;
+  /** `hosted-model` and `local-model`: where the adapter's own short, token-free lines go (the turn's job log). */
+  log?: (line: string) => void;
 }
 
 /** The version and flag check of an executable, kept across turns (keyed by the executable, its size and mtime). */
@@ -89,7 +91,7 @@ export function runtimeFor(kind: RuntimeKind, ctx: RuntimeTurnContext): AgentRun
   if (kind === HOSTED_MODEL_KIND) {
     return createHostedModelAdapter({
       token: ctx.token, mcpUrl: ctx.mcpUrl, apiKey: ctx.apiKey, proxyUrl: ctx.egressProxyUrl, consentedHosts: ctx.consentedHosts, caps: ctx.caps,
-      mcpTools: ctx.mcpTools, fetchImpl: ctx.fetchImpl, seam: ctx.hostedTestSeam
+      mcpTools: ctx.mcpTools, fetchImpl: ctx.fetchImpl, seam: ctx.hostedTestSeam, log: ctx.log
     });
   }
   throw new Error(`no runtime is registered for ${String(kind)}`);

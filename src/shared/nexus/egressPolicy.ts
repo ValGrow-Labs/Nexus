@@ -19,6 +19,7 @@ export interface EgressHost { host: string; port: number }
 /** The hosts each egress recipe may reach, HTTPS (443) only. Nothing else is reachable from an install. */
 export const EGRESS_ALLOWLISTS: Readonly<Record<string, readonly EgressHost[]>> = Object.freeze({
   'sde.deps.node': Object.freeze([Object.freeze({ host: 'registry.npmjs.org', port: 443 })]),
+  'sde.deps.resolve': Object.freeze([Object.freeze({ host: 'registry.npmjs.org', port: 443 })]),
   'sde.deps.python': Object.freeze([Object.freeze({ host: 'pypi.org', port: 443 }), Object.freeze({ host: 'files.pythonhosted.org', port: 443 })])
 });
 

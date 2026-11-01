@@ -52,6 +52,9 @@ export const APP_MANIFEST_PATH = 'nexus.app.json';
 export const LOCKFILE_PATHS: readonly ('package-lock.json' | 'requirements.txt')[] = Object.freeze(['package-lock.json', 'requirements.txt'] as const);
 /** A lockfile larger than this is not hashed (the snapshot records none; an install is then refused `lockfile_missing`). */
 export const LOCKFILE_MAX_BYTES = 64 * 2 ** 20;
+/** The package list a snapshot records beside the lockfile (live preview phase 2): npm's `package.json`, read only up to this size. */
+export const MANIFEST_PATH = 'package.json';
+export const MANIFEST_MAX_BYTES = 1024 * 1024;
 /** The config every `git archive` adds: the committed line endings, whatever the user's autocrlf / eol defaults are. */
 export const ARCHIVE_EOL_CONFIG: readonly string[] = Object.freeze(['-c', 'core.autocrlf=false', '-c', 'core.eol=lf']);
 
@@ -79,12 +82,30 @@ export interface SnapshotFacts {
   commit: string; branch: string | null; dirty: boolean; tree: string;
   /** The lockfile at the commit (final batch item 1), or null when none of LOCKFILE_PATHS is a blob there. */
   lockfile: { path: (typeof LOCKFILE_PATHS)[number]; sha256: string } | null;
+  /** The npm package list at the commit (hash, and how many add-ons it names), or null when there is none or it is not plain JSON. */
+  manifest: { path: typeof MANIFEST_PATH; sha256: string; dependencies: number } | null;
 }
 
 export function lockfileArgv(commit: string, rel: (typeof LOCKFILE_PATHS)[number]): { size: string[]; blob: string[] } {
   if (!COMMIT_RE.test(commit)) throw new GitError('the commit is not a full sha');
   if (!LOCKFILE_PATHS.includes(rel)) throw new GitError('not a lockfile path');
   return { size: ['cat-file', '-s', `${commit}:${rel}`], blob: ['cat-file', 'blob', `${commit}:${rel}`] };
+}
+
+export function manifestArgv(commit: string): { size: string[]; show: string[] } {
+  if (!COMMIT_RE.test(commit)) throw new GitError('the commit is not a full sha');
+  return { size: ['cat-file', '-s', `${commit}:${MANIFEST_PATH}`], show: ['cat-file', 'blob', `${commit}:${MANIFEST_PATH}`] };
+}
+
+/** How many add-ons a package list names (dependencies, devDependencies, optionalDependencies): a count only, never a name. */
+export function countDependencies(json: unknown): number {
+  if (typeof json !== 'object' || json === null || Array.isArray(json)) return 0;
+  let n = 0;
+  for (const k of ['dependencies', 'devDependencies', 'optionalDependencies']) {
+    const v = (json as Record<string, unknown>)[k];
+    if (typeof v === 'object' && v !== null && !Array.isArray(v)) n += Object.keys(v).length;
+  }
+  return n;
 }
 
 /**
@@ -202,7 +223,8 @@ export class GitRunner {
     const tree = t.stdout.trim();
     if (t.code !== 0 || !COMMIT_RE.test(tree)) throw new GitError('HEAD has no tree');
     const lockfile = await this.lockfileAt(repoPath, commit, signal);
-    return { commit, branch, dirty: s.stdoutBytes > 0, tree, lockfile };
+    const manifest = await this.manifestAt(repoPath, commit, signal);
+    return { commit, branch, dirty: s.stdoutBytes > 0, tree, lockfile, manifest };
   }
 
   /**
@@ -225,6 +247,26 @@ export class GitRunner {
       return { path: rel, sha256: h.digest('hex') };
     }
     return null;
+  }
+
+  /**
+   * The npm package list (`package.json`) at `commit`: hashed as committed, and the number of add-ons it names. A missing file, one over
+   * MANIFEST_MAX_BYTES, or text that is not a JSON object is recorded as none (the snapshot never fails for it).
+   */
+  async manifestAt(repoPath: string, commit: string, signal?: AbortSignal): Promise<SnapshotFacts['manifest']> {
+    const argv = manifestArgv(commit);
+    const size = await this.exec(repoPath, argv.size, { signal });
+    const n = Number(size.stdout.trim());
+    if (size.code !== 0 || !Number.isSafeInteger(n) || n < 0 || n > MANIFEST_MAX_BYTES) return null;
+    const chunks: Buffer[] = [];
+    let bytes = 0;
+    const show = await this.exec(repoPath, argv.show, { signal, maxStdout: 0, onStdout: (chunk) => { bytes += chunk.length; if (bytes <= MANIFEST_MAX_BYTES) chunks.push(Buffer.from(chunk)); } });
+    if (show.code !== 0 || bytes !== n) return null;
+    const raw = Buffer.concat(chunks);
+    let parsed: unknown;
+    try { parsed = JSON.parse(raw.toString('utf8')); } catch { return null; }
+    if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) return null;
+    return { path: MANIFEST_PATH, sha256: createHash('sha256').update(raw).digest('hex'), dependencies: countDependencies(parsed) };
   }
 
   /**

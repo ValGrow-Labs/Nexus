@@ -58,6 +58,10 @@ export const USER_ACTIONS: readonly UserActionDef[] = deepFreeze([
   a('sde.repository.snapshot', 'sde', 'Save a starting point', { recipes: ['repo.snapshot'] }, [], ['git']),
   a('sde.deps.install', 'sde', 'Install dependencies', { recipes: ['sde.deps.node', 'sde.deps.python'] },
     [one('repository', 'repository')], ['git', 'docker', 'disk:5GiB']),
+  // Live preview phase 2: the preview chain's own step. Main picks the recipe from what the repository version recorded (a lockfile: the install; a package
+  // list with add-ons and no lockfile: the lock-only install), and refuses with a reason when there is nothing to do or it was already done.
+  a('sde.deps.prepare', 'sde', 'Get the add-ons ready', { recipes: ['sde.deps.node', 'sde.deps.python', 'sde.deps.resolve'] },
+    [one('repository', 'repository')], ['git', 'docker', 'disk:5GiB']),
   a('sde.tests.discover', 'sde', 'Find tests on a commit', { recipes: ['sde.test.discover'] },
     [one('repository', 'repository')], ['git', 'docker', 'disk:5GiB']),
   a('sde.tests.run', 'sde', 'Run tests on a commit', { recipes: ['sde.test.node', 'sde.test.pytest'] },

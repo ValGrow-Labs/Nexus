@@ -128,7 +128,7 @@ export const INGEST_RULES: Readonly<Record<string, 'snapshot' | 'discovery' | 't
   | 'tryRun' | 'gitFacts' | 'changeSet' | 'mergeCheck' | 'accept' | 'forward'>> = Object.freeze({
   'repo.snapshot': 'snapshot', 'sde.test.discover': 'discovery', 'sde.test.node': 'testRun', 'sde.test.pytest': 'testRun',
   'sde.build.node': 'build', 'sde.build.python': 'build', 'sde.app.assemble': 'assemble', 'sde.diagnose': 'diagnose',
-  'sde.deps.node': 'deps', 'sde.deps.python': 'deps',
+  'sde.deps.node': 'deps', 'sde.deps.python': 'deps', 'sde.deps.resolve': 'deps',
   // "Try it": a run writes no output files and records nothing; how it ended is the attempt's own exit status.
   'sde.try.run': 'tryRun',
   // B2b Task 7: the session worktree row, and an accept's rollback.
@@ -543,7 +543,9 @@ export class IngestService implements IngestPort {
       storage: { kind: 'git', commit: g.value.commit, ...(g.value.branch ? { ref: g.value.branch } : {}) },
       contentHash, metadata: { branch: g.value.branch, dirty: g.value.dirty, tree: g.value.tree,
         // The lockfile at the commit, as the runner hashed it (an install's lock.sha256 is judged against it).
-        ...(g.value.lockfile ? { lockfile: { path: g.value.lockfile.path, sha256: g.value.lockfile.sha256 } } : {}) },
+        ...(g.value.lockfile ? { lockfile: { path: g.value.lockfile.path, sha256: g.value.lockfile.sha256 } } : {}),
+        // The npm package list at the commit (live preview phase 2): an app with add-ons but no lockfile is installed from it, with the person's OK.
+        ...(g.value.manifest ? { manifest: { path: g.value.manifest.path, sha256: g.value.manifest.sha256, dependencies: g.value.manifest.dependencies } } : {}) },
       environment: this.environment(ctx), jobId: job.id, attemptN: attempt.n, outputPath: 'facts', action: 'exec.snapshot',
       onBehalfOf: job.on_behalf_of, now: this.deps.now(),
       inputs: previous ? [{ versionId: previous.id, role: 'previous', relation: 'derived_from', source: 'ingest' }] : []
@@ -727,7 +729,10 @@ export class IngestService implements IngestPort {
     const v = this.deps.artifacts.insertSystemVersionTx(system, {
       ...(artifactId ? { artifactId } : { newArtifact: { kind: 'build', name: 'Build', participation: job.participation_id } }),
       storage: tree, contentHash,
-      metadata: { profile: isObj(repoMeta) && typeof repoMeta.profile === 'string' ? repoMeta.profile : null, commit, files: files.length, bytes: tree.bytes },
+      metadata: { profile: isObj(repoMeta) && typeof repoMeta.profile === 'string' ? repoMeta.profile : null, commit, files: files.length, bytes: tree.bytes,
+        // The add-ons key of the repository version (live preview phase 2): a preview of this build mounts the add-ons installed for it.
+        ...(isObj(repoMeta) && isObj(repoMeta.lockfile) ? { lockfile: repoMeta.lockfile } : {}),
+        ...(isObj(repoMeta) && isObj(repoMeta.manifest) ? { manifest: repoMeta.manifest } : {}) },
       environment: this.environment(ctx), jobId: job.id, attemptN: attempt.n, outputPath: 'dist', action: 'exec.build',
       onBehalfOf: job.on_behalf_of, now: this.deps.now(),
       inputs: [{ versionId: repo.version_id, role: 'repository', relation: 'built_from', source: 'job_input' },
@@ -797,13 +802,16 @@ export class IngestService implements IngestPort {
     const repo = this.inputs(job.id, 'repository')[0];
     if (!repo) return refuse('invalid_output', 'bad_input', 'the install has no repository input');
     const meta = parse(repo.metadata_json);
-    const lf = isObj(meta) && isObj(meta.lockfile) ? meta.lockfile : null;
+    // The lock-less install (sde.deps.resolve) is judged against the repository version's package list instead of a lockfile.
+    const resolving = ctx.recipe.id === 'sde.deps.resolve';
+    const lf = isObj(meta) ? (resolving ? (isObj(meta.manifest) ? meta.manifest : null) : (isObj(meta.lockfile) ? meta.lockfile : null)) : null;
     const repositoryLock = lf && typeof lf.sha256 === 'string' ? lf.sha256 : null;
     // The approval consumed by THIS attempt (a retry's attempt needs its own): its request names the lockfile hash.
     const ap = this.db.prepare(`SELECT request_json FROM approvals WHERE job_id = ? AND consumed_by_job_id = ? AND consumed_by_attempt_n = ?
       AND status = 'approved' AND reason = 'egress.deps' ORDER BY consumed_at DESC LIMIT 1`).get(job.id, job.id, attempt.n) as { request_json: string } | undefined;
     const req = ap ? parse(ap.request_json) : null;
-    const approvalLock = isObj(req) && typeof req.lockfileSha256 === 'string' ? req.lockfileSha256 : null;
+    const approvalKey = resolving ? 'manifestSha256' : 'lockfileSha256';
+    const approvalLock = isObj(req) && typeof req[approvalKey] === 'string' ? req[approvalKey] as string : null;
     const facts = isObj(ctx.facts) ? ctx.facts : {};
     const read = isObj(facts.lock) ? facts.lock as { text: string } | { error: string } : null;
     const outcome = this.deps.validation.runPure(depsLock.ID, {

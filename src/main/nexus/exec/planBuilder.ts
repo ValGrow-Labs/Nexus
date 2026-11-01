@@ -97,11 +97,16 @@ export type TestFramework = (typeof FRAMEWORKS)[number];
 /** argv templates by id: fixed arrays, run after the Nexus entry. Values main adds are appended by `expand`. */
 export const ARGV_TEMPLATES: Readonly<Record<string, readonly string[]>> = Object.freeze({
   'npm.ci-ignore-scripts': ['npm', 'ci', '--ignore-scripts', '--no-audit', '--no-fund'],
+  // Live preview phase 2 (an app with add-ons but no lockfile): the exact versions are worked out first (the lockfile is written into the job's own
+  // workspace only, nothing is run), then installed from it with scripts off, in the same approved job through the same registry-only proxy.
+  'npm.lock-only': ['npm', 'install', '--package-lock-only', '--ignore-scripts', '--no-audit', '--no-fund'],
   'pip.install-binary-hashes': ['python', '-m', 'pip', 'install', '--only-binary=:all:', '--require-hashes', '--no-deps',
     '-r', '/workspace/requirements.txt', '--target', '/deps'],
   // An install's evidence (final batch item 1): the Nexus entry hashes the lockfile it installed from into /out/lock.sha256
   // (fixed argv, no job value); main judges it against the snapshot's `metadata.lockfile.sha256` (sde.deps.lock_matches).
   'entry.lock-hash-npm': ['nexus-lock-hash', '--file', 'package-lock.json', '--out', '/out/lock.sha256'],
+  // The same evidence for the lock-less install: the hash of the package list it installed from (judged against the snapshot's `metadata.manifest.sha256`).
+  'entry.lock-hash-package': ['nexus-lock-hash', '--file', 'package.json', '--out', '/out/lock.sha256'],
   'entry.lock-hash-pip': ['nexus-lock-hash', '--file', 'requirements.txt', '--out', '/out/lock.sha256'],
   'node-test.glob': ['nexus-glob', '--out', '/out/ids.txt', '**/*.test.js', '**/*.test.mjs', '**/*.test.cjs',
     'test/**/*.js', 'test/**/*.mjs', 'test/**/*.cjs'],
@@ -377,9 +382,25 @@ export function lockfileSha256Of(inputs: readonly PlanInput[]): string | null {
   return null;
 }
 
-/** The dependency cache volume of a profile and the inputs' lockfile hash (`nexus-deps-<profile>-<lock12>`), or null. */
+/**
+ * The package list hash an input version recorded (`metadata.manifest.sha256`) when it names at least one add-on, or null. It is the key of the add-ons of
+ * an app that has no lockfile (live preview phase 2); a version with a lockfile is keyed by the lockfile alone.
+ */
+export function manifestSha256Of(inputs: readonly PlanInput[]): string | null {
+  for (const i of inputs) {
+    const m = isPlainObject(i.metadata) ? i.metadata.manifest : undefined;
+    if (!isPlainObject(m) || typeof m.sha256 !== 'string' || !LOCK_RE.test(m.sha256)) continue;
+    if (typeof m.dependencies === 'number' && Number.isSafeInteger(m.dependencies) && m.dependencies > 0) return m.sha256;
+  }
+  return null;
+}
+
+/**
+ * The dependency cache volume of a profile and the inputs' key (`nexus-deps-<profile>-<12 hex>`), or null: the lockfile hash, or, for a Node app with
+ * add-ons but no lockfile, the hash of its package list.
+ */
 export function depsVolumeName(profileId: string | null | undefined, inputs: readonly PlanInput[]): string | null {
-  const lock = lockfileSha256Of(inputs);
+  const lock = lockfileSha256Of(inputs) ?? (profileId === 'sde-node' ? manifestSha256Of(inputs) : null);
   return lock && typeof profileId === 'string' && /^[a-z][a-z0-9-]{0,31}$/.test(profileId) ? `nexus-deps-${profileId}-${lock.slice(0, 12)}` : null;
 }
 const depsVolume = depsVolumeName;

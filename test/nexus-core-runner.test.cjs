@@ -538,7 +538,9 @@ test('D14 repo.snapshot: git argv exact; the dirty flag from the status output l
   const spawned = SPAWNED.slice(before).filter((s) => isGitBinary(s.cmd));
   assert.deepEqual(spawned.map((s) => gitSub(s, w, r.dir)),
     [['rev-parse', '--verify', 'HEAD^{commit}'], ['symbolic-ref', '--short', '-q', 'HEAD'], [...FILTER_CONFIG_ARGV], ['status', '--porcelain=v1', '-z', '--ignore-submodules=all'],
-      ['rev-parse', 'HEAD^{tree}'], ['cat-file', '-s', `${r.commit}:package-lock.json`], ['cat-file', '-s', `${r.commit}:requirements.txt`]]);
+      ['rev-parse', 'HEAD^{tree}'], ['cat-file', '-s', `${r.commit}:package-lock.json`], ['cat-file', '-s', `${r.commit}:requirements.txt`],
+      // Live preview phase 2: the package list (package.json) at the commit is looked up by its fixed name too (this repository has none).
+      ['cat-file', '-s', `${r.commit}:package.json`]]);
   assert.deepEqual(gitSub(spawned[3], w, r.dir).filters, configuredFilters(r.dir), 'status switches every configured filter driver off');
   assert.deepEqual(w.one('attempt.provisioned', attemptId), { op: 'attempt.provisioned', attemptId });
   assert.equal(e.exit.code, 0);
@@ -547,6 +549,7 @@ test('D14 repo.snapshot: git argv exact; the dirty flag from the status output l
   assert.equal(facts.commit, r.commit); assert.equal(facts.dirty, true); assert.match(facts.tree, /^[0-9a-f]{40}$/);
   assert.equal(typeof facts.branch, 'string');
   assert.equal(facts.lockfile, null, 'no lockfile at the commit');
+  assert.equal(facts.manifest, null, 'no package list at the commit');
   assert.doesNotMatch(JSON.stringify(w.got), /zz-private-name/);
 });
 
@@ -563,7 +566,7 @@ test('D14b (final batch item 1) repo.snapshot records the lockfile AT THE COMMIT
   const e = await w.wait('attempt.exited', attemptId);
   assert.equal(e.exit.code, 0);
   assert.deepEqual(e.parsed[0].normalized.lockfile, { path: 'package-lock.json', sha256: sha(Buffer.from(lock)) });
-  const sub = SPAWNED.slice(before).filter((s) => isGitBinary(s.cmd)).map((s) => gitSub(s, w, r.dir)).slice(-2);
+  const sub = SPAWNED.slice(before).filter((s) => isGitBinary(s.cmd)).map((s) => gitSub(s, w, r.dir)).slice(-3, -1);   // the last call is the package list's size (live preview phase 2)
   assert.deepEqual(sub, [['cat-file', '-s', `${r.commit}:package-lock.json`], ['cat-file', 'blob', `${r.commit}:package-lock.json`]]);
   // Only pip's lockfile: that one is recorded.
   const w2 = await world();
@@ -574,6 +577,31 @@ test('D14b (final batch item 1) repo.snapshot records the lockfile AT THE COMMIT
     recipe: getRecipe('repo.snapshot'), dataHomeRoot: w2.home, workRel: `work/${j2}/1`, logRel: `logs/jobs/${j2}/1.log`, inputs: [], repoPath: r2.dir }) });
   const e2 = await w2.wait('attempt.exited', a2);
   assert.deepEqual(e2.parsed[0].normalized.lockfile, { path: 'requirements.txt', sha256: sha(Buffer.from(req)) });
+});
+
+test('D14d (live preview phase 2) repo.snapshot records the package list AT THE COMMIT (hash of the committed bytes, a count of add-ons, never a name); not JSON or not an object is none', async () => {
+  const w = await world();
+  const pkg = JSON.stringify({ name: 'x', dependencies: { 'left-pad': '1.3.0', kleur: '^4.1.5' }, devDependencies: { esbuild: '^0.20.0' } }, null, 2) + String.fromCharCode(10);
+  const r = repo(w, { 'package.json': pkg });
+  fs.writeFileSync(path.join(r.dir, 'package.json'), '{"changed":"in the work tree only"}');
+  const jobId = newId(NOW); const attemptId = newId(NOW);
+  w.send({ op: 'attempt.start', attemptId, plan: buildPlan({ job: { id: jobId, projectId: 'p-ledger' }, attempt: { id: attemptId, n: 1 }, bootId: BOOT,
+    recipe: getRecipe('repo.snapshot'), dataHomeRoot: w.home, workRel: `work/${jobId}/1`, logRel: `logs/jobs/${jobId}/1.log`, inputs: [], repoPath: r.dir }) });
+  const e = await w.wait('attempt.exited', attemptId);
+  assert.equal(e.exit.code, 0);
+  assert.deepEqual(e.parsed[0].normalized.manifest, { path: 'package.json', sha256: sha(Buffer.from(pkg)), dependencies: 3 });
+  assert.equal(e.parsed[0].normalized.lockfile, null);
+  assert.doesNotMatch(JSON.stringify(e.parsed), /left-pad|kleur|esbuild/, 'no add-on name leaves the runner');
+  for (const [name, text] of [['not json', 'not json {'], ['an array', '[1,2]']]) {
+    const w2 = await world();
+    const r2 = repo(w2, { 'package.json': text });
+    const j2 = newId(NOW); const a2 = newId(NOW);
+    w2.send({ op: 'attempt.start', attemptId: a2, plan: buildPlan({ job: { id: j2, projectId: 'p-ledger' }, attempt: { id: a2, n: 1 }, bootId: BOOT,
+      recipe: getRecipe('repo.snapshot'), dataHomeRoot: w2.home, workRel: `work/${j2}/1`, logRel: `logs/jobs/${j2}/1.log`, inputs: [], repoPath: r2.dir }) });
+    const e2 = await w2.wait('attempt.exited', a2);
+    assert.equal(e2.exit.code, 0, name);
+    assert.equal(e2.parsed[0].normalized.manifest, null, name);
+  }
 });
 
 test('D14c (final review B1) a planted filter driver never runs on the host: archive (smudge) and status (clean) write no marker; the tar is still produced, with the committed bytes', async () => {

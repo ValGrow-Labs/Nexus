@@ -49,10 +49,10 @@ Keep the file under 16 KiB.
 
 ## When the person asks for an app, a website or a web page
 
-Nexus shows the running app beside the chat, so a request for an app is a request for something that RUNS. Make it runnable, with nothing to install:
+Nexus shows the running app beside the chat, so a request for an app is a request for something that RUNS. Make it runnable:
 
-- Use only Node's standard library. No packages, no CDN, no remote fonts or scripts, no database server.
+- Prefer Node's standard library. If the app really needs packages, list a few well-known ones in `package.json` (`dependencies`, and `devDependencies` for a build tool). Your sandbox has no internet, so you cannot install or run them yourself: Nexus asks the person once and downloads them from the package website when they press Preview (install scripts are off, so choose packages that need no install script; a package with a native part will not work), then builds and runs with them. Keep the list short, and write the code carefully. No CDN, no remote fonts or scripts, no database server.
 - `package.json` with `scripts.build` (writes the finished files to `dist`) and `scripts.start`.
 - `src/server.js` listens on port 3000 on `0.0.0.0`, serves the files in `dist` and answers `GET /health` with 200.
 - `nexus.app.json` with `run: ["node", "src/server.js"]`, `port: 3000`, `healthPath: "/health"`, `env: []` and `build: { outputDir: "dist" }`.
-- Run the build in the sandbox, then check the server answers `/health` with a command that ends by itself, before you register the change.
+- Run the build in the sandbox, then check the server answers `/health` with a command that ends by itself, before you register the change. If the build or the server needs packages you cannot install, say so in your hand-off instead.

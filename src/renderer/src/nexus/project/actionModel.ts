@@ -192,6 +192,10 @@ function approvalSummary(a: ApprovalView): string {
   }
   if (a.reason === 'egress.deps') {
     const where = r.registries && r.registries.length > 0 ? `only ${r.registries.join(', ')}` : 'only the address listed below';
+    if (r.manifestSha256) {
+      return `Your app lists add-ons (packages) but no saved version list. Nexus needs to work out their exact versions and download them. It may connect to ${where}, for this one request. `
+        + 'The add-ons are not run while they are installed, and the running app still has no internet.';
+    }
     return `Nexus needs to download the add-ons your project lists. It may connect to ${where}, for this one request.`;
   }
   if (a.reason === 'repo.write_refs') return `Nexus needs your OK to keep its own notes in a small hidden area of your project. Your files and your ${termName('mainVersion')} are never changed.`;
@@ -206,6 +210,7 @@ export function approvalRow(a: ApprovalView, now: number, fmt: (t: number) => st
   if (typeof r.freeBytesNow === 'number') facts.push({ label: 'Free space now', value: gb(r.freeBytesNow) });
   const details: { label: string; value: string }[] = [];
   if (r.lockfileSha256) details.push({ label: 'Fingerprint of the add-on list', value: `sha256:${r.lockfileSha256.slice(0, 12)}` });
+  if (r.manifestSha256) details.push({ label: 'Fingerprint of the add-on list', value: `sha256:${r.manifestSha256.slice(0, 12)}` });
   if (r.contextSha256) details.push({ label: 'Fingerprint of the kit recipe', value: `sha256:${r.contextSha256.slice(0, 12)}` });
   if (r.baseDigest) details.push({ label: 'Fingerprint of the starting image', value: `sha256:${r.baseDigest.replace(/^sha256:/, '').slice(0, 12)}` });
   const title = approvalTitle(a);

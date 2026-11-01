@@ -113,6 +113,13 @@ export const RECIPES: readonly RecipeDef[] = deepFreeze([
     retry: { idempotent: false, maxAttempts: 1 }, wallClockMs: 15 * MIN, limits: { cpus: 2, memoryMb: 2048, outputMaxBytes: 4 * MIB },
     outputContract: { required: [], description: 'None: the output is the log of the run, and the exit status says how it ended.' },
     parsers: [], produces: [], subPhase: 'B2a' },
+  // Live preview phase 2: an app with add-ons and no lockfile. ONE approved job: the exact versions are worked out (npm's lock-only mode), then installed from
+  // them with scripts off, through the same registry-only proxy and allow-list as sde.deps.node. Its evidence is the hash of the package list it installed from.
+  { id: 'sde.deps.resolve', version: '1', executor: 'tool', profiles: ['sde-node'],
+    argvTemplates: ['npm.lock-only', 'npm.ci-ignore-scripts', 'entry.lock-hash-package'], params: NO_PARAMS, network: 'egress-approved',
+    retry: { idempotent: true, maxAttempts: 2 }, wallClockMs: 15 * MIN, limits: { cpus: 2, memoryMb: 2048, outputMaxBytes: 1 * MIB },
+    outputContract: { required: ['lock.sha256'], description: 'The hash of the package list that was installed, equal to the package list in the checkout.' },
+    parsers: [], produces: [], subPhase: 'B2a' },
   // ----- B2b: the git writes of agent changes, each a system child job. Every ref is under refs/nexus/* (D-B13); only
   // repo.ff touches the user's branch, and only after the user confirmed it in a dialog. -----
   { id: 'repo.worktree', version: '1', ...engine,

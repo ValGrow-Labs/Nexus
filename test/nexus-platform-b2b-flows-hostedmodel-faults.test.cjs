@@ -163,6 +163,13 @@ test('HMF5 free-tier errors end as their fixed sentences and outcomes: 401, 429 
     assert.deepEqual([gone.t.job.state, gone.t.job.outcome], ['failed', 'hosted_model_unavailable'], gone.t.job.error_json);
     assert.equal(gone.asked, 1);
 
+    // ----- the provider refused the request (HTTP 400): the turn keeps the one fixed sentence, and the adapter's own short diagnostic line (status and the provider's
+    // short label, never its text) reaches the turn's job log, because the runner hands the adapter a logger.
+    const refused = await failedTurn([{ status: 400, code: 'invalid_request_error' }], 'Write a file', session);
+    assert.notEqual(refused.t.job.state, 'completed');
+    const logText = fs.readdirSync(path.join(w.dataHome.root, 'logs', 'jobs', refused.t.jobId)).map((f) => fs.readFileSync(path.join(w.dataHome.root, 'logs', 'jobs', refused.t.jobId, f), 'utf8')).join('\n');
+    assert.ok(logText.includes('hosted model: the provider refused a request (HTTP 400, invalid_request_error error)'), `the diagnostic line is in the job log: ${logText.slice(-400)}`);
+
     // ----- the provider's own text (mock: a secret-looking message with a path) is in no row, log or file; each sentence is main's own
     const all = everything(w);
     assert.ok(!all.includes('SECRET-PROVIDER-ERROR-TEXT') && !all.includes('You exceeded your free tier'),'the provider\'s error text is kept nowhere');

@@ -1180,6 +1180,7 @@ stderr: ${r.stderr}` : ''}`
         consentedHosts: plan.egress?.allow,
         apiKey: plan.runtime.apiKey,
         hostedTestSeam: this.deps.agentRuntime?.hostedTestSeam,
+        log: (line) => a.log?.nexus(line),
         steps: this.deps.agentRuntime?.scriptFor?.(plan) ?? [],
         fetchImpl: this.deps.agentRuntime?.fetchImpl,
         agentBin: this.deps.agentRuntime?.agentBin,
@@ -1370,7 +1371,7 @@ stderr: ${r.stderr}` : ''}`
         if (typeof t.repoPath !== 'string' || !path.isAbsolute(t.repoPath)) throw new Error('the project folder is not an absolute path');
         const facts = await this.git!.snapshot(t.repoPath, a.abort.signal);
         const sha = createHash('sha256').update(JSON.stringify({ branch: facts.branch, commit: facts.commit, dirty: facts.dirty, tree: facts.tree,
-          lockfile: facts.lockfile })).digest('hex');
+          lockfile: facts.lockfile, manifest: facts.manifest })).digest('hex');
         parsed.push({ parser: 'repo-snapshot', sourceSha256: sha, normalized: facts });
         a.log?.nexus(`snapshot of ${facts.commit.slice(0, 12)}${facts.dirty ? ' (uncommitted changes are not included)' : ''}`);
       } else if (t.engine === 'sde.app.assemble') {
