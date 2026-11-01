@@ -321,6 +321,8 @@ function Workbench({ project, tool }: { project: Project; tool: ProjectTool }) {
   const reviewReady = useMemo(() => changeSetRows(artifacts).filter((r) => r.reviewable).length, [artifacts]);
   const card = setupCard({ inSoftware: (idx.byProject.get(project.id) ?? []).some((r) => r.status === 'active' && r.workspaceId === 'sde'), git: git.status === 'ready' ? 'ready' : git.status === 'error' ? 'error' : 'loading', isRepo: git.status === 'ready' && git.isRepo });
   const hasSde = (idx.byProject.get(project.id) ?? []).some((r) => r.status === 'active' && r.workspaceId === 'sde');
+  // A Machine learning project is worked on with data, not code: its rail has no code editor, no terminal and no Try it (that runs npm commands).
+  const isMl = (idx.byProject.get(project.id) ?? []).some((r) => r.status === 'active' && r.isPrimary && r.workspaceId === 'ml');
   // The newest suggested change that is waiting for a decision or kept but not added yet: Try it can run it as well as the project as it stands.
   const tryChange = useMemo(() => { const r = changeSetRows(artifacts).find((x) => x.status === 'candidate' || x.status === 'active'); return r ? { versionId: r.versionId, name: r.name } : null; }, [artifacts]);
   // The newest suggested change whose checks failed: the building page says the helper DID make changes, but they did not pass.
@@ -364,12 +366,12 @@ function Workbench({ project, tool }: { project: Project; tool: ProjectTool }) {
           {/* Its results: the newest report, the charts and the files its code wrote (nothing for any other project, by the same rule). */}
           <Results projectId={project.id} />
         </div>
+        {!wide && notice && <p className="nx-passport__note" role="alert">{notice}</p>}
         <div className="nx-bench">
-          <ToolRail projectId={project.id} rootPath={project.rootPath} tool={tool} hasChanges={hasChanges} canTry={hasSde && !card} onOpenTerminal={openTerminal}
+          <ToolRail projectId={project.id} rootPath={project.rootPath} tool={tool} hasChanges={hasChanges} canTry={hasSde && !card && !isMl} codeTools={!isMl} onOpenTerminal={openTerminal}
             extra={!wide && (
               <button type="button" className="nx-passport-btn" aria-haspopup="dialog" aria-expanded={detailsOpen} onClick={() => setDetailsOpen(true)}>Details</button>
             )} />
-          {!wide && notice && <p className="nx-passport__note" role="alert">{notice}</p>}
           {tool === 'bench' && hasSde && !card
             ? (
               <BuildStage projectId={project.id} blocked={false} reviewReady={reviewReady} blockedChange={blockedChange} onReview={() => navigate({ name: 'project', id: project.id, tool: 'changes' })}>

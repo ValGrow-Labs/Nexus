@@ -3168,15 +3168,23 @@ ipcMain.handle('terminal:openAtFolder', async (_evt, cwd: unknown) => {
   if (typeof cwd !== 'string' || cwd.length === 0) return { ok: false, error: 'invalid cwd' };
   // Deliberately not restricted to known roots: opening a terminal at a folder
   // the user chose is a legitimate root addition, not a renderer escalation.
+  const folder = cwd;
   return new Promise<{ ok: boolean; error?: string }>((resolve) => {
-    const p = spawn('open', ['-a', 'Terminal', cwd]);
-    let err = '';
-    p.stderr.on('data', (d) => { err += d.toString(); });
-    p.on('error', (e) => resolve({ ok: false, error: e.message }));
-    p.on('close', (code) => {
-      if (code === 0) resolve({ ok: true });
-      else resolve({ ok: false, error: err.trim() || `open exited ${code}` });
-    });
+    // macOS opens Terminal.app; Windows opens Windows Terminal (or, without it, a Command Prompt) in the folder; other systems say so plainly.
+    const launch = (cmd: string, args: string[], onMissing?: () => void): void => {
+      const p = spawn(cmd, args, { stdio: ['ignore', 'ignore', 'pipe'], detached: process.platform === 'win32', windowsHide: false });
+      let err = '';
+      p.stderr?.on('data', (d) => { err += d.toString(); });
+      p.on('error', (e) => { if (onMissing) onMissing(); else resolve({ ok: false, error: e.message }); });
+      if (process.platform === 'win32') { p.unref(); setTimeout(() => resolve({ ok: true }), 600); return; }
+      p.on('close', (code) => {
+        if (code === 0) resolve({ ok: true });
+        else resolve({ ok: false, error: err.trim() || `open exited ${code}` });
+      });
+    };
+    if (process.platform === 'darwin') launch('open', ['-a', 'Terminal', folder]);
+    else if (process.platform === 'win32') launch('wt.exe', ['-d', folder], () => launch('cmd.exe', ['/c', 'start', '', '/D', folder, 'cmd.exe']));
+    else resolve({ ok: false, error: 'Opening a terminal is not available on this system.' });
   });
 });
 

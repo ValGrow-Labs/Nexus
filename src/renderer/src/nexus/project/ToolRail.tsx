@@ -13,7 +13,7 @@ const ROUTES: { tool: ProjectTool; label: string; icon: NexusIconName }[] = [
 ];
 
 /** Vertical project tools: the routed tools, then the two app actions. */
-export function ToolRail({ projectId, rootPath, tool, hasChanges, canTry = true, onOpenTerminal, extra }: { extra?: ReactNode; canTry?: boolean; projectId: string; rootPath: string; tool: ProjectTool; hasChanges: boolean; onOpenTerminal: () => void }) {
+export function ToolRail({ projectId, rootPath, tool, hasChanges, canTry = true, codeTools = true, onOpenTerminal, extra }: { extra?: ReactNode; canTry?: boolean; codeTools?: boolean; projectId: string; rootPath: string; tool: ProjectTool; hasChanges: boolean; onOpenTerminal: () => void }) {
   const actions = useShellActions();
   // The task list is engine output a person rarely needs: it is out of the rail unless it is the page being shown (it is in Details, and a running request links to it).
   const items = ROUTES.filter((r) => (r.tool !== 'changes' || hasChanges || tool === 'changes') && (r.tool !== 'try' || canTry || tool === 'try') && (r.tool !== 'runs' || tool === 'runs'));
@@ -26,6 +26,8 @@ export function ToolRail({ projectId, rootPath, tool, hasChanges, canTry = true,
           <Icon name={r.icon} size={17} />
         </button>
       ))}
+      {/* A person working with data has no use for a code editor or a terminal: they are for projects of code. */}
+      {codeTools && (<>
       <span className="nx-rail__sep" data-desktop-only aria-hidden="true" />
       <button type="button" className="nx-rail__item" data-desktop-only title="Files" aria-label="Open your project's files" onClick={() => actions.openIde(rootPath)}>
         <Icon name="files" size={17} />
@@ -33,6 +35,7 @@ export function ToolRail({ projectId, rootPath, tool, hasChanges, canTry = true,
       <button type="button" className="nx-rail__item" data-desktop-only title="Terminal" aria-label="Open a terminal in this project" onClick={onOpenTerminal}>
         <Icon name="terminal" size={17} />
       </button>
+      </>)}
       {extra}
     </nav>
   );

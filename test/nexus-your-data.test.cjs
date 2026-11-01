@@ -19,11 +19,11 @@ test('YD1 the words: the title, the button, the empty line and the privacy sente
   assert.equal(M.YOUR_DATA_TITLE, 'Your data');
   assert.equal(M.UPLOAD_LABEL, 'Upload a dataset');
   assert.equal(M.REMOVE_LABEL, 'Remove');
-  assert.equal(M.EMPTY_LINE, 'No data yet. Upload a file (CSV, Excel, JSON or Parquet) to start.');
-  assert.equal(M.privacyLine(false), 'Your file stays on this computer. The AI helper can see its column names and anything its code prints, such as a few example rows.');
+  assert.equal(M.EMPTY_LINE, 'No data yet.');
+  assert.equal(M.privacyLine(false), 'Stays on this computer. The AI helper sees column names and anything its code prints.');
   assert.equal(M.privacyLine(true), 'Nothing leaves this computer.', 'when the AI service in use runs on this computer');
-  assert.match(M.REMOVE_NOTE, /copy Nexus keeps.*original file is never touched/);
-  assert.match(M.REMOVED_LINE, /original file was not touched/);
+  assert.match(M.REMOVE_NOTE, /^Remove deletes only Nexus’s copy\.$/);
+  assert.match(M.REMOVED_LINE, /original file is untouched/);
   assert.equal(DATA_REQUEST_PLACEHOLDER, 'Ask about your data, for example: which customers are likely to leave?');
   const all = [M.YOUR_DATA_TITLE, M.UPLOAD_LABEL, M.UPLOADING_LABEL, M.EMPTY_LINE, M.PRIVACY_LINE, M.PRIVACY_LINE_LOCAL, M.REMOVE_NOTE, M.DAMAGED_LINE, M.REMOVED_LINE,
     M.NOT_READY_LINE, M.GENERIC_FAILURE, M.addedLine('x.csv'), DATA_REQUEST_PLACEHOLDER, ...Object.values(DATASET_REASON_MESSAGES)].join('\n');

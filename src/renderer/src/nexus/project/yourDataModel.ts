@@ -12,19 +12,19 @@ export const YOUR_DATA_TITLE = 'Your data';
 export const UPLOAD_LABEL = 'Upload a dataset';
 export const UPLOADING_LABEL = 'Uploading…';
 export const REMOVE_LABEL = 'Remove';
-export const EMPTY_LINE = 'No data yet. Upload a file (CSV, Excel, JSON or Parquet) to start.';
+export const EMPTY_LINE = 'No data yet.';
 /** Always near the button. */
-export const PRIVACY_LINE = 'Your file stays on this computer. The AI helper can see its column names and anything its code prints, such as a few example rows.';
+export const PRIVACY_LINE = 'Stays on this computer. The AI helper sees column names and anything its code prints.';
 /** When the AI service in use runs on this computer. */
 export const PRIVACY_LINE_LOCAL = 'Nothing leaves this computer.';
-export const REMOVE_NOTE = 'Remove deletes the copy Nexus keeps. Your original file is never touched.';
+export const REMOVE_NOTE = 'Remove deletes only Nexus’s copy.';
 export const DAMAGED_LINE = 'Nexus could not read its list of your data, so none is shown. Upload your files again; the earlier copies are cleared when you do.';
-export const REMOVED_LINE = 'Removed. Your original file was not touched.';
+export const REMOVED_LINE = 'Removed. Your original file is untouched.';
 export const NOT_READY_LINE = 'Data can be added once this computer is ready to run tasks. Open “Get this computer ready”.';
 export const GENERIC_FAILURE = 'Nexus could not do that. Try again.';
 
 export const privacyLine = (aiOnThisComputer: boolean): string => (aiOnThisComputer ? PRIVACY_LINE_LOCAL : PRIVACY_LINE);
-export const addedLine = (name: string): string => `Added “${name}”. The AI helper can read it now.`;
+export const addedLine = (name: string): string => `Added “${name}”.`;
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 /** When a file was added, in plain words. */

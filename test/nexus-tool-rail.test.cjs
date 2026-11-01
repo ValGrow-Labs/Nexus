@@ -21,3 +21,12 @@ test('TR1 Tasks is out of the rail unless shown; it is in Details; the route and
   assert.match(src('src/renderer/src/nexus/runs/RunsIndicator.tsx'), /tool: 'runs'/, 'a running request still links to it');
   assert.match(src('src/renderer/src/nexus/intent/IntentLine.tsx'), /tool: 'runs'/);
 });
+
+test('TR2 a Machine learning project has no code editor, no terminal and no Try it in its rail; every other project keeps them', () => {
+  const rail = src('src/renderer/src/nexus/project/ToolRail.tsx');
+  assert.match(rail, /codeTools = true/, 'the default keeps the editor and the terminal');
+  assert.match(rail, /\{codeTools && \(<>[\s\S]*openIde\(rootPath\)[\s\S]*onOpenTerminal[\s\S]*<\/>\)\}/, 'the editor and the terminal are inside the one switch');
+  const bench = src('src/renderer/src/nexus/project/ProjectBench.tsx');
+  assert.match(bench, /const isMl = .*r\.isPrimary && r\.workspaceId === 'ml'/, 'only a project whose main kind of work is Machine learning');
+  assert.match(bench, /canTry=\{hasSde && !card && !isMl\} codeTools=\{!isMl\}/);
+});

@@ -10,11 +10,11 @@ import { sizeText } from '@shared/nexus/datasets';
  */
 
 export const RESULTS_TITLE = 'Results';
-export const EMPTY_LINE = 'Nothing here yet. Ask a question about your data and the results will show up here.';
+export const EMPTY_LINE = 'Nothing here yet. Ask a question about your data.';
 /** Always under the block. */
-export const STAYS_LINE = 'Results stay on this computer. Save keeps a copy where you choose; Remove deletes the copy Nexus keeps.';
+export const STAYS_LINE = 'Results stay on this computer.';
 /** Next to every model file. */
-export const MODEL_NOTE = 'A saved model file can only be opened safely by code you trust. Nexus never opens it for you.';
+export const MODEL_NOTE = 'Only open a saved model with code you trust.';
 export const SAVE_LABEL = 'Save';
 export const REMOVE_LABEL = 'Remove';
 export const REMOVE_ALL_LABEL = 'Remove all';

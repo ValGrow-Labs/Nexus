@@ -29,9 +29,9 @@ function loadResultsTsx() {
 
 test('RU1 the words: the title, the empty line, the model note and the line under the block, exactly as agreed', () => {
   assert.equal(M.RESULTS_TITLE, 'Results');
-  assert.equal(M.EMPTY_LINE, 'Nothing here yet. Ask a question about your data and the results will show up here.');
-  assert.equal(M.MODEL_NOTE, 'A saved model file can only be opened safely by code you trust. Nexus never opens it for you.');
-  assert.match(M.STAYS_LINE, /^Results stay on this computer\./);
+  assert.equal(M.EMPTY_LINE, 'Nothing here yet. Ask a question about your data.');
+  assert.equal(M.MODEL_NOTE, 'Only open a saved model with code you trust.');
+  assert.match(M.STAYS_LINE, /^Results stay on this computer\.$/);
   assert.deepEqual([M.SAVE_LABEL, M.REMOVE_LABEL, M.REMOVE_ALL_LABEL], ['Save', 'Remove', 'Remove all']);
   assert.equal(M.savedLine('report.md'), 'Saved a copy of “report.md”.');
   assert.equal(M.clearedLine(0), 'There was nothing to remove.'); assert.equal(M.clearedLine(3), 'Removed 3 results.');
