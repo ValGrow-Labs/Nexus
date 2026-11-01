@@ -96,15 +96,24 @@ export class ContextResolver {
     };
 
     if (job.sessionId) {
+      // What the person really typed: the message of each EARLIER turn of this conversation (the turn job's own params, where a request is kept), plus any
+      // activity row of the user that carries a `text`. A row without text (a record of something else the user's action did) is skipped, never shown.
+      const found: { ts: number; text: string }[] = [];
+      const turns = this.db.prepare(`SELECT params_json, created_at FROM jobs WHERE session_id = ? AND kind = 'agent.run' AND id <> ?
+          ORDER BY created_at DESC, rowid DESC LIMIT ?`).all(job.sessionId, job.id, MAX_PRIOR_MESSAGES) as { params_json: string; created_at: number }[];
+      for (const t of turns) {
+        const p = parseJson(t.params_json);
+        // A turn Nexus started itself after a review (its message is Nexus's own sentence) is not something the person typed.
+        if (isObj(p) && typeof p.message === 'string' && p.message.trim() !== '' && typeof p.reviewId !== 'string') found.push({ ts: t.created_at, text: p.message });
+      }
       const rows = this.db.prepare(`SELECT details_json, ts FROM activity WHERE session_id = ? AND actor_kind = 'user'
           ORDER BY seq DESC LIMIT ?`).all(job.sessionId, MAX_PRIOR_MESSAGES) as { details_json: string; ts: number }[];
-      const texts: string[] = [];
-      for (const r of rows.reverse()) {
+      for (const r of rows) {
         const d = parseJson(r.details_json);
-        const text = isObj(d) && typeof d.text === 'string' ? d.text : isObj(d) ? JSON.stringify(d) : '';
-        if (text) texts.push(text);
+        if (isObj(d) && typeof d.text === 'string' && d.text.trim() !== '' && !found.some((f) => f.text === d.text)) found.push({ ts: r.ts, text: d.text });
       }
-      itemField('Prior user messages', texts);
+      found.sort((a, b) => a.ts - b.ts);
+      itemField('Prior user messages', found.slice(-MAX_PRIOR_MESSAGES).map((f) => f.text));
     }
 
     const reviewRows = this.db.prepare(`SELECT r.comment AS comment, r.created_at AS ts FROM reviews r

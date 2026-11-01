@@ -358,6 +358,44 @@ test('LM11 file tools refuse every path that leaves the worktree or names a rese
   assert.equal(checkRelPath('a/./b').ok, true);
 });
 
+test('LM11b the one reserved-looking file the helper may write is nexus.app.json at the project root (Preview needs it); every other nexus.*, .nexus* and .claude* path stays refused, listing included', async () => {
+  const root = tmpDir();
+  const wt = path.join(root, 'wt'); fs.mkdirSync(wt);
+  const ft = new FileTools(wt);
+  const manifest = '{"version":1,"profile":"sde-node","run":["node","src/server.js"],"port":3000,"healthPath":"/health","env":[]}';
+  // Allowed: exactly nexus.app.json at the root, written, read back, listed, replaced and deleted.
+  assert.equal(checkRelPath('nexus.app.json').ok, true);
+  assert.equal(checkRelPath('./nexus.app.json').ok, true, 'a leading ./ is still the root');
+  const w1 = await ft.run('write_file', { path: 'nexus.app.json', content: manifest });
+  assert.equal(w1.ok, true, w1.text);
+  assert.equal(fs.readFileSync(path.join(wt, 'nexus.app.json'), 'utf8'), manifest);
+  assert.equal((await ft.run('read_file', { path: 'nexus.app.json' })).text, manifest);
+  assert.match((await ft.run('list_files', {})).text, /^nexus\.app\.json \(\d+ bytes\)$/m, 'listing shows the file the tools can read');
+  assert.equal((await ft.run('write_file', { path: 'nexus.app.json', content: manifest + ' ' })).ok, true);
+  // Refused: nested, another name, other spellings of the case, and the control folders (write, read, delete).
+  const still = ['x/nexus.app.json', 'a/b/nexus.app.json', 'nexus.other', 'nexus.app.json.bak', 'nexus.app.jsonx', 'Nexus.app.json', 'NEXUS.APP.JSON', 'nexus.app', 'nexus.', 'nexus.json', 'nexus.config/x',
+    '.nexus', '.nexus/app.json', '.nexus-local/x', '.claude', '.claude/settings.json', '.CLAUDE/x'];
+  for (const p of still) {
+    assert.equal(checkRelPath(p).ok, false, `${p} is refused by the path check`);
+    for (const [tool, args] of [['write_file', { path: p, content: 'x' }], ['read_file', { path: p }], ['delete_file', { path: p }]]) {
+      assert.equal((await ft.run(tool, args)).ok, false, `${tool} ${p} must be refused`);
+    }
+  }
+  // Files with those names already in the folder are never listed (only the root nexus.app.json is).
+  for (const p of ['nexus.other', '.nexus', '.claude']) fs.writeFileSync(path.join(wt, p), 'x');
+  fs.mkdirSync(path.join(wt, 'sub')); fs.writeFileSync(path.join(wt, 'sub', 'nexus.app.json'), 'x'); fs.writeFileSync(path.join(wt, 'sub', 'ok.txt'), 'x');
+  const listed = (await ft.run('list_files', {})).text;
+  assert.ok(listed.includes('nexus.app.json (') && !/nexus\.other|\.nexus|\.claude/.test(listed), listed);
+  assert.ok(!/sub\/nexus\.app\.json/.test(listed) && /sub\/ok\.txt/.test(listed), 'a nested nexus.app.json is not listed');
+  assert.equal((await ft.run('delete_file', { path: 'nexus.app.json' })).ok, true);
+  assert.ok(!fs.existsSync(path.join(wt, 'nexus.app.json')));
+  // The readers of the file look for exactly this name at the project root: the one the helper may now write (a change that holds it shows its Proof as any other).
+  const rootSrc = (p) => fs.readFileSync(path.join(__dirname, '..', p), 'utf8');
+  assert.ok(rootSrc('src/runner/git.ts').includes("export const APP_MANIFEST_PATH = 'nexus.app.json';"));
+  assert.ok(rootSrc('src/runner/git.ts').includes('`${commit}:${APP_MANIFEST_PATH}`'));
+  assert.ok(rootSrc('src/main/nexus/exec/executionService.ts').includes("read(root, commit, 'nexus.app.json')"));
+});
+
 test('LM12 links are never followed: a junction or symlink to the outside, a hard link, a linked file and a linked root', async () => {
   const root = tmpDir();
   const wt = path.join(root, 'wt'); fs.mkdirSync(wt);

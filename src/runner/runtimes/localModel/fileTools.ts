@@ -62,6 +62,11 @@ export const FILE_TOOL_DEFS: readonly ChatTool[] = Object.freeze([
 const DEVICE_RE = /^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\..*)?$/i;
 const BAD_CHARS_RE = /[<>"|?*\x00-\x1f\x7f]/;
 const CONTROL_ENTRY_RE = /^(?:\.claude|\.nexus|nexus\.)/i;
+/**
+ * The one entry the reserved-name rule above lets through: the app's start file at the project root, exactly this name (case-sensitive). Live preview needs it,
+ * and it is the helper's to write; a nested `x/nexus.app.json`, any other `nexus.*` name and the control folders stay refused.
+ */
+const APP_MANIFEST_NAME = 'nexus.app.json';
 const SKIP_DESCEND = new Set(['node_modules']);
 
 type Checked = { ok: true; segs: string[] } | { ok: false; why: string };
@@ -81,7 +86,7 @@ export function checkRelPath(raw: unknown): Checked {
     if (s.length > 255) return { ok: false, why: 'a name in the path is too long' };
     if (/[. ]$/.test(s)) return { ok: false, why: 'a name may not end in a dot or a space' };
     if (DEVICE_RE.test(s)) return { ok: false, why: 'that name is reserved' };
-    if (CONTROL_ENTRY_RE.test(s)) return { ok: false, why: 'that path is reserved' };
+    if (CONTROL_ENTRY_RE.test(s) && !(s === APP_MANIFEST_NAME && segs.length === 1)) return { ok: false, why: 'that path is reserved' };
   }
   if (segs.length > 0 && isSensitivePath(segs.join('/'))) return { ok: false, why: 'that path is not allowed (a repository, key or secret file)' };
   return { ok: true, segs };
@@ -255,7 +260,7 @@ export class FileTools {
       for (const name of names) {
         const rel = cur.rel === '' ? name : `${cur.rel}/${name}`;
         // What the file tools would refuse is not shown.
-        if (CONTROL_ENTRY_RE.test(name) || isSensitivePath(rel) || /^\.write-[0-9a-f]+\.tmp$/.test(name)) continue;
+        if ((CONTROL_ENTRY_RE.test(name) && !(name === APP_MANIFEST_NAME && cur.rel === '')) || isSensitivePath(rel) || /^\.write-[0-9a-f]+\.tmp$/.test(name)) continue;
         const pr = await this.probe(path.join(cur.abs, name));
         if (pr.kind === 'refused' || pr.kind === 'missing') continue;
         if (lines.length >= this.limits.listMaxEntries) { truncated = true; break; }
