@@ -103,8 +103,10 @@ test('RG3b a small model on this computer is said so in plain words (read from i
   assert.match(ready('coder:7b').status, /can use tools\. This AI model is small/);
   assert.equal(ready('coder:32b').status, 'The program that runs AI on this computer is working, and the chosen model can use tools.');
   const pins = read('src/renderer/src/nexus/agent/AgentPanel.tsx');
-  assert.match(pins, /smallModelNote\(health\.agent\.model\)/, 'the dock says it too, when a local model is in use');
-  assert.match(read('src/main/nexusIpc/agentSetup.ts'), /LOCAL_MODEL_KIND && optionRow\.model \? \{ model: optionRow\.model \}/, 'only the local runtime reports a model name');
+  assert.match(pins, /health\.agent\.smallAi === true \? SMALL_MODEL_NOTE/, 'the dock says it too, when a small local model is in use');
+  const setup = read('src/main/nexusIpc/agentSetup.ts');
+  assert.match(setup, /LOCAL_MODEL_KIND && isSmallModel\(optionRow\.model\) \? \{ smallAi: true \}/, 'only the local runtime says so, and only as a yes: main reads the size, the model name never leaves it');
+  assert.doesNotMatch(setup, /\{ model: optionRow\.model \}/, 'the setup view carries no model name');
 });
 
 test('RG3 on this computer: server not running / model missing / ready, each a plain sentence with instructions and no action until ready', () => {

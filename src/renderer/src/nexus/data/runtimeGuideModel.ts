@@ -11,19 +11,16 @@
 //   (opens Settings at the access keys) while a key is needed, the existing use/pick action once the AI service is ready;
 // - words: AI helper, AI service, access key, Free online AI / AI on this computer / Your own plan (the glossary's names).
 import type { AgentConsentView, AgentRuntimeOptionView } from '@shared/nexus/ipc';
-import { LOCAL_MODEL_KIND } from '@shared/nexus/localModel';
+import { LOCAL_MODEL_KIND, isSmallModel } from '@shared/nexus/localModel';
 import { HOSTED_MODEL_KIND } from '@shared/nexus/hostedModel';
 import { AGENT_REASON_TEXT } from './errorCopy';
 import { KEYS_PATH, LOCAL_PROBLEM_TEXT, type RuntimeChoice } from './executionModel';
 import { termName } from './glossary';
 
-/** A model with fewer parameters than this (billions) often cannot follow a build through: it writes a file or two and stops. */
-const SMALL_MODEL_BILLIONS = 14;
 export const SMALL_MODEL_NOTE = 'This AI model is small, so it often cannot build a whole app. For building apps, pick a bigger model or another AI service.';
 /** The one plain line shown when the model on this computer is small (its size is read from its name, e.g. "…:7b"); null when it is big enough or the name does not say. */
 export function smallModelNote(model: string | null | undefined): string | null {
-  const m = typeof model === 'string' ? /(?<![\d.])(\d+(?:\.\d+)?)b(?![a-z0-9])/i.exec(model) : null;
-  return m && Number(m[1]) < SMALL_MODEL_BILLIONS ? SMALL_MODEL_NOTE : null;
+  return isSmallModel(model) ? SMALL_MODEL_NOTE : null;
 }
 
 export const GUIDE_TITLE = 'Choose your AI helper';

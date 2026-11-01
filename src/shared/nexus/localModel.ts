@@ -12,6 +12,14 @@ export const RUNTIME_MODELS_MAX = 64;
 export const MODEL_NAME_RE = /^(?!.*\.\.)[A-Za-z0-9][A-Za-z0-9._:/@-]{0,127}$/;
 export const isModelName = (x: unknown): x is string => typeof x === 'string' && MODEL_NAME_RE.test(x);
 
+/** A model with fewer parameters than this (billions) often cannot follow a build through: it writes a file or two and stops. */
+export const SMALL_MODEL_BILLIONS = 14;
+/** True when the model's name says it is small (its size is read from the name, e.g. "…:7b"); false when it is big enough or the name does not say. */
+export function isSmallModel(model: string | null | undefined): boolean {
+  const m = typeof model === 'string' ? /(?<![\d.])(\d+(?:\.\d+)?)b(?![a-z0-9])/i.exec(model) : null;
+  return m !== null && Number(m[1]) < SMALL_MODEL_BILLIONS;
+}
+
 /** One model a runtime's probe lists: its name and whether it reports that it can call tools. */
 export interface RuntimeModelInfo { name: string; tools: boolean }
 

@@ -17,7 +17,7 @@ import { Button } from '../ui/Button';
 import { ApprovalList } from '../project/ApprovalsSection';
 import { SessionLog } from './SessionLog';
 import { ISOLATION_NOTE, agentFailText, agentPanelModel, chatItems, continuingLine, liveStepLine, replyOf, usageShort } from './agentModel';
-import { smallModelNote } from '../data/runtimeGuideModel';
+import { SMALL_MODEL_NOTE } from '../data/runtimeGuideModel';
 
 /** How often the elapsed time is refreshed while a request runs (a slow tick: it is not a clock). */
 const PROGRESS_TICK_MS = 5_000;
@@ -43,7 +43,7 @@ export function AgentPanel({ projectId, workspaceId, reviewReady = 0, onReview, 
   const detail = useSessionDetail(newestId, true);
   const reply = replyOf(detail.data);
   // The model on this computer is small (its name says so): said once, in plain words, before a build fails for that reason.
-  const smallNote = health?.agent?.consent.live ? smallModelNote(health.agent.model) : null;
+  const smallNote = health?.agent?.consent.live && health.agent.smallAi === true ? SMALL_MODEL_NOTE : null;
   const panel = agentPanelModel({ health, availability, sessions: sessions.data, sessionsFail: sessions.fail, jobs, now, reply });
   const approvals = useApprovals(projectId);
   const repoWaiting = useMemo(() => (approvals.data ?? []).filter((a) => a.status === 'pending' && a.reason === 'repo.write_refs'), [approvals.data]);

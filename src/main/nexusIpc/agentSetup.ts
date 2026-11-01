@@ -7,7 +7,7 @@
  * setup row only. A cached health older than its TTL reads as unknown.
  */
 import type { AgentConsentView, AgentRuntimeOptionView, AgentRuntimeProblem, AgentSetupState, AgentSetupView } from '../../shared/nexus/ipc';
-import { LOCAL_MODEL_KIND, type LocalModelReason } from '../../shared/nexus/localModel';
+import { LOCAL_MODEL_KIND, isSmallModel, type LocalModelReason } from '../../shared/nexus/localModel';
 import { HOSTED_MODEL_KIND, type HostedModelReason } from '../../shared/nexus/hostedModel';
 import type { NexusPlatform } from '../nexus/platform';
 import type { RuntimeCacheEntry } from '../nexus/agents/runtimeHealth';
@@ -106,7 +106,7 @@ export function agentSetupView(nx: NexusPlatform, offReason?: string | null): Ag
     state,
     // Only a runtime that serves a choice of models says which runtime its row is about, and why its chosen model cannot be used (every other row is as before).
     ...(optionRow ? { kind: entry!.kind, ...(optionRow.problem !== null ? { problem: optionRow.problem } : {}),
-      ...(entry!.kind === LOCAL_MODEL_KIND && optionRow.model ? { model: optionRow.model } : {}) } : {}),
+      ...(entry!.kind === LOCAL_MODEL_KIND && isSmallModel(optionRow.model) ? { smallAi: true } : {}) } : {}),
     label: entry?.setup ? scrubMessage(entry.setup.label).slice(0, 64) : null,
     version: entry && entry.health.ok ? scrubMessage(entry.health.version).slice(0, 40) : null,
     signedIn: entry?.setup?.signedIn ?? 'unknown',
