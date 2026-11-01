@@ -393,6 +393,14 @@ function compare(spec: ContainerSpec, inspect: unknown): PreflightReport {
       if (w.containerPath !== '/data') problems.push(`mount ${clip(w.containerPath)} is a data mount outside /data`);
       if (spec.profile !== 'ml-python') problems.push(`mount ${clip(w.containerPath)} is a data mount outside the machine learning kit`);
     }
+    // Its results folder: read-write, at /results, in the ML kit only, with no network; nothing else at /results.
+    if (w.kind === 'results' || w.containerPath === '/results') {
+      if (w.kind !== 'results') problems.push(`mount ${clip(w.containerPath)} is not the results mount`);
+      if (w.readOnly) problems.push(`mount ${clip(w.containerPath)} is a read-only results mount, expected read-write`);
+      if (w.containerPath !== '/results') problems.push(`mount ${clip(w.containerPath)} is a results mount outside /results`);
+      if (spec.profile !== 'ml-python') problems.push(`mount ${clip(w.containerPath)} is a results mount outside the machine learning kit`);
+      if (spec.network?.mode !== 'none') problems.push(`mount ${clip(w.containerPath)} is a results mount in a container with a network`);
+    }
     wanted.add(w.containerPath);
     const got = byDst.get(w.containerPath);
     if (!got) { problems.push(`mount ${clip(w.containerPath)} is missing`); continue; }

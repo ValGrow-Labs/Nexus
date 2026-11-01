@@ -15,6 +15,8 @@
  *   volumes (`nexus-ws-<attemptId>`, `nexus-deps-<profile>-<lock12>`). Nothing else, except a Machine learning project's data: with
  *   `datasets: true` (main's own isMachineLearningProject, never the renderer or the model) a tool plan in the ML kit with no network and
  *   an agent turn in the ML kit also bind `datasets/<projectId>/files` (derived here from the job's project id) READ-ONLY at `/data`.
+ *   With `results: true` (the same rule) the same containers also bind `results/<projectId>/files` READ-WRITE at `/results`: the folder
+ *   the project's code writes its reports, charts, predictions and models to, outside the reviewed change (phase 3).
  * - network: `none` unless the recipe is `egress-approved` AND the caller passes an approval
  *   of THIS job that is approved and was consumed by THIS attempt; otherwise the plan is
  *   refused (`network_not_approved`). Never `egress-approved` for any other recipe. An approved install never gets a
@@ -64,6 +66,7 @@ import { isRuntimeApiKey } from '../../../shared/nexus/runnerProtocol';
 import { homeLabel } from '../../../shared/nexus/homeLabel';
 import { checkTryArgv } from '../../../shared/nexus/tryRun';
 import { DATA_CONTAINER_PATH, datasetsFilesRel } from '../../../shared/nexus/datasets';
+import { RESULTS_CONTAINER_PATH, resultsFilesRel } from '../../../shared/nexus/results';
 import { containsSecret } from '../activity/redact';
 import {
   EGRESS_ENV_NAMES, EGRESS_PROXY_ARGV, EGRESS_PROXY_LIMITS, EGRESS_PROXY_PROFILE, egressAllowFor, egressClientEnv, egressInternalNetwork,
@@ -223,6 +226,11 @@ export interface PlanContext {
    * folder to a tool plan in the ML kit (ml-python) with no network. Ignored for every other profile, network or executor.
    */
   datasets?: boolean;
+  /**
+   * A Machine learning project's results (main's own `isMachineLearningProject`): true adds the read-write `/results` mount of the project's
+   * results folder to a tool plan in the ML kit (ml-python) with no network. Ignored for every other profile, network or executor.
+   */
+  results?: boolean;
 }
 
 /**
@@ -284,6 +292,15 @@ export function datasetsMount(root: string, projectId: string): MountSpec {
   let rel: string;
   try { rel = datasetsFilesRel(projectId); } catch { return refuse('bad_input', 'the project id cannot name a data folder'); }
   return { kind: 'datasets', hostPath: underDataHome(root, rel), containerPath: DATA_CONTAINER_PATH, readOnly: true };
+}
+/**
+ * The read-write `/results` mount of a Machine learning project's results: `<root>/results/<projectId>/files`, the path derived here from
+ * the project id (never a value the renderer or the model sent). Always read-write, always at `/results`, only in the ML kit.
+ */
+export function resultsMount(root: string, projectId: string): MountSpec {
+  let rel: string;
+  try { rel = resultsFilesRel(projectId); } catch { return refuse('bad_input', 'the project id cannot name a results folder'); }
+  return { kind: 'results', hostPath: underDataHome(root, rel), containerPath: RESULTS_CONTAINER_PATH, readOnly: false };
 }
 
 /** The framework of a test recipe: the caller's, else the one the input version recorded, else the profile's default. */
@@ -472,6 +489,8 @@ export function buildPlan(ctx: PlanContext): AttemptPlan {
   const network = networkFor(recipe, job, attempt, ctx.approval);
   // A Machine learning project's data, read-only at /data: only in the ML kit and only with no network (never an install).
   if (ctx.datasets === true && profile.id === DATA_MOUNT_PROFILE && network.mode === 'none' && !egress) mounts.push(datasetsMount(ctx.dataHomeRoot, job.projectId));
+  // Its results folder, read-write at /results: the same containers only (the ML kit, no network, never an install).
+  if (ctx.results === true && profile.id === DATA_MOUNT_PROFILE && network.mode === 'none' && !egress) mounts.push(resultsMount(ctx.dataHomeRoot, job.projectId));
   const container: ContainerSpec = {
     name: `nexus-${attempt.id.toLowerCase()}`,
     labels: { ...attemptLabels(ctx), 'nexus.kind': 'tool' },
@@ -807,6 +826,8 @@ export interface AgentPlanContext {
   mcpTools: readonly string[];
   /** A Machine learning project's data (main's own isMachineLearningProject): true adds the read-only `/data` mount when the turn's container is the ML kit. */
   datasets?: boolean;
+  /** A Machine learning project's results (the same rule): true adds the read-write `/results` mount when the turn's container is the ML kit. */
+  results?: boolean;
 }
 
 const SHA256_HEX = /^[0-9a-f]{64}$/;
@@ -843,7 +864,8 @@ export function buildAgentPlan(ctx: AgentPlanContext): AgentPlan {
     imageEnv: [...profile.imageEnv],
     env: checkEnv({ HOME: '/home/nexus', CI: 'true', NEXUS_WALL_SECONDS: wallSeconds(ctx.wallClockMs) }),
     mounts: [{ kind: 'worktree', hostPath: worktreePath, containerPath: '/workspace', readOnly: false },
-      ...(ctx.datasets === true && profile.id === DATA_MOUNT_PROFILE ? [datasetsMount(ctx.dataHomeRoot, job.projectId)] : [])],
+      ...(ctx.datasets === true && profile.id === DATA_MOUNT_PROFILE ? [datasetsMount(ctx.dataHomeRoot, job.projectId)] : []),
+      ...(ctx.results === true && profile.id === DATA_MOUNT_PROFILE ? [resultsMount(ctx.dataHomeRoot, job.projectId)] : [])],
     network: { mode: 'none' },
     limits: { cpus: profile.defaults.cpus, memoryMb: AGENT_TURN_MEMORY_MB, pids: PIDS_LIMIT, wallClockMs: ctx.wallClockMs,
       outputMaxBytes: profile.defaults.outputMaxBytes, tmpfsMb: TMPFS_MB },

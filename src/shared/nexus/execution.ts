@@ -58,8 +58,10 @@ export interface MountSpec {
   /**
    * `worktree` (B2b): an agent turn's session worktree, bind-mounted read-write at `/workspace`. `datasets`: a Machine learning project's
    * data folder (`<data home>/datasets/<projectId>/files`), bind-mounted READ-ONLY at `/data`, only in the ML kit (ml-python) with no network.
+   * `results`: the same project's results folder (`<data home>/results/<projectId>/files`), bind-mounted READ-WRITE at `/results`, in the
+   * same containers only (phase 3: outputs live outside the reviewed change).
    */
-  kind: 'input' | 'workspace' | 'out' | 'deps' | 'log' | 'worktree' | 'datasets';
+  kind: 'input' | 'workspace' | 'out' | 'deps' | 'log' | 'worktree' | 'datasets' | 'results';
   /** An absolute host path (a bind mount) or a named volume (`nexus-ws-<attemptId>`, `nexus-deps-…`). */
   hostPath: string;
   containerPath: string;

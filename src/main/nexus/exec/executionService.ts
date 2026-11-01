@@ -1796,7 +1796,9 @@ export class ExecutionService {
           // B2b Task 10: a collect names the session's RECORDED worktree (a reused one carries the earlier session's name).
           worktree: recipe.id === 'changeset.collect' ? this.sessionWorktreeOf(j) : null,
           // A Machine learning project's data, read-only at /data (the plan adds it only in the ML kit with no network).
-          datasets: isMachineLearningProject(this.db, j.project_id) });
+          datasets: isMachineLearningProject(this.db, j.project_id),
+          // Its results folder, read-write at /results (the plan adds it only in the ML kit with no network).
+          results: isMachineLearningProject(this.db, j.project_id) });
       } catch (e) {
         planError = refused(e);
       }

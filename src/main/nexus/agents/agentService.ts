@@ -859,7 +859,9 @@ export class AgentService implements AgentTurnPort {
       caps: { turnTokens: consent.caps.turnTokens, turnUsdCents: consent.caps.turnUsdCents, dayRemainingUsdCents: dayRemaining, toolCalls: consent.caps.toolCalls },
       wallClockMs: consent.caps.wallClockMs, mcpTools,
       // A Machine learning project's data, read-only at /data in the turn's container (the plan adds it only when that is the ML kit).
-      datasets: isMachineLearningProject(this.db, j.project_id)
+      datasets: isMachineLearningProject(this.db, j.project_id),
+      // Its results folder, read-write at /results (the same rule): the helper's code writes reports, charts and models there, never into the change.
+      results: isMachineLearningProject(this.db, j.project_id)
     });
     const adapterVersion = health && health.health.ok ? health.health.version : null;
     return {

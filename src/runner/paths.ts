@@ -9,6 +9,7 @@
  *   logs/images/<buildId>.log                image build logs
  *   work/<jobId>/<n>/{in,out}                staging; plus `plan.json` and `exit.json` beside them
  *   datasets/<projectId>/files               a Machine learning project's data (main writes it); bound read-only at /data
+ *   results/<projectId>/files                its results (the sandbox writes them); bound read-write at /results
  */
 import { constants as fsConstants } from 'node:fs';
 import * as path from 'node:path';
@@ -42,6 +43,11 @@ export class HomePaths {
   datasetsDir(projectId: string): string {
     if (!ID_RE.test(projectId)) throw new Error('bad project id');
     return path.join(this.root, 'datasets', projectId, 'files');
+  }
+  /** The one folder a `/results` mount may bind: `<root>/results/<projectId>/files` (the sandbox writes it; main lists, shows and copies out). */
+  resultsDir(projectId: string): string {
+    if (!ID_RE.test(projectId)) throw new Error('bad project id');
+    return path.join(this.root, 'results', projectId, 'files');
   }
   imageLogPath(buildId: string): string {
     if (!ID_RE.test(buildId)) throw new Error('bad build id');

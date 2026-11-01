@@ -45,6 +45,7 @@ import {
 } from '../shared/nexus/runnerProtocol';
 import { expectedNetworkName } from '../shared/nexus/preflightCheck';
 import { DATA_CONTAINER_PATH } from '../shared/nexus/datasets';
+import { RESULTS_CONTAINER_PATH } from '../shared/nexus/results';
 import { leaseFloorBytes } from '../shared/nexus/resourceGate';
 import { MCP_TOOLS, SANDBOX_EXEC_OUTPUT_MAX_BYTES } from '../shared/nexus/mcpTools';
 import { containsSecret, redactSecretText } from '../main/nexus/activity/redact';
@@ -717,12 +718,15 @@ stderr: ${r.stderr}` : ''}`
       // A Machine learning project's data: only the tool container itself (never a proxy, a service or a forwarder), checked whole.
       const data = this.dataMountProblem(s, plan.kind === 'tool' && s === plan.container, rl['nexus.project']);
       if (data) return data;
+      // Its results folder (read-write at /results): the same containers only, checked whole the same way.
+      const results = this.resultsMountProblem(s, plan.kind === 'tool' && s === plan.container, rl['nexus.project']);
+      if (results) return results;
       for (const m of s.mounts) {
         const bind = /^[A-Za-z]:[\\/]/.test(m.hostPath) || m.hostPath.startsWith('/');
         if (bind) {
           const ok = (m.kind === 'input' && this.paths.same(m.hostPath, path.join(plan.workDir, 'in')) && m.readOnly)
             || (m.kind === 'out' && this.paths.same(m.hostPath, path.join(plan.workDir, 'out')))
-            || m.kind === 'datasets';
+            || m.kind === 'datasets' || m.kind === 'results';
           if (!ok) return 'a bind mount is not this attempt\'s staging folder';
         } else if (!(m.kind === 'workspace' && m.hostPath === `nexus-ws-${attemptId}`)
           && !(m.kind === 'deps' && m.hostPath === plan.staging.depsVolume?.name && DEPS_VOLUME_RE.test(m.hostPath))) {
@@ -752,6 +756,30 @@ stderr: ${r.stderr}` : ''}`
     try { want = this.paths!.datasetsDir(String(projectId)); } catch { return 'the data mount names no project of this attempt'; }
     if (typeof m.hostPath !== 'string' || m.hostPath.includes('\0') || m.hostPath.split(/[\\/]/).includes('..') || !this.paths!.same(m.hostPath, want)) {
       return 'the data mount is not this project\'s data folder';
+    }
+    return null;
+  }
+
+  /**
+   * A Machine learning project's results mount (`kind: 'results'`), re-derived here, never trusted from the plan: at most one; only where it
+   * may be (a tool plan's own container, or an agent turn's); only in the ML kit (ml-python) with no network; read-write; at exactly
+   * /results; and its host folder exactly `<home>/results/<the attempt's nexus.project>/files`. No mount of that kind: null.
+   */
+  private resultsMountProblem(spec: ContainerSpec, allowed: boolean, projectId: unknown): string | null {
+    const res = (Array.isArray(spec.mounts) ? spec.mounts : []).filter((m) => m && (m.kind === 'results' || m.containerPath === RESULTS_CONTAINER_PATH));
+    if (res.length === 0) return null;
+    if (!allowed) return 'a results mount is only for a run or an AI helper turn';
+    if (res.length > 1) return 'a container has more than one results mount';
+    const m = res[0];
+    if (m.kind !== 'results') return 'only the results mount may be at /results';
+    if (spec.profile !== 'ml-python') return 'a results mount is only for the machine learning kit';
+    if (spec.network?.mode !== 'none') return 'a results mount is only for a container with no network';
+    if (m.readOnly !== false) return 'the results mount is read-write';
+    if (m.containerPath !== RESULTS_CONTAINER_PATH) return 'the results mount is at /results only';
+    let want: string;
+    try { want = this.paths!.resultsDir(String(projectId)); } catch { return 'the results mount names no project of this attempt'; }
+    if (typeof m.hostPath !== 'string' || m.hostPath.includes('\0') || m.hostPath.split(/[\\/]/).includes('..') || !this.paths!.same(m.hostPath, want)) {
+      return 'the results mount is not this project\'s results folder';
     }
     return null;
   }
@@ -794,8 +822,11 @@ stderr: ${r.stderr}` : ''}`
     // A Machine learning project's data (read-only at /data, in the ML kit): the one other mount an agent container may have.
     const data = this.dataMountProblem(spec, true, rl['nexus.project']);
     if (data) return data;
+    // Its results folder (read-write at /results, in the ML kit): the one more mount an agent container may have.
+    const results = this.resultsMountProblem(spec, true, rl['nexus.project']);
+    if (results) return results;
     for (const m of spec.mounts) {
-      if (m.kind === 'datasets') continue;
+      if (m.kind === 'datasets' || m.kind === 'results') continue;
       if (m.kind !== 'worktree') return 'an agent container may only mount its own worktree';
       if (m.readOnly) return 'the worktree mount must be read-write';
       if (m.containerPath !== '/workspace') return 'the worktree is mounted at /workspace only';
@@ -971,7 +1002,7 @@ stderr: ${r.stderr}` : ''}`
     this.event(a, 'staging');
     const staged = await stageInputs(this.fs, this.paths!, this.git!, plan, a.workDir, a.abort.signal);
     if (!staged.ok) return this.refuse(a, staged.reason, staged.detail);
-    if (!(await this.ensureDataFolder(spec))) return this.refuse(a, 'bad_plan', 'the project\'s data folder is not a plain folder under the data home');
+    if (!(await this.ensureDataFolder(spec))) return this.refuse(a, 'bad_plan', 'the project\'s data or results folder is not a plain folder under the data home');
     await this.writeRecord(a, 'plan.json', { plan } satisfies PlanRecord);
     this.checkStop(a);
     this.event(a, 'creating');
@@ -1203,9 +1234,12 @@ stderr: ${r.stderr}` : ''}`
    * `<home>/datasets/<project>/files` (dataMountProblem). No data mount: true.
    */
   private async ensureDataFolder(spec: ContainerSpec): Promise<boolean> {
-    const m = spec.mounts.find((x) => x.kind === 'datasets');
-    if (!m) return true;
-    try { return await ensureDirUnder(this.fs, this.paths!.root, m.hostPath); } catch { return false; }
+    // The results folder too (phase 3): its path is the plan's, already checked to be exactly `<home>/results/<project>/files`
+    // (resultsMountProblem); made the same way, one folder at a time, a link at any step refused.
+    for (const m of spec.mounts.filter((x) => x.kind === 'datasets' || x.kind === 'results')) {
+      try { if (!(await ensureDirUnder(this.fs, this.paths!.root, m.hostPath))) return false; } catch { return false; }
+    }
+    return true;
   }
 
   /** Builds this turn's agentAttempt.ts port (post, log, the registry, the proxy starter, the guard-refusal flag) and runs it. */
@@ -1215,7 +1249,7 @@ stderr: ${r.stderr}` : ''}`
     if (!(await noLinkUnder(this.fs, this.paths!.root, plan.runtime.request.configDir)) || !(await noLinkUnder(this.fs, this.paths!.root, plan.worktree.hostPath))) {
       return this.refuse(a, 'bad_plan', 'a link stands in the turn\'s config or worktree folder');
     }
-    if (!(await this.ensureDataFolder(plan.container))) return this.refuse(a, 'bad_plan', 'the project\'s data folder is not a plain folder under the data home');
+    if (!(await this.ensureDataFolder(plan.container))) return this.refuse(a, 'bad_plan', 'the project\'s data or results folder is not a plain folder under the data home');
     // The turn's host egress proxy URL, known once agentAttempt has started the proxy: the cli-agent runtime reads it
     // through `egressProxyUrl` and never starts without one.
     const egress: { url: string | null } = { url: null };
