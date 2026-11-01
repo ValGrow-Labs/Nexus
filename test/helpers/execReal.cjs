@@ -249,6 +249,8 @@ async function runnerHarness(o = {}) {
       return plan;
     },
     start(plan) { port1.postMessage({ op: 'attempt.start', attemptId: plan.attemptId, plan }); return plan; },
+    /** Any other message to the runner core, exactly as main sends it (an image build, a fresh probe). */
+    send(m) { port1.postMessage(m); },
     async exited(plan, ms = 180_000) { await until(() => t.of('attempt.exited', plan.attemptId).length > 0 || t.of('fault', plan.attemptId).length > 0
       || t.of('attempt.refused', plan.attemptId).length > 0, `the exit of ${plan.attemptId}`, ms); return t.of('attempt.exited', plan.attemptId)[0] ?? null; },
     async provisioned(plan, ms = 120_000) { await until(() => t.of('attempt.provisioned', plan.attemptId).length > 0, 'provisioned', ms); return t.of('attempt.provisioned', plan.attemptId)[0]; },

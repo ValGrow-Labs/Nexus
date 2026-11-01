@@ -23,7 +23,7 @@ const { stepStateFrom } = loadTs('src/shared/nexus/stepState.ts');
 
 const GIB = 2 ** 30;
 const COMMIT = 'c0ffee'.padEnd(40, '0');
-const IMAGE = { 'sde-node': 'sha256:' + '1'.repeat(64), 'sde-python': 'sha256:' + '2'.repeat(64), 'nexus-fwd': 'sha256:' + '3'.repeat(64) };
+const IMAGE = { 'sde-node': 'sha256:' + '1'.repeat(64), 'sde-python': 'sha256:' + '2'.repeat(64), 'nexus-fwd': 'sha256:' + '3'.repeat(64), 'ml-python': 'sha256:' + '4'.repeat(64) };
 const PROFILES = ['sde-node', 'sde-python'].map((id, i) => ({
   id, image: { repository: `nexus/${id}`, digest: `sha256:${String(i + 7).repeat(64)}` }, user: { uid: 10001, gid: 10001 },
   defaults: { cpus: 1, memoryMb: 1024, pids: 512, wallClockMs: 60000, outputMaxBytes: 2 ** 20, tmpfsMb: 512 },
@@ -34,6 +34,12 @@ const FWD_PROFILE = {
   id: 'nexus-fwd', image: { repository: 'nexus/nexus-fwd', digest: `sha256:${'9'.repeat(64)}` }, user: { uid: 10001, gid: 10001 },
   defaults: { cpus: 1, memoryMb: 128, pids: 512, wallClockMs: 60000, outputMaxBytes: 2 ** 20, tmpfsMb: 16 },
   entrypoint: ['/opt/nexus/fwd-entry'], imageEnv: ['PATH', 'HOME']
+};
+/** The machine learning kit (with `ml: true`): the Python kit's tools plus the ML packages, with its two matplotlib environment names. */
+const ML_PROFILE = {
+  id: 'ml-python', image: { repository: 'nexus/ml-python', digest: `sha256:${'8'.repeat(64)}` }, user: { uid: 10001, gid: 10001 },
+  defaults: { cpus: 1, memoryMb: 1024, pids: 512, wallClockMs: 60000, outputMaxBytes: 2 ** 20, tmpfsMb: 512 },
+  entrypoint: ['/opt/nexus/entry'], imageEnv: ['PATH', 'HOME', 'LANG', 'MPLBACKEND', 'MPLCONFIGDIR']
 };
 const DEFAULT_INPUTS = { 'sde.build.run': 'repository', 'sde.tests.discover': 'repository', 'sde.deps.install': 'repository', 'sde.tests.run': 'suite' };
 
@@ -66,7 +72,7 @@ function execWorld(o = {}) {
     }
   };
   const nx = createNexusPlatform(db, { now: () => clock.t, log: (l) => logs.push(l), execution: o.execution ?? true,
-    dataHome, profiles: o.fwd ? [...PROFILES, FWD_PROFILE] : PROFILES, acceptFsRoot, approvals, ingest: o.realIngest ? undefined : (o.ingest ?? null),
+    dataHome, profiles: [...PROFILES, ...(o.fwd ? [FWD_PROFILE] : []), ...(o.ml ? [ML_PROFILE] : [])], acceptFsRoot, approvals, ingest: o.realIngest ? undefined : (o.ingest ?? null),
     resolveCommit: o.resolveCommit ?? null, ingestFaults: o.ingestFaults ?? null, executionUnavailableReason: o.unavailableReason, appVersion: o.appVersion ?? null,
     imageContexts: o.imageContexts ?? null, isRepository: o.isRepository ?? null, findGit: o.findGit ?? null });
   const me = nx.principals.localUser(); const sys = nx.principals.system();
@@ -311,4 +317,4 @@ function junit(cases, o = {}) {
     countsMismatch: o.countsMismatch ?? false };
 }
 
-module.exports = { execWorld, passingPreflight, PROFILES, FWD_PROFILE, GIB, junit };
+module.exports = { execWorld, passingPreflight, PROFILES, FWD_PROFILE, ML_PROFILE, GIB, junit };

@@ -125,8 +125,11 @@ test('P5 environment: a NEXUS_DB_HOLD_* variable or a temp data home inside the 
 
 test('P6 a passing preflight runs every nexus-exec-* file under the test:db rules: PASS n/n exit 0, FAIL exit 1 (skip, todo, 0 tests, banner, timeout)', async () => {
   const files = runner.listFiles();
+  // Every real-Docker file, in name order (the list had fallen behind four files added since; nexus-exec-ml-python is the machine learning kit's).
   assert.deepEqual(files.map((f) => path.basename(f)),
-    ['nexus-exec-agent-hostedmodel.test.cjs', 'nexus-exec-agent-iteration.test.cjs', 'nexus-exec-agent-localmodel.test.cjs', 'nexus-exec-agent.test.cjs', 'nexus-exec-lifecycle.test.cjs', 'nexus-exec-recipes.test.cjs', 'nexus-exec-recovery.test.cjs', 'nexus-exec-sandbox.test.cjs']);
+    ['nexus-exec-agent-continue.test.cjs', 'nexus-exec-agent-hostedmodel.test.cjs', 'nexus-exec-agent-iteration.test.cjs', 'nexus-exec-agent-localmodel.test.cjs', 'nexus-exec-agent.test.cjs',
+      'nexus-exec-deps-resolve.test.cjs', 'nexus-exec-fullstack.test.cjs', 'nexus-exec-lifecycle.test.cjs', 'nexus-exec-ml-python.test.cjs', 'nexus-exec-preview-change.test.cjs',
+      'nexus-exec-recipes.test.cjs', 'nexus-exec-recovery.test.cjs', 'nexus-exec-sandbox.test.cjs']);
   const ok = await run(probes(), { files });
   assert.equal(ok.code, 0);
   assert.deepEqual(ok.spawned, files, 'every file ran, in order');
