@@ -227,3 +227,10 @@ test('PV8 full-stack in one container (live preview phase 3): the helper is told
   const server = fs.readFileSync(path.join(ROOT, 'test/fixtures/exec/node-fullstack-app/src/server.js.tpl'), 'utf8');
   assert.match(server, /listen\(PORT, '0\.0\.0\.0'/); assert.match(server, /\/api\/notes/); assert.match(server, /db\.ping\(\)/);
 });
+
+test('the Preview section shows ONE short line and keeps the long explanation behind a closed "How it works" (it was a wall of text)', () => {
+  const fs = require('node:fs'); const path = require('node:path');
+  const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'renderer', 'src', 'nexus', 'project', 'ProjectPreview.tsx'), 'utf8');
+  assert.match(src, /<p className="nx-muted">\{PREVIEW_INTRO\}<\/p>\s*<details className="nx-fb__more">\s*<summary>How it works<\/summary>\s*<p className="nx-muted">\{PREVIEW_LIMITS\}<\/p>\s*<\/details>/);
+  assert.ok(!/<details[^>]*\bopen\b/.test(src.slice(src.indexOf('How it works') - 120, src.indexOf('How it works') + 40)), 'closed by default');
+});

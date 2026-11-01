@@ -162,7 +162,10 @@ export function ProjectPreview({ projectId, versionId = null, newest = null }: {
     <section className="nx-previewsec" aria-label={PREVIEW_TITLE}>
       <h3 className="nx-cs__sub">{PREVIEW_TITLE}</h3>
       <p className="nx-muted">{PREVIEW_INTRO}</p>
-      <p className="nx-muted">{PREVIEW_LIMITS}</p>
+      <details className="nx-fb__more">
+        <summary>How it works</summary>
+        <p className="nx-muted">{PREVIEW_LIMITS}</p>
+      </details>
       {!ready && !working && (
         <p className="nx-try__setup" role="status">{TRY_SETUP_TEXT} {ui && <Button variant="quiet" onClick={() => ui.openSetup()}>Get this computer ready</Button>}</p>
       )}
