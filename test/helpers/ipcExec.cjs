@@ -25,7 +25,9 @@ function ipcOver(w, o = {}) {
     exec: o.exec ?? (() => (w.nx && w.dataHome ? execIpcPort(w.nx, w.dataHome) : null)),
     // B2b Task 14: the agent deps, only when a test passes them (the B2a callers register the 41 channels as before).
     ...(o.agentsUnavailableReason ? { agentsUnavailableReason: o.agentsUnavailableReason } : {}),
-    ...(o.confirmMerge ? { confirmMerge: o.confirmMerge } : {})
+    ...(o.confirmMerge ? { confirmMerge: o.confirmMerge } : {}),
+    // "Your data" (#53): main's file window, faked at its port (a test hands the location main's window would answer).
+    ...(o.pickDatasetFile ? { pickDatasetFile: o.pickDatasetFile } : {})
   });
   const call = (ch, ...a) => { const f = handlers.get(ch); assert.ok(f, `no handler ${ch}`); return f({ sender: {} }, ...a); };
   const ok = async (ch, ...a) => { const r = await call(ch, ...a); assert.equal(r.ok, true, `${ch}: ${JSON.stringify(r)}`); return r.data; };

@@ -59,6 +59,7 @@ import { registerNexusIpc } from './nexusIpc/registerNexusIpc';
 import { createSourcePorts } from './nexusIpc/sources';
 import { startExecution, type ExecutionHandle } from './nexusExec/execWiring';
 import { confirmMergeOn } from './nexusExec/mergeDialog';
+import { pickDatasetOn } from './nexusExec/datasetDialog';
 import { resolveDataHome } from './nexusExec/dataHome';
 import { imagesDirFor, loadImageProfiles } from './nexusExec/profiles';
 import { readAgentUsage, readContextTokens, seedSessionTranscript, resolveSessionCwd } from './transcript';
@@ -3117,7 +3118,9 @@ registerNexusIpc(ipcMain, {
   agentsUnavailableReason: () => agentsUnavailableReason,
   // "Merge accepted work" is confirmed ONLY by main's own dialog, through the execution handle (startExecution's mergeDialog below);
   // with the wiring not running, a merge is cancelled.
-  confirmMerge: (info) => (nexusExecution ? nexusExecution.confirmMerge(info) : Promise.resolve(false))
+  confirmMerge: (info) => (nexusExecution ? nexusExecution.confirmMerge(info) : Promise.resolve(false)),
+  // "Upload a dataset": main's own file window on the focused window (the chosen location stays in main; nothing is shown without a window).
+  pickDatasetFile: () => pickDatasetOn(BrowserWindow.getFocusedWindow() ?? mainWindow, (win, o) => dialog.showOpenDialog(win, o))
 });
 
 // ─── IPC: clipboard ─────────────────────────────────────────────────────────

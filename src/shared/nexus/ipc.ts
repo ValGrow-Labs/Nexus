@@ -519,3 +519,26 @@ export type TryArgs = { op: 'options'; projectId: string; versionId?: string }
   | { op: 'run'; projectId: string; versionId?: string; what: 'tests' | 'program' | 'custom' | 'preview'; command?: string; intentId: string };
 export interface TryOptionView { what: 'tests' | 'program'; label: string; shows: string }
 export type TryResultView = { options: TryOptionView[]; noCommit?: true } | { job: JobView; created: boolean };
+
+// ---------- "Your data" request (channel #53): a Machine learning project's data ----------
+/**
+ * "Your data" (#53, `nexus:datasets`): the files of data a person adds to a Machine learning project for the AI helper to work on. `list`
+ * answers them; `add` makes MAIN open its own file window (the renderer never sends a location and never receives one) and keep a copy of
+ * the chosen file; `remove` deletes Nexus's copy (the person's original is never touched). Ids only from the renderer. The copies are seen,
+ * read-only, at /data inside the safe space of that project only.
+ */
+export type DatasetsArgs = { op: 'list'; projectId: string } | { op: 'add'; projectId: string } | { op: 'remove'; projectId: string; datasetId: string };
+/** One file of data as the person sees it: its shown name, kind, size, rows and columns (delimited text only) and when it was added. */
+export interface DatasetView {
+  id: string; name: string; type: 'csv' | 'tsv' | 'txt' | 'json' | 'jsonl' | 'xlsx' | 'parquet'; bytes: number;
+  rows: number | null; columns: number | null; addedAt: number;
+}
+/**
+ * A project's data. `applies` is false for a project that is not a Machine learning project (main's own rule, the one the safe space
+ * uses): the renderer then shows nothing. `damaged`: Nexus's record of the data could not be read (it reads as empty). `aiOnThisComputer`:
+ * the AI service in use runs on this computer. After an `add`, `added` (or `cancelled` when the window was closed); after a `remove`, `removed`.
+ */
+export interface DatasetsView {
+  applies: boolean; datasets: DatasetView[]; damaged: boolean; aiOnThisComputer: boolean;
+  added?: DatasetView; cancelled?: true; removed?: true;
+}

@@ -9,7 +9,7 @@ import type {
   HandoffsListFilter, LineageQuery, LineageView, LinkSourcesView, NexusFail, NexusResult, ParticipationView, SaveCommitArgs,
   SaveResultView, SaveTextFileArgs, SendHandoffArgs, SendHandoffView, VersionDetail, VersionView,
   AcceptResultView, AgentConsentArgs, AgentConsentView, AgentStartArgs, AgentStartResultView, MergeView, RepoMergeArgs, RepoStatusView, TryArgs, TryResultView,
-  ReviewDecideArgs, ReviewResultView, SessionDetailView, SessionView, SessionsListFilter
+  ReviewDecideArgs, ReviewResultView, SessionDetailView, SessionView, SessionsListFilter, DatasetsArgs, DatasetsView
 } from '@shared/nexus/ipc';
 
 const INTERNAL: NexusFail = { ok: false, code: 'internal', message: 'The request could not be completed.' };
@@ -142,6 +142,8 @@ export const nexusClient = {
   agentConsent: (args: AgentConsentArgs): Promise<NexusResult<AgentConsentView>> => execCall(() => window.cth.nexusAgentConsent(args)),
   /** #52 "Try it": the buttons of a suggested change, or one run of it in the safe space. */
   tryRun: (args: TryArgs): Promise<NexusResult<TryResultView>> => execCall(() => window.cth.nexusTry(args)),
+  /** #53 "Your data": a Machine learning project's files of data; `add` opens main's own file window (no location crosses). */
+  datasets: (args: DatasetsArgs): Promise<NexusResult<DatasetsView>> => execCall(() => window.cth.nexusDatasets(args)),
   /** The nexus:hint push (the newest event seq only). Returns an unsubscribe; a no-op when the preload has none. */
   onHint: (cb: (hint: NexusHint) => void): (() => void) => {
     try {

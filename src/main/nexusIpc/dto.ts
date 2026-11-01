@@ -15,7 +15,7 @@ import type {
   AcceptResultView, ActionAvailabilityView, ActivityDetailsView, ActivityView, AgentSetupView, ApprovalView, ArtifactSummaryView, ArtifactView, BlobGcView,
   ChangeSetAcceptView, DeploymentView, DiskGate, DomainSpecView, EdgeView, EventView, HandoffDetailView, HandoffSummaryView, HealthView, JobDetailView, JobView,
   LineageNodeView, LogPageView, MergeView as MergeViewOut, ParticipationView, PreviewView, RepoStatusView, ReviewResultView, ReviewView as ReviewViewOut,
-  SessionDetailView, SessionView, ValidationResultView, VersionContent, VersionDetail, VersionView
+  SessionDetailView, SessionView, ValidationResultView, VersionContent, VersionDetail, VersionView, DatasetView, DatasetsView
 } from '../../shared/nexus/ipc';
 import type { DomainSpec } from '../../shared/nexus/domainSpec';
 import { DELIVERED_SUB_PHASE, isAtOrBefore, isExecutableEndToEnd } from '../../shared/nexus/domainSpec';
@@ -28,6 +28,8 @@ import type { DeploymentView as ServiceDeploymentView } from '../nexus/deploymen
 import type { GcPage, LogPage, PreviewPage } from '../nexusExec/execWiring';
 import type { AcceptStatus, AcceptView, MergeView as ServiceMergeView } from '../nexus/repo/acceptService';
 import type { ReviewView as ServiceReviewView } from '../nexus/review/reviewService';
+import type { DatasetRecord } from '../../shared/nexus/datasets';
+import type { DatasetList } from '../nexus/datasets/datasetService';
 import { redactSecretText } from '../nexus/activity/redact';
 import { SYSTEM_ID as SYSTEM_PRINCIPAL } from '../nexus/auth/principals';
 import { EXECUTION_SUB_REASONS, scrubMessage } from './envelope';
@@ -416,4 +418,12 @@ export function repoStatusUnavailable(projectId: string, reason: string, checked
 
 export function mergeView(m: ServiceMergeView): MergeViewOut {
   return { projectId: m.projectId, branch: text(m.branch, 200), before: commitOrNull(m.before) ?? '', after: commitOrNull(m.after) ?? '', mergedAt: m.mergedAt };
+}
+
+/** One file of a Machine learning project's data: its shown name, kind, size, rows and column count; never a location or a column name. */
+export function datasetView(r: DatasetRecord): DatasetView {
+  return { id: r.id, name: r.name, type: r.ext, bytes: r.bytes, rows: r.rows, columns: r.columns ? r.columns.length : null, addedAt: r.addedAt };
+}
+export function datasetsView(l: DatasetList): DatasetsView {
+  return { applies: l.applies, datasets: l.datasets.map(datasetView), damaged: l.damaged, aiOnThisComputer: l.aiOnThisComputer };
 }

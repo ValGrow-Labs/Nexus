@@ -106,18 +106,19 @@ const preview = (w, versionId, extra = {}) => w.x.call('nexus:version:preview', 
 
 test('IA1 the ten agent channels are frozen, distinct, registered once each through the one wrapper, and exposed by the preload exactly once', () => {
   assert.equal(NEXUS_AGENT_CHANNELS.length, 10); assert.equal(new Set(NEXUS_AGENT_CHANNELS).size, 10); assert.ok(Object.isFrozen(NEXUS_AGENT_CHANNELS));
-  // "Try it" (#52, nexus:try) joined the family after the agent channels: it needs execution, not the agents part.
-  assert.deepEqual([...NEXUS_EVERY_CHANNEL], [...NEXUS_ALL_CHANNELS, ...NEXUS_AGENT_CHANNELS, 'nexus:try']);
-  assert.equal(NEXUS_EVERY_CHANNEL.length, 52);
+  // "Try it" (#52, nexus:try) joined the family after the agent channels: it needs execution, not the agents part. "Your data" (#53,
+  // nexus:datasets, a Machine learning project's files of data) joined after it, also needing execution only (deliberate pin change: 52 -> 53).
+  assert.deepEqual([...NEXUS_EVERY_CHANNEL], [...NEXUS_ALL_CHANNELS, ...NEXUS_AGENT_CHANNELS, 'nexus:try', 'nexus:datasets']);
+  assert.equal(NEXUS_EVERY_CHANNEL.length, 53);
   for (const c of NEXUS_AGENT_CHANNELS) assert.ok(!NEXUS_ALL_CHANNELS.includes(c), c);
   const got = [];
   const deps = (more) => ({ platform: () => null, unavailableReason: () => 'held', sources: {}, log: () => {}, executionUnavailableReason: () => null, ...more });
   registerNexusIpc({ handle: (c) => got.push(c) }, deps({ agentsUnavailableReason: () => null }));
   assert.deepEqual([...got].sort(), [...NEXUS_EVERY_CHANNEL].sort());
-  assert.equal(new Set(got).size, 52, 'each channel once');
-  // Without the agent deps only the 41 B1 and B2a channels and #52 (Try it, which needs execution only) exist (the B2a callers are unchanged).
+  assert.equal(new Set(got).size, 53, 'each channel once');
+  // Without the agent deps only the 41 B1 and B2a channels, #52 (Try it) and #53 (Your data) exist: both need execution only.
   const base = []; registerNexusIpc({ handle: (c) => base.push(c) }, deps({}));
-  assert.deepEqual([...base].sort(), [...NEXUS_ALL_CHANNELS, 'nexus:try'].sort());
+  assert.deepEqual([...base].sort(), [...NEXUS_ALL_CHANNELS, 'nexus:try', 'nexus:datasets'].sort());
   // The preload: one literal and one invoke per channel, ten methods.
   const preload = read('src/preload/index.ts');
   for (const c of NEXUS_AGENT_CHANNELS) assert.equal((preload.match(new RegExp(`ipcRenderer\\.invoke\\('${c}'`, 'g')) || []).length, 1, c);
@@ -125,7 +126,8 @@ test('IA1 the ten agent channels are frozen, distinct, registered once each thro
   for (const m of ['nexusAgentStart', 'nexusSessionsList', 'nexusSessionGet', 'nexusSessionEnd', 'nexusSessionCancel', 'nexusReviewDecide', 'nexusChangeSetAccept',
     'nexusRepoStatus', 'nexusRepoMergeAccepted', 'nexusAgentConsent']) assert.ok(methods.includes(m), m);
   assert.ok(methods.includes('nexusTry') && (preload.match(/ipcRenderer\.invoke\('nexus:try'/g) || []).length === 1, 'the Try it method, once');
-  assert.equal(methods.length, 52, 'B1 21 + B2a 20 + 10 agent methods + Try it');
+  assert.ok(methods.includes('nexusDatasets') && (preload.match(/ipcRenderer\.invoke\('nexus:datasets'/g) || []).length === 1, 'the Your data method, once');
+  assert.equal(methods.length, 53, 'B1 21 + B2a 20 + 10 agent methods + Try it + Your data');
 });
 
 

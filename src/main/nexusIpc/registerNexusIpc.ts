@@ -44,6 +44,7 @@ import { HANDOFF_STATUSES, MAX_SUBJECTS } from '../nexus/handoff/handoffRules';
 import { MAX_LINK_SOURCES } from '../nexus/lineage/lineageService';
 import { getUserAction } from '../../shared/nexus/actions';
 import { TRY_WHATS } from '../../shared/nexus/tryRun';
+import { DATASET_REASON_MESSAGES } from '../../shared/nexus/datasets';
 import { DOMAINS } from '../../shared/nexus/domains/index';
 import { LOCAL_MODEL_KIND, modelProblem } from '../../shared/nexus/localModel';
 import { HOSTED_MODEL_KIND, hostedChoiceProblem } from '../../shared/nexus/hostedModel';
@@ -52,7 +53,7 @@ import {
   APPROVAL_STATUSES_ACCEPTED, DEPLOYMENT_STATUSES_ACCEPTED, MAX_FOCUS_VERSIONS, PREVIEW_PARTS, RequestError, V
 } from './validate';
 import {
-  acceptResultView, actionView, activityView, approvalView, artifactView, deploymentView, domainView, edgeView, eventView, gcView, handoffDetailView,
+  acceptResultView, actionView, activityView, datasetView, datasetsView, approvalView, artifactView, deploymentView, domainView, edgeView, eventView, gcView, handoffDetailView,
   handoffSummaryView, healthView, jobDetailView, jobView, lineageNodeView, logPageView, mergeView, participationView, previewView, repoStatusUnavailable,
   repoStatusView, reviewResultView, sessionDetailView, sessionViewOf, summaryView, validationView, versionDetail, versionView, versionViewOfKind
 } from './dto';
@@ -132,8 +133,14 @@ export const NEXUS_AGENT_CHANNELS: readonly string[] = Object.freeze([
 ]);
 /** "Try it" (#52): run a suggested change in the safe space on a button press. Needs execution (schema v9), not the agents part. */
 export const NEXUS_TRY_CHANNELS: readonly string[] = Object.freeze(['nexus:try']);
-/** Every nexus:* channel main can register (52). */
-export const NEXUS_EVERY_CHANNEL: readonly string[] = Object.freeze([...NEXUS_ALL_CHANNELS, ...NEXUS_AGENT_CHANNELS, ...NEXUS_TRY_CHANNELS]);
+/**
+ * "Your data" (#53): a Machine learning project's files of data (list, add through main's own file window, remove Nexus's copy). Needs
+ * execution (the data home and the safe space that reads the files), not the agents part. Called by the person only: the AI helper and the
+ * runner have no way to it (no tool, no runner message reaches it).
+ */
+export const NEXUS_DATASET_CHANNELS: readonly string[] = Object.freeze(['nexus:datasets']);
+/** Every nexus:* channel main can register (53). */
+export const NEXUS_EVERY_CHANNEL: readonly string[] = Object.freeze([...NEXUS_ALL_CHANNELS, ...NEXUS_AGENT_CHANNELS, ...NEXUS_TRY_CHANNELS, ...NEXUS_DATASET_CHANNELS]);
 const AGENT_CHANNELS: ReadonlySet<string> = new Set(NEXUS_AGENT_CHANNELS);
 /** How long #42 and a #51 grant wait for a fresh runtime probe when the cached health is stale. */
 export const RUNTIME_REFRESH_WAIT_MS = 10_000;
@@ -141,7 +148,11 @@ export const RUNTIME_REFRESH_WAIT_MS = 10_000;
 export const NEXUS_HINT_CHANNEL = 'nexus:hint';
 
 /** #24-#41: they need schema v9 execution (#22 and #23 answer whenever the platform is up). */
-const EXECUTION_CHANNELS: ReadonlySet<string> = new Set([...NEXUS_EXEC_CHANNELS.filter((c) => c !== 'nexus:domains:list' && c !== 'nexus:platform:health'), ...NEXUS_TRY_CHANNELS]);
+const EXECUTION_CHANNELS: ReadonlySet<string> = new Set([...NEXUS_EXEC_CHANNELS.filter((c) => c !== 'nexus:domains:list' && c !== 'nexus:platform:health'), ...NEXUS_TRY_CHANNELS,
+  ...NEXUS_DATASET_CHANNELS]);
+/** "Your data" (#53): at most this many adds and removes in DATASET_WINDOW_MS (a list is free); one add at a time is the service's own rule. */
+export const DATASET_WRITES_PER_WINDOW = 20;
+export const DATASET_WINDOW_MS = 60_000;
 
 /** List limits as the renderer may ask for them; a larger integer is clamped to the channel's maximum. */
 export const ARTIFACTS_LIST_MAX = 500;
@@ -192,6 +203,11 @@ export interface NexusIpcDeps {
    * nowhere else; omitted, every merge is cancelled (a merge is never confirmed on the user's behalf).
    */
   confirmMerge?: (info: MergeConfirmInfo) => Promise<boolean>;
+  /**
+   * "Your data" (#53): MAIN's own file window (index.ts: Electron's open dialog on the focused window, nexusExec/datasetDialog.ts). It
+   * answers the chosen file's location, or null; the location never leaves main. Omitted, adding data is refused (no window).
+   */
+  pickDatasetFile?: () => Promise<string | null>;
 }
 
 /** A renderer the nexus:hint push goes to (main passes its live web contents). */
@@ -694,6 +710,41 @@ export function registerNexusIpc(registrar: IpcRegistrar, deps: NexusIpcDeps): v
     if (o.apply !== true) throw new RequestError('apply', 'must be true or false');
     return { apply: true as const, expectedCandidatesHash: V.sha256(o.expectedCandidatesHash, 'expectedCandidatesHash') };
   }, async (nx, me, q) => ok(gcView(await portOf().blobsGc(me, q))));
+
+  // #53 "Your data": a Machine learning project's files of data. Ids and a choice only from the renderer: `add` opens main's own file
+  // window (the location stays in main), `remove` deletes Nexus's copy (the original is never touched). Every answer is the fresh list.
+  const datasetWrites: number[] = [];
+  reg('nexus:datasets', (args) => {
+    V.arity(args, 1);
+    const o = V.object(args[0], ['op', 'projectId', 'datasetId'] as const, ['datasetId'] as const);
+    const op = V.enumOf(o.op, 'op', ['list', 'add', 'remove'] as const);
+    const projectId = V.projectId(o.projectId);
+    if (op !== 'remove') {
+      if (o.datasetId !== undefined) throw new RequestError('datasetId', 'is sent only with remove');
+      return { op, projectId, datasetId: undefined };
+    }
+    return { op, projectId, datasetId: V.platformId(o.datasetId, 'datasetId') };
+  }, async (nx, me, q) => {
+    const svc = nx.datasets;
+    if (!svc) throw execOffError('not_started');
+    if (q.op !== 'list') {
+      const now = Date.now();
+      while (datasetWrites.length > 0 && now - datasetWrites[0] >= DATASET_WINDOW_MS) datasetWrites.shift();
+      if (datasetWrites.length >= DATASET_WRITES_PER_WINDOW) throw new PlatformError('invalid', DATASET_REASON_MESSAGES.dataset_rate, { reason: 'dataset_rate' });
+      datasetWrites.push(now);
+    }
+    if (q.op === 'add') {
+      const pick = deps.pickDatasetFile ?? (async () => { throw new Error('no file window'); });
+      const r = await svc.add(me, q.projectId, pick);
+      const list = datasetsView(await svc.list(me, q.projectId));
+      return ok('cancelled' in r ? { ...list, cancelled: true as const } : { ...list, added: datasetView(r.added) });
+    }
+    if (q.op === 'remove') {
+      await svc.remove(me, q.projectId, q.datasetId!);
+      return ok({ ...datasetsView(await svc.list(me, q.projectId)), removed: true as const });
+    }
+    return ok(datasetsView(await svc.list(me, q.projectId)));
+  });
 
   // #52 "Try it": the buttons a suggested change gets (`options`), and one run of the change in the safe space (`run`), started because the
   // person pressed a button. Ids and a choice from the renderer; for their own command, typed text only (main tokenizes it into an argument
