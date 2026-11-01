@@ -17,6 +17,7 @@ import { Button } from '../ui/Button';
 import { ApprovalList } from '../project/ApprovalsSection';
 import { SessionLog } from './SessionLog';
 import { ISOLATION_NOTE, agentFailText, agentPanelModel, chatItems, continuingLine, liveStepLine, replyOf, usageShort } from './agentModel';
+import { smallModelNote } from '../data/runtimeGuideModel';
 
 /** How often the elapsed time is refreshed while a request runs (a slow tick: it is not a clock). */
 const PROGRESS_TICK_MS = 5_000;
@@ -41,6 +42,8 @@ export function AgentPanel({ projectId, workspaceId, reviewReady = 0, onReview, 
   const newestId = useMemo(() => [...(sessions.data ?? [])].sort((x, y) => y.updatedAt - x.updatedAt)[0]?.id ?? null, [sessions.data]);
   const detail = useSessionDetail(newestId, true);
   const reply = replyOf(detail.data);
+  // The model on this computer is small (its name says so): said once, in plain words, before a build fails for that reason.
+  const smallNote = health?.agent?.consent.live ? smallModelNote(health.agent.model) : null;
   const panel = agentPanelModel({ health, availability, sessions: sessions.data, sessionsFail: sessions.fail, jobs, now, reply });
   const approvals = useApprovals(projectId);
   const repoWaiting = useMemo(() => (approvals.data ?? []).filter((a) => a.status === 'pending' && a.reason === 'repo.write_refs'), [approvals.data]);
@@ -154,6 +157,7 @@ export function AgentPanel({ projectId, workspaceId, reviewReady = 0, onReview, 
         </div>
       )}
       <div className="nx-ag__chat" ref={bodyRef} tabIndex={0} aria-label="Conversation with the AI helper">
+        {smallNote && <p className="nx-ag__hint" data-small-model="true">{smallNote}</p>}
         {continuingLine(detail.data) && <p className="nx-ag__hint" data-continuing="true">{continuingLine(detail.data)}</p>}
         {items.length === 0 && !showTail && <p className="nx-ag__hint">{DOCK_GREETING}</p>}
         {items.map((m) => m.kind === 'steps'

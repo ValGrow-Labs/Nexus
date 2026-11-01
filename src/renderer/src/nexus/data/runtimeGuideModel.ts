@@ -17,6 +17,15 @@ import { AGENT_REASON_TEXT } from './errorCopy';
 import { KEYS_PATH, LOCAL_PROBLEM_TEXT, type RuntimeChoice } from './executionModel';
 import { termName } from './glossary';
 
+/** A model with fewer parameters than this (billions) often cannot follow a build through: it writes a file or two and stops. */
+const SMALL_MODEL_BILLIONS = 14;
+export const SMALL_MODEL_NOTE = 'This AI model is small, so it often cannot build a whole app. For building apps, pick a bigger model or another AI service.';
+/** The one plain line shown when the model on this computer is small (its size is read from its name, e.g. "…:7b"); null when it is big enough or the name does not say. */
+export function smallModelNote(model: string | null | undefined): string | null {
+  const m = typeof model === 'string' ? /(?<![\d.])(\d+(?:\.\d+)?)b(?![a-z0-9])/i.exec(model) : null;
+  return m && Number(m[1]) < SMALL_MODEL_BILLIONS ? SMALL_MODEL_NOTE : null;
+}
+
 export const GUIDE_TITLE = 'Choose your AI helper';
 export const GUIDE_LEAD = 'Nexus needs an AI service to do the work. Pick one way below. The first two are free, and you do not need a paid plan.';
 export const GUIDE_READING = 'Nexus is looking at what is available on this computer.';
@@ -164,7 +173,7 @@ function localWay(opt: AgentRuntimeOptionView | undefined, choice: RuntimeChoice
     return { ...base, kind: opt.kind, state: 'no_model', word: 'Needs a model', status: NO_MODEL_TEXT, steps: LOCAL_MODEL_STEPS, action: null };
   }
   if (choice !== null && choice.action !== null && choice.action.disabled !== true) {
-    return { ...base, kind: opt.kind, state: 'ready', word: 'Ready', status: 'The program that runs AI on this computer is working, and the chosen model can use tools.', steps: [], controls: true,
+    return { ...base, kind: opt.kind, state: 'ready', word: 'Ready', status: ['The program that runs AI on this computer is working, and the chosen model can use tools.', smallModelNote(choice?.model ?? opt.model)].filter(Boolean).join(' '), steps: [], controls: true,
       action: { op: 'use', label: choice.action.label, disabled: false } };
   }
   if (opt.problem === 'model_not_chosen' || (opt.problem === null && choice !== null && choice.model === null)) {

@@ -94,6 +94,19 @@ test('RG2 free online AI: no key -> "Add my key"; a key saved -> the picker\'s u
   assert.deepEqual([down.state, down.action], ['unchecked', null]);
 });
 
+test('RG3b a small model on this computer is said so in plain words (read from its name); a big one, or one whose name says nothing, is not', () => {
+  for (const m of ['coder:7b', 'tiny:3b', 'x:1.5b', 'phi:3.8b-mini', 'mistral:7b-instruct']) assert.equal(G.smallModelNote(m), G.SMALL_MODEL_NOTE, m);
+  for (const m of ['coder:32b', 'big:70b-instruct-q4', 'gpt-oss:20b', 'coder', 'coder:latest', '', null, undefined]) assert.equal(G.smallModelNote(m), null, String(m));
+  assert.doesNotMatch(G.SMALL_MODEL_NOTE, VENDOR);
+  assert.match(G.SMALL_MODEL_NOTE, /small/);
+  const ready = (name) => way(guideOf(view([opt(), local({ models: [{ name, tools: true }] }), hosted()]), { models: { 'local-model': name } }), 'local');
+  assert.match(ready('coder:7b').status, /can use tools\. This AI model is small/);
+  assert.equal(ready('coder:32b').status, 'The program that runs AI on this computer is working, and the chosen model can use tools.');
+  const pins = read('src/renderer/src/nexus/agent/AgentPanel.tsx');
+  assert.match(pins, /smallModelNote\(health\.agent\.model\)/, 'the dock says it too, when a local model is in use');
+  assert.match(read('src/main/nexusIpc/agentSetup.ts'), /LOCAL_MODEL_KIND && optionRow\.model \? \{ model: optionRow\.model \}/, 'only the local runtime reports a model name');
+});
+
 test('RG3 on this computer: server not running / model missing / ready, each a plain sentence with instructions and no action until ready', () => {
   const g = (o) => way(guideOf(view([opt(), local(o), hosted()])), 'local');
   const down = g({ state: 'not_installed', models: null, problem: null });

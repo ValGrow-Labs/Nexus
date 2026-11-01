@@ -387,6 +387,8 @@ export interface AgentSetupView {
   kind?: string | null;
   /** Only a runtime that serves a choice of models: why the chosen model cannot be used now (null: it can, or none applies). */
   problem?: AgentRuntimeProblem | null;
+  /** Only the runtime that serves models on this computer: the model in force (its name says how big it is), null when none. */
+  model?: string | null;
   /** The live network permission: its caps and how many destinations it grants (the destinations are not in a view). */
   consent: { live: boolean; caps: { turnUsdCents: number; dayUsdCents: number; turnsPerHour: number; concurrentTurns: number;
     turnTokens: number; toolCalls: number; wallClockMs: number; childJobs: number } | null; hostsCount: number; grantedAt: number | null };

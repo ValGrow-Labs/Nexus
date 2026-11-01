@@ -105,7 +105,8 @@ export function agentSetupView(nx: NexusPlatform, offReason?: string | null): Ag
   return {
     state,
     // Only a runtime that serves a choice of models says which runtime its row is about, and why its chosen model cannot be used (every other row is as before).
-    ...(optionRow ? { kind: entry!.kind, ...(optionRow.problem !== null ? { problem: optionRow.problem } : {}) } : {}),
+    ...(optionRow ? { kind: entry!.kind, ...(optionRow.problem !== null ? { problem: optionRow.problem } : {}),
+      ...(entry!.kind === LOCAL_MODEL_KIND && optionRow.model ? { model: optionRow.model } : {}) } : {}),
     label: entry?.setup ? scrubMessage(entry.setup.label).slice(0, 64) : null,
     version: entry && entry.health.ok ? scrubMessage(entry.health.version).slice(0, 40) : null,
     signedIn: entry?.setup?.signedIn ?? 'unknown',
