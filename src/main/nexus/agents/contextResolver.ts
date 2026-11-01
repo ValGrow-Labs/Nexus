@@ -6,7 +6,8 @@
  * - Contents, one section per field: the domain and its vocabulary, the turn's focus versions (job_inputs with role
  *   'focus'), up to MAX_PRIOR_MESSAGES prior user messages of the session (from the activity log), outstanding
  *   `request_changes` review comments on the project's change sets, and a short note of the project's newest
- *   diagnostic report, when one exists.
+ *   diagnostic report, when one exists. A Machine learning project with data gets a bounded "Datasets" block (main's record of the
+ *   files under /data, labelled as data, not instructions; datasets/datasetContext.ts) right after main's own notes.
  * - Every field is secret-checked before it is written (`containsSecret`). A single-value field (Domain, Vocabulary,
  *   Focus versions, Diagnostic facts) that hits is dropped whole; a list field (prior user messages, requested
  *   changes) is checked ITEM BY ITEM, so one secret-shaped message never costs the rest of the history. Either way
@@ -25,6 +26,9 @@ import { appendActivityRow } from '../activity/writer';
 import { immediateTx } from '../db/tx';
 import { PlatformError } from '../errors';
 import type { Principal } from '../../../shared/nexus/platform';
+import type { DatasetRecord } from '../../../shared/nexus/datasets';
+import { datasetsBlock } from '../datasets/datasetContext';
+import { isMachineLearningProject } from '../exec/sandboxProfile';
 
 /** The data home surface ContextResolver and Skills need: confinement and the per-job relative folder. */
 export interface AgentDataHome {
@@ -40,7 +44,11 @@ export interface ContextJob {
   /** "Earlier in this conversation": main's own plain record of the earlier work this turn continues (already bounded); secret-checked like every field. */
   earlier?: string | null;
 }
-export interface ContextResolverDeps { dataHome: AgentDataHome | null; now: () => number; system: Principal }
+export interface ContextResolverDeps {
+  dataHome: AgentDataHome | null; now: () => number; system: Principal;
+  /** A Machine learning project's data records (DatasetService.records): the "Datasets" block. Absent or null: no block. */
+  datasets?: { records(projectId: string): Promise<DatasetRecord[]> } | null;
+}
 export interface ContextResult { path: string; sha256: string; bytes: number }
 
 /** The most prior user messages (and the most request_changes comments) a context file carries. */
@@ -69,6 +77,13 @@ export class ContextResolver {
 
     if (Array.isArray(job.notes) && job.notes.length > 0) field('Notes', job.notes.join('\n'));
     if (typeof job.earlier === 'string') field('Earlier in this conversation', job.earlier);
+    // A Machine learning project's data (the sandbox's own rule): main's record of the files under /data, never their contents. Placed
+    // early so a small model's cut-down context keeps it. Each column name is checked on its own (datasetContext.ts); the block is bounded.
+    if (this.deps.datasets && isMachineLearningProject(this.db, job.projectId)) {
+      let block: ReturnType<typeof datasetsBlock> = null;
+      try { block = datasetsBlock(await this.deps.datasets.records(job.projectId)); } catch { block = null; }
+      if (block) { sections.push(`## Datasets\n\n${block.text.trim()}\n`); redacted += block.hidden; }
+    }
     const domain = getDomain(job.workspaceId);
     field('Domain', domain ? `${domain.label} (${domain.id})` : job.workspaceId);
     if (domain) {
