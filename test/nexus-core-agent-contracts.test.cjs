@@ -479,7 +479,7 @@ test('SC5 the registry passes at B2b: SDE steps 5, 7 and 12 are REAL; the other 
   for (const id of ['ai-implementation', 'iteration']) {
     assert.ok(step(id).via.some((v) => v.skill === 'nexus-sde-change') && step(id).via.some((v) => v.userAction === 'sde.agent.turn'), id);
   }
-  assert.deepEqual(step('review').via, [{ userAction: 'sde.changeset.review' }, { userAction: 'sde.try.run' }, { userAction: 'sde.changeset.accept' }, { userAction: 'sde.repo.merge' }]);
+  assert.deepEqual(step('review').via, [{ userAction: 'sde.changeset.review' }, { userAction: 'sde.try.run' }, { userAction: 'sde.preview.live' }, { userAction: 'sde.changeset.accept' }, { userAction: 'sde.repo.merge' }]);
   assert.deepEqual(sde.skills, SKILLS.map((s) => s.id));
   assert.equal(SKILLS.length, 4);
   for (const r of ['repo.worktree', 'changeset.collect', 'changeset.merge_check', 'changeset.accept', 'changeset.accept_rollback', 'repo.ff'])

@@ -8,7 +8,7 @@ import { ApprovalList } from './ApprovalsSection';
 import { useExecutionUi } from './execContext';
 import { PreviewPanel } from './PreviewPanel';
 import {
-  PREVIEW_ASK_HELPER, PREVIEW_ASK_HELPER_DEPS, PREVIEW_DEPS_WAITING, PREVIEW_INTRO, PREVIEW_LIMITS, PREVIEW_TITLE, isLive, runPreviewChain, stepWords, type ChainClient, type PreviewStep
+  PREVIEW_ASK_HELPER, PREVIEW_ASK_HELPER_DEPS, PREVIEW_DEPS_WAITING, PREVIEW_INTRO, PREVIEW_LIMITS, PREVIEW_TITLE, PREVIEW_UPDATED, isLive, runChangePreview, runPreviewChain, stepWords, type ChainClient, type PreviewStep
 } from './previewModel';
 import { TRY_SETUP_TEXT } from './tryModel';
 
@@ -24,7 +24,7 @@ const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
  * running app in an isolated panel inside Nexus. One preview per project (a new press stops the earlier one first); Stop, Reload and Open in browser.
  * Nothing runs until the button is pressed.
  */
-export function ProjectPreview({ projectId }: { projectId: string }) {
+export function ProjectPreview({ projectId, versionId = null, newest = null }: { projectId: string; /** A suggested change to run; none: the project as it stands. */ versionId?: string | null; /** The newest suggested change waiting (a follow-up replaces the one being previewed). */ newest?: { versionId: string } | null }) {
   const ui = useExecutionUi();
   const { availability } = useHealth();
   const deployments = useDeployments(projectId);
@@ -34,6 +34,7 @@ export function ProjectPreview({ projectId }: { projectId: string }) {
   // The download question of the add-ons step, shown here while the steps run (the same question the Approvals list shows).
   const depsQuestion = useMemo(() => (approvals.data ?? []).filter((a) => a.status === 'pending' && a.reason === 'egress.deps'), [approvals.data]);
   const [stopping, setStopping] = useState(false);
+  const [updated, setUpdated] = useState(false);
   const cancelled = useRef(false);
   const currentJob = useRef<string | null>(null);
   const nonce = useRef(0);
@@ -108,14 +109,41 @@ export function ProjectPreview({ projectId }: { projectId: string }) {
     }
   });
 
-  const start = async () => {
+  const start = async (changeId: string | null = versionId) => {
     if (working || !ready) return;
-    cancelled.current = false; setFail(null); setStep('snapshot');
+    cancelled.current = false; setFail(null); setStep(changeId ? 'start' : 'snapshot');
     try {
-      const res = await runPreviewChain(client(), (s) => setStep(s));
-      if (!res.ok && !cancelled.current) setFail({ text: res.text, askHelper: res.askHelper, ...(res.askKind ? { askKind: res.askKind } : {}) });
+      const base = client();
+      const res = changeId
+        ? await runChangePreview({
+          stopLive: base.stopLive,
+          startChange: async () => {
+            nonce.current += 1;
+            const r = await withIntent(`preview:${projectId}:${changeId}:${nonce.current}:${Date.now()}`, (intentId) => nexusClient.tryRun({ op: 'run', projectId, versionId: changeId, what: 'preview', intentId }));
+            if (!r.ok) return { ok: false as const, text: execFailText(r) };
+            if (!('job' in r.data)) return { ok: false as const, text: 'Nexus could not start the preview.' };
+            currentJob.current = r.data.job.id;
+            return { ok: true as const, jobId: r.data.job.id };
+          },
+          waitDeployment: base.waitDeployment
+        }, (s) => setStep(s))
+        : await runPreviewChain(base, (s) => setStep(s));
+      if (!res.ok && !cancelled.current) setFail({ text: res.text, askHelper: res.askHelper, ...('askKind' in res && res.askKind ? { askKind: res.askKind } : {}) });
     } finally { setStep(null); currentJob.current = null; useExecStore.getState().bump(['deployments', 'jobs']); }
   };
+  // A follow-up message changed the app: the change being previewed has a newer version, so the preview starts again with it (the person already started this preview).
+  const liveSubject = live ? live.subjectVersionId : null;
+  useEffect(() => {
+    if (!live || !newest || working || !ready || liveSubject === newest.versionId) return undefined;
+    let alive = true;
+    void Promise.all([nexusClient.versionGet(liveSubject!), nexusClient.versionGet(newest.versionId)]).then(([a, b]) => {
+      if (!alive || !a.ok || !b.ok || a.data.artifactId !== b.data.artifactId || a.data.id === b.data.id) return;
+      setUpdated(true);
+      void start(newest.versionId);
+    });
+    return () => { alive = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [liveSubject, newest?.versionId, working, ready]);
   const cancel = async () => {
     cancelled.current = true;
     if (currentJob.current) await nexusClient.jobCancel(currentJob.current);
@@ -139,7 +167,7 @@ export function ProjectPreview({ projectId }: { projectId: string }) {
         <p className="nx-try__setup" role="status">{TRY_SETUP_TEXT} {ui && <Button variant="quiet" onClick={() => ui.openSetup()}>Get this computer ready</Button>}</p>
       )}
       <div className="nx-previewsec__acts">
-        <Button variant="primary" disabled={working || !ready} onClick={() => { void start(); }}>{live ? 'Preview again' : 'Preview'}</Button>
+        <Button variant="primary" disabled={working || !ready} onClick={() => { setUpdated(false); void start(); }}>{live ? 'Preview again' : 'Preview'}</Button>
         {working && <Button variant="quiet" onClick={() => { void cancel(); }}>Cancel</Button>}
         {step && <span className="nx-previewsec__step" role="status">{stepWords(step)}</span>}
       </div>
@@ -149,6 +177,7 @@ export function ProjectPreview({ projectId }: { projectId: string }) {
           <ApprovalList approvals={depsQuestion} label="The download question" />
         </div>
       )}
+      {updated && live && !working && <p className="nx-muted" role="status">{PREVIEW_UPDATED}</p>}
       {fail && (
         <p className="nx-passport__note" role="alert">{fail.text}{' '}
           {fail.askHelper && <Button variant="quiet" onClick={askHelper}>{fail.askKind === 'deps' ? 'Ask the AI helper to fix the add-ons' : 'Ask the AI helper to make it runnable'}</Button>}</p>

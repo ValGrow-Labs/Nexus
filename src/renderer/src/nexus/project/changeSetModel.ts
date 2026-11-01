@@ -344,6 +344,18 @@ export function proofLines(validations: readonly ValidationResultView[] | null |
   return out;
 }
 
+/**
+ * The preview's answer on a suggested change, as one plain line (advisory, never required): "The app started and answered" when a preview of the change
+ * got a 200 on its health page, or that it did not; null when the change has not been previewed.
+ */
+export function previewProof(validations: readonly ValidationResultView[] | null | undefined): { ok: boolean; text: string } | null {
+  const r = (validations ?? []).find((x) => x.validatorId === 'app.preview_health');
+  const run = r ? (r.latestRun ?? (r.status ? { status: r.status } : null)) : null;
+  if (!run) return null;
+  return run.status === 'passed' ? { ok: true, text: 'The app started and answered when you previewed it' }
+    : { ok: false, text: 'The app did not start or answer when you previewed it' };
+}
+
 /** The ONE instruction under the step rail: what to do now. */
 export function railLine(rail: readonly RailStep[] | null): string | null {
   if (!rail) return null;

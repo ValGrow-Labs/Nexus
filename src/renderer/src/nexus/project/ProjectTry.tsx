@@ -20,13 +20,13 @@ export function ProjectTry({ projectId, change }: { projectId: string; change: {
   return (
     <section className="nx-surface nx-try-page" aria-label={TRY_PAGE_TITLE}>
       <h2 className="nx-surface__title">{TRY_PAGE_TITLE}</h2>
-      <ProjectPreview projectId={projectId} />
       {change && (
         <div className="nx-try__targets" role="group" aria-label="What to run">
           <button type="button" className="nx-btn nx-btn--quiet" aria-pressed={target === 'project'} onClick={() => choose('project')}>{TRY_PROJECT_NOW}</button>
           <button type="button" className="nx-btn nx-btn--quiet" aria-pressed={target === 'change'} onClick={() => choose('change')}>{TRY_CHANGE_CHOICE}: {change.name}</button>
         </div>
       )}
+      <ProjectPreview projectId={projectId} versionId={versionId} newest={change ? { versionId: change.versionId } : null} />
       {target === 'project' && <p className="nx-muted">{TRY_PROJECT_NOTE}</p>}
       <TryIt key={versionId ?? 'project'} projectId={projectId} versionId={versionId} heading={false} />
     </section>

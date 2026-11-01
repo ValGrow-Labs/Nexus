@@ -145,7 +145,7 @@ test('TR6 the wiring: one request, no shell, no auto-run, in the right place on 
   assert.match(handler, /V\.object\(args\[0\], \['op', 'projectId', 'versionId', 'what', 'command', 'intentId'\]/);
   assert.doesNotMatch(handler, /argv|image|network|cwd|path/i);
   const svc = read('src/main/nexus/exec/executionService.ts');
-  assert.match(svc, /if \(action\.id === TRY_ACTION_ID\) return invalid\('unknown_action', 'a try run is started through its own request'\)/, 'the generic job start refuses it');
+  assert.match(svc, /if \(action\.id === TRY_ACTION_ID \|\| action\.id === LIVE_PREVIEW_ID\) return invalid\('unknown_action', 'a try run and a preview are started through their own request'\)/, 'the generic job start refuses it (and a preview)');
   assert.match(svc, /startTry\(p: Principal/); assert.match(svc, /async tryStart\(p: Principal/); assert.match(svc, /async tryOptions\(p: Principal/);
   assert.match(svc, /reason: 'try_busy'/, 'one at a time per project');
   assert.match(svc, /requireActiveParticipation\(this\.access, this\.db, p, r\.projectId, 'sde', 'job\.create'\)/);

@@ -5841,6 +5841,8 @@ app.whenReady().then(() => {
         appVersion: app.getVersion(),
         // B2b Task 14: the agent services (v10 on, execution on), their skill files, and a deferred scheduler tick for queued work.
         agents: persist.agentsAvailable,
+        // Schema v11 (opt-in, NEXUS_ENABLE_V11=1): a suggested change may be previewed before it is added.
+        changePreview: persist.changePreviewAvailable,
         skillsResourcesDir: app.isPackaged ? process.resourcesPath : join(app.getAppPath(), 'resources'),
         onQueued: () => { nexusExecution?.tickSoon(); },
         // The user's local-server address and default model (legacy settings), read only for a turn of the local-model runtime.

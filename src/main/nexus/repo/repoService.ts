@@ -65,7 +65,11 @@ export function acceptManifestReport(normalized: unknown):
 /** The manifest of an application version (inline storage), when it passes the schema; else null. */
 export function readAppManifest(storageRefJson: string | null): AppManifest | null {
   const st = parse(storageRefJson);
-  const m = isObj(st) && st.kind === 'inline' ? st.json : undefined;
+  return manifestFromJson(isObj(st) && st.kind === 'inline' ? st.json : undefined);
+}
+
+/** A manifest object (`nexus.app.json` read from a change's own commit by main) as the manifest it is, when it passes the schema; else null. */
+export function manifestFromJson(m: unknown): AppManifest | null {
   if (!isObj(m) || appManifestErrors(m).length > 0) return null;
   return { version: 1, profile: m.profile as AppManifest['profile'], run: [...(m.run as string[])], port: m.port as number,
     healthPath: m.healthPath as string, env: Array.isArray(m.env) ? [...(m.env as string[])] : [],

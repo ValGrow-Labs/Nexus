@@ -120,6 +120,15 @@ export const RECIPES: readonly RecipeDef[] = deepFreeze([
     retry: { idempotent: true, maxAttempts: 2 }, wallClockMs: 15 * MIN, limits: { cpus: 2, memoryMb: 2048, outputMaxBytes: 1 * MIB },
     outputContract: { required: ['lock.sha256'], description: 'The hash of the package list that was installed, equal to the package list in the checkout.' },
     parsers: [], produces: [], subPhase: 'B2a' },
+  // A live preview of a suggested change (B2b, "Preview"): the same service plan as a dev deployment (an app container on a network with no route out
+  // behind the loopback forwarder, the same limits and 2 h lifetime), run from the change's own commit, so it works before the change is added to the
+  // project. The manifest and the build step come from the change itself (main reads and checks them), not from a build version. Its evidence is
+  // the app.preview_health result recorded (advisory) on the change.
+  { id: 'sde.preview.live', version: '1', executor: 'service', profiles: [...NODE_OR_PY, 'nexus-fwd'],
+    argvTemplates: ['app.manifest-run', 'fwd.socat-loopback'], params: NO_PARAMS, network: 'service-internal',
+    retry: { idempotent: false, maxAttempts: 1 }, wallClockMs: 60_000, limits: { cpus: 1, memoryMb: 1024, outputMaxBytes: 1 * MIB },
+    outputContract: { required: ['health'], description: 'A health probe answered on 127.0.0.1 within 60 s; it stops after 2 h.' },
+    parsers: [], produces: [], subPhase: 'B2a' },
   // ----- B2b: the git writes of agent changes, each a system child job. Every ref is under refs/nexus/* (D-B13); only
   // repo.ff touches the user's branch, and only after the user confirmed it in a dialog. -----
   { id: 'repo.worktree', version: '1', ...engine,

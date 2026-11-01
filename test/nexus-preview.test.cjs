@@ -172,12 +172,12 @@ test('PV5 the view is isolated: main-owned, own in-memory session, no preload, n
   assert.doesNotMatch(panel, /<iframe|<webview|loadURL/);
   assert.match(panel, /deployment\.url\) void openLoopbackUrl\(new URL\(deployment\.url\)\.origin\)/);
   // the page the user sees is wired in once, on the Try it page; nothing starts by itself
-  assert.match(read('src/renderer/src/nexus/project/ProjectTry.tsx'), /<ProjectPreview projectId=\{projectId\} \/>/);
+  assert.match(read('src/renderer/src/nexus/project/ProjectTry.tsx'), /<ProjectPreview projectId=\{projectId\} versionId=\{versionId\} newest=\{change \? \{ versionId: change\.versionId \} : null\} \/>/);
   const section = read('src/renderer/src/nexus/project/ProjectPreview.tsx');
   assert.equal((section.match(/void start\(\)/g) || []).length, 1, 'one start, from the button');
-  assert.match(section, /onClick=\{\(\) => \{ void start\(\); \}\}/);
+  assert.match(section, /onClick=\{\(\) => \{ setUpdated\(false\); void start\(\); \}\}/);
   assert.equal((section.match(/runPreviewChain\(/g) || []).length, 1);
-  assert.ok(section.indexOf('runPreviewChain(client()') > section.indexOf('const start = async'), 'no effect starts the chain: only the button\'s function does');
+  assert.ok(section.indexOf('runPreviewChain(base') > section.indexOf('const start = async'), 'no effect starts the chain: only the button\'s function does');
 });
 
 test('PV6 the helper is told to make an app runnable: standard library only, port 3000 on all addresses, /health, nexus.app.json, build to dist', () => {

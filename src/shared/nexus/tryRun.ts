@@ -6,7 +6,7 @@
 // meaning: `|`, `&&`, `>`, `$(...)` and `*` are just letters of an argument.
 
 /** The ways to start a try run: the two buttons main detects, and the person's own command. */
-export const TRY_WHATS = ['tests', 'program', 'custom'] as const;
+export const TRY_WHATS = ['tests', 'program', 'custom', 'preview'] as const;
 export type TryWhat = (typeof TRY_WHATS)[number];
 
 /** The longest command the box takes (characters), and the most arguments and characters per argument a run may have. */

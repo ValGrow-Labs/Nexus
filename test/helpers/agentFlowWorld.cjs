@@ -315,7 +315,7 @@ async function flowWorld(o = {}) {
   const clock = o.clock ?? (real ? { get now() { return Date.now(); }, advance() {} } : new FakeClock(h.NOW + 1000));
   const file = o.reopen?.file ?? h.v6Fixture().file;
   const s = track(new PersistStore(file));
-  s.open({ log: () => {}, backupDir: path.join(path.dirname(file), 'b'), now: () => h.NOW, enableV9: true, enableV10: true });
+  s.open({ log: () => {}, backupDir: path.join(path.dirname(file), 'b'), now: () => h.NOW, enableV9: true, enableV10: true, ...(o.v11 === true ? { enableV11: true } : { holdV11: true }) });
   const db = s.platformDatabase();
   if (v10ShapeProblem(db, true) !== null) db.transaction(() => applyV10(db, { now: () => h.NOW, appVersion: 't', fromVersion: 9, preCounts: null, backup: null }))();
   const userData = o.reopen?.userData ?? h.tmpDir('nx-ab-home-');
@@ -329,7 +329,7 @@ async function flowWorld(o = {}) {
   // The hosted keys as main composes them (src/main/index.ts): the real key store over the fake safeStorage; the providers are the runner's probe data.
   const hostedKeys = hm ? createHostedKeys({ store: keyStore, providers: () => nx.agentProbe?.cache.fresh('hosted-model')?.setup?.providers ?? null,
     onChange: (op, provider) => nx.agents.recordKeyChange(nx.principals.localUser(), op, provider) }) : null;
-  const nx = createNexusPlatform(db, { now: () => clock.now, log: (l) => logs.push(l), execution: true, agents: true, dataHome, profiles: images.profiles,
+  const nx = createNexusPlatform(db, { now: () => clock.now, log: (l) => logs.push(l), execution: true, agents: true, ...(o.v11 === true ? { changePreview: true } : {}), dataHome, profiles: images.profiles,
     imageContexts: images.imageContexts, acceptFsRoot, isRepository: repositoryCheck, resolveCommit, appVersion: '0.0.0-test',
     skillsResourcesDir: path.join(ROOT, 'resources'), runtimeHealthTtlMs: 365 * 24 * 3600_000, bootId: o.bootId,
     // "Try it": main's git read of one file or folder of a commit (src/main/git.ts getFileAtRev), for the buttons a change gets.

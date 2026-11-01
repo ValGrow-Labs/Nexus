@@ -512,6 +512,6 @@ export interface AcceptResultView { version: VersionView; accept: ChangeSetAccep
  * stands (the commit its folder has checked out, which main reads itself; `noCommit` answers a project with no saved version yet).
  */
 export type TryArgs = { op: 'options'; projectId: string; versionId?: string }
-  | { op: 'run'; projectId: string; versionId?: string; what: 'tests' | 'program' | 'custom'; command?: string; intentId: string };
+  | { op: 'run'; projectId: string; versionId?: string; what: 'tests' | 'program' | 'custom' | 'preview'; command?: string; intentId: string };
 export interface TryOptionView { what: 'tests' | 'program'; label: string; shows: string }
 export type TryResultView = { options: TryOptionView[]; noCommit?: true } | { job: JobView; created: boolean };

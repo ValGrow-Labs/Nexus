@@ -10,9 +10,10 @@ export type PreviewStep = 'snapshot' | 'deps' | 'build' | 'assemble' | 'start';
 
 export const PREVIEW_TITLE = 'Preview';
 export const PREVIEW_INTRO = 'Run your app in the safe space and see it here. It runs on this computer only, with no internet, and stops by itself after two hours.';
-export const PREVIEW_LIMITS = 'It runs the version you last added to your project. The app needs its own start file (nexus.app.json) and a build step; the AI helper writes them when you ask for an app. If the app uses add-ons (packages), Nexus asks you once to download them from the package website, and only from there; the app itself still has no internet. If the app saves data, it is kept only inside the safe space and is deleted when the preview stops.';
+export const PREVIEW_LIMITS = 'The app needs its own start file (nexus.app.json); the AI helper writes it when you ask for an app. Pick what to run below: your project now, or the suggested changes before you add them. If the app uses add-ons (packages), Nexus asks you once to download them from the package website, and only from there; the app itself still has no internet. If the app saves data, it is kept only inside the safe space and is deleted when the preview stops.';
 /** What the person sees while Nexus waits for the answer to the download question. */
 export const PREVIEW_DEPS_WAITING = 'Waiting for your answer: the app lists add-ons (packages) it needs. Nexus can download them for this one step, from the package website only, and does not run them while they are installed.';
+export const PREVIEW_UPDATED = 'The AI helper changed the app, so the preview started again with the new version.';
 export const PREVIEW_EMBED_LABEL = 'The running app (this is your app, not Nexus)';
 export const PREVIEW_NOT_ANSWERING = 'The app is not answering right now. Try Reload, or Stop and Preview again.';
 export const PREVIEW_ASK_HELPER_DEPS = 'The add-ons (packages) in this app could not be downloaded. Check the package names and versions in package.json (use real packages from the public package website, none that need an install script to run), and keep the list short.';
@@ -118,6 +119,28 @@ export async function runPreviewChain(client: ChainClient, onStep: (s: PreviewSt
   if (!start.ok) return start.result;
   const dep = await client.waitDeployment(start.jobId);
   if (!dep.ok) return fail('start', dep.why);
+  return { ok: true, deploymentId: dep.id };
+}
+
+/** What previewing a suggested change needs from the world (a fake in a test). */
+export interface ChangeClient {
+  stopLive(): Promise<void>;
+  /** Starts the preview of the change as the user; returns the job's id, or the sentence why it was refused. */
+  startChange(): Promise<{ ok: true; jobId: string } | { ok: false; text: string }>;
+  waitDeployment(jobId: string): Promise<{ id: string; ok: boolean; why: string | null }>;
+}
+
+/**
+ * Preview of a suggested change, before it is added to the project: one step, because main reads the change's own files and builds inside the safe
+ * space. Any earlier preview of the project is stopped first (one preview per project).
+ */
+export async function runChangePreview(client: ChangeClient, onStep: (s: PreviewStep) => void): Promise<ChainResult> {
+  await client.stopLive();
+  onStep('start');
+  const s = await client.startChange();
+  if (!s.ok) return { ok: false, step: 'start', text: s.text, askHelper: /nexus\.app\.json|runnable/i.test(s.text) };
+  const dep = await client.waitDeployment(s.jobId);
+  if (!dep.ok) { const f = stepFailure('start', dep.why); return { ok: false, step: 'start', text: f.text, askHelper: f.askHelper }; }
   return { ok: true, deploymentId: dep.id };
 }
 

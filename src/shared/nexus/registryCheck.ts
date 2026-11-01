@@ -74,7 +74,7 @@ export const B2B_E2E_STUB: readonly string[] = deepFreeze([]);
  * tasks have not implemented yet listed there as pending until they land.
  */
 export const B2B_IMPL: RegistryImpl = deepFreeze({
-  recipes: [...B2A_IMPL.recipes, 'sde.deps.resolve', 'sde.try.run', 'repo.worktree', 'changeset.collect', 'changeset.merge_check', 'changeset.accept',
+  recipes: [...B2A_IMPL.recipes, 'sde.deps.resolve', 'sde.try.run', 'sde.preview.live', 'repo.worktree', 'changeset.collect', 'changeset.merge_check', 'changeset.accept',
     'changeset.accept_rollback', 'repo.ff'],
   validators: [...B2A_IMPL.validators, 'git.diff_nonempty', 'git.paths_in_scope', 'sec.secret_scan', 'sec.entropy_notes',
     'cs.tests_pass', 'git.applies_cleanly'],

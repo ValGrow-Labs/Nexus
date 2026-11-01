@@ -62,6 +62,7 @@ import { WorkspaceService } from './workspace/workspaceService';
 import { ExecQueries } from './exec/execQueries';
 import { registryProblems } from './registryImpl';
 import { v10ShapeProblem } from './db/schemaV10';
+import { v11ShapeProblem } from './db/schemaV11';
 import { TokenService } from './agents/tokenService';
 import { BudgetService, hostsSha256 } from './agents/budgetService';
 import { RuntimeHealthCache, type AgentRuntimeProbe } from './agents/runtimeHealth';
@@ -205,6 +206,8 @@ export interface NexusPlatformOptions {
   registryProblems?: () => string[];
   /** B2b: turn the agent services on (main: PersistStore.agentsAvailable); they need execution and the v10 shape too. Default off. */
   agents?: boolean;
+  /** Schema v11 in place and verified (main: PersistStore.changePreviewAvailable): a suggested change may be previewed before it is added. Default off. */
+  changePreview?: boolean;
   /** Tests only: the token key and id source (default node:crypto). */
   randomBytes?: (n: number) => Buffer;
   /** B2b Task 5: the app's `resources` folder (a skill's file is `<dir>/skills/<id>/SKILL.md`); null, Skills.write refuses. */
@@ -302,6 +305,7 @@ export function createNexusPlatform(db: Database.Database, opts?: NexusPlatformO
     approvals: opts?.approvals !== undefined ? opts.approvals : approvals, images: approvals, deployments,
     // With main's repository check wired in, a snapshot starts only through RepoService (which runs it first).
     snapshotsNeedRepositoryCheck: !!opts?.isRepository,
+    changePreview: (opts?.changePreview ?? false) && (opts?.agents ?? false) && v11ShapeProblem(db, true) === null,
     ingest, validation, appVersion: opts?.appVersion ?? null, findGit: opts?.findGit ?? null, readAtRev: opts?.readAtRev ?? null, resolveHead: opts?.resolveHead ?? null
   });
   validation?.setSender((msg) => exec.sendToRunner(msg));

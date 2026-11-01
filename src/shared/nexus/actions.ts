@@ -70,6 +70,9 @@ export const USER_ACTIONS: readonly UserActionDef[] = deepFreeze([
   a('sde.try.run', 'sde', 'Try the suggested changes', { recipes: ['sde.try.run'] },
     // One suggested change, or none: with none the run is the project as it stands (its checked-out commit, which main resolves and writes into the job).
     [{ slot: 'change', kinds: ['change_set'], min: 0, max: 1 }], ['git', 'docker', 'disk:5GiB']),
+  // Preview a suggested change (B2b): started only through the try request (`what: 'preview'`), which reads the change's manifest and writes it into the job.
+  a('sde.preview.live', 'sde', 'Preview the suggested changes', { recipes: ['sde.preview.live'] },
+    [one('change', 'change_set')], ['git', 'docker', 'image:nexus-fwd', 'disk:5GiB']),
   a('sde.build.run', 'sde', 'Build', { recipes: ['sde.build.node', 'sde.build.python'] },
     [one('repository', 'repository')], ['git', 'docker', 'disk:5GiB']),
   a('sde.app.assemble', 'sde', 'Assemble the application', { recipes: ['sde.app.assemble'] },

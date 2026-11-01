@@ -102,6 +102,7 @@ import { profileFromFacts } from './sandboxProfile';
 import type { RuntimeEvent } from '../../../shared/nexus/runtime';
 import type { Job, JobKind, JobState, Principal, ScopeRef } from '../../../shared/nexus/platform';
 import { getUserAction, USER_ACTIONS, type UserActionDef } from '../../../shared/nexus/actions';
+import { manifestFromJson } from '../repo/repoService';
 import { TRY_LOOK_FOR, plainMain, tokenizeCommand, tryOptions as detectTryOptions, type TryFacts, type TryOption, type TryWhat } from '../../../shared/nexus/tryRun';
 import type { ParamsSchema } from '../../../shared/nexus/domainSpec';
 import { getRecipe, PREVIEW_IDLE_TTL_MS, RETRY_BACKOFF_MS, type RecipeDef } from '../../../shared/nexus/recipes';
@@ -221,7 +222,7 @@ export interface ImageBuildPort {
 /** Local dev deployments (Task 9: DeploymentService). Every `...Tx` runs inside the core's transaction. */
 export interface DeploymentPort {
   byJob(jobId: string): { id: string } | null;
-  prepareStart(jobId: string, subjectVersionId: string | null, now: number): { deploymentId: string; manifest: AppManifest; files: { sha256: string; path: string }[] };
+  prepareStart(jobId: string, subjectVersionId: string | null, now: number): { deploymentId: string; manifest: AppManifest; files: { sha256: string; path: string }[]; buildArgv: string[] | null };
   startTx(j: { id: string; project_id: string; participation_id: string | null; workspace_id: string; on_behalf_of: string },
     attempt: { n: number }, deploymentId: string, subjectVersionId: string, now: number,
     facts?: { buildVersionId: string | null; profile: string | null; appImageId: string | null; forwarderImageId: string | null }): string;
@@ -376,6 +377,8 @@ export interface ExecutionDeps {
    * public `start` then refuses the snapshot action (`repository_check_required`) unless RepoService passes its token.
    */
   snapshotsNeedRepositoryCheck?: boolean;
+  /** Schema v11 is in place and verified (PersistStore.changePreviewAvailable): a suggested change may be previewed before it is added. Off: refused `change_preview_off`. */
+  changePreview?: boolean;
   ingest?: IngestPort | null;
   validation?: ValidationHooks | null;
   caps?: Partial<SchedulerCaps>;
@@ -474,6 +477,8 @@ const withoutKey = (r: Record<string, unknown>, max: number): Record<string, unk
 /** The id of the try-run action and of its recipe (they are the same string). */
 const TRY_ACTION_ID = 'sde.try.run';
 const DEPS_PREPARE_ACTION = 'sde.deps.prepare';
+/** The recipe and action of a live preview of a suggested change. */
+const LIVE_PREVIEW_ID = 'sde.preview.live';
 const invalid = (reason: string, message: string): never => { throw new PlatformError('invalid', message, { reason }); };
 
 /**
@@ -1772,7 +1777,7 @@ export class ExecutionService {
         try {
           const pre = dep.prepareStart(j.id, cap.subjectVersionId, now);
           const fwd = usableImage(this.probe, 'nexus-fwd');
-          service = { deploymentId: pre.deploymentId, manifest: pre.manifest, files: pre.files, lifetimeMs: PREVIEW_IDLE_TTL_MS,
+          service = { deploymentId: pre.deploymentId, manifest: pre.manifest, files: pre.files, lifetimeMs: PREVIEW_IDLE_TTL_MS, buildArgv: pre.buildArgv,
             forwarder: (this.deps.profiles ?? []).find((p) => p.id === 'nexus-fwd') ?? null,
             forwarderImageId: (fwd?.imageId as `sha256:${string}` | undefined) ?? null };
         } catch (e) { planError = refused(e); }
@@ -2528,7 +2533,7 @@ export class ExecutionService {
     if (!action || !('recipes' in action.run)) return invalid('unknown_action', 'unknown action');
     if (action.domain !== r.workspaceId) return invalid('action_not_in_domain', 'the action belongs to another domain');
     // A try run carries a command: it starts only through `startTry`, which builds and checks it. Never through the generic job start.
-    if (action.id === TRY_ACTION_ID) return invalid('unknown_action', 'a try run is started through its own request');
+    if (action.id === TRY_ACTION_ID || action.id === LIVE_PREVIEW_ID) return invalid('unknown_action', 'a try run and a preview are started through their own request');
     if (this.needsRepositoryCheck(action) && checked !== REPOSITORY_CHECKED) {
       return invalid('repository_check_required', 'a repository snapshot is requested through the snapshot request, which checks the folder first');
     }
@@ -2664,6 +2669,10 @@ export class ExecutionService {
     this.requireAvailable();
     if (!isPlainObject(r) || !isStr(r.projectId) || (r.versionId !== undefined && !isStr(r.versionId))) throw new PlatformError('invalid', 'projectId is required');
     const pw = requireActiveParticipation(this.access, this.db, p, r.projectId, 'sde', 'job.create');
+    if (r.what === 'preview') {
+      if (r.versionId === undefined || r.command !== undefined) return invalid('try_command', 'a preview needs a suggested change and no command');
+      return this.startLivePreview(p, { projectId: pw.project_id, versionId: r.versionId, intentId: r.intentId });
+    }
     const commit = await this.tryCommit(p, pw.project_id, r.versionId);
     let argv: readonly string[];
     if (r.what === 'custom') {
@@ -2676,6 +2685,73 @@ export class ExecutionService {
       argv = opt.argv;
     }
     return this.startTry(p, r.versionId !== undefined ? { projectId: pw.project_id, versionId: r.versionId, argv, intentId: r.intentId } : { projectId: pw.project_id, commit, argv, intentId: r.intentId });
+  }
+
+  /**
+   * "Preview" of a suggested change (the try request, what 'preview'): runs the change's own commit as a dev deployment, so the app can be seen before
+   * the change is added to the project. Main reads the change's `nexus.app.json` from its commit (checked by the manifest schema; one that names environment
+   * variables cannot start) and, for a Node app, whether its package.json has a build script (the fixed command `npm run build`, run in the container before
+   * the app starts); both are written into the job's params. One preview per project: a live preview or deployment of the project refuses a second
+   * (the page stops the earlier one first). Same sandbox rules as a dev deployment: no route out, loopback only, 2 h lifetime, user-initiated.
+   */
+  async startLivePreview(p: Principal, r: { projectId: string; versionId: string; intentId: string }): Promise<{ job: ExecJob; created: boolean }> {
+    this.requireAvailable();
+    const pw = requireActiveParticipation(this.access, this.db, p, r.projectId, 'sde', 'job.create');
+    if (this.deps.changePreview !== true) return invalid('change_preview_off', 'previewing a suggested change needs schema v11, which is not switched on');
+    const key = validateKey(r.intentId);
+    const action = getUserAction(LIVE_PREVIEW_ID);
+    if (!action) return invalid('unknown_action', 'unknown action');
+    const commit = this.changeCommit(p, pw.project_id, r.versionId);
+    const read = this.deps.readAtRev; const root = this.repoPathOf(pw.project_id);
+    if (!read || !root) return invalid('preview_manifest', 'the change cannot be read');
+    let manifestJson: unknown = null;
+    try { const f = await read(root, commit, 'nexus.app.json'); manifestJson = f && f.exists ? parseJson(f.content) : null; } catch { manifestJson = null; }
+    const manifest = manifestFromJson(manifestJson);
+    if (!manifest) return invalid('preview_manifest', 'the change has no valid nexus.app.json');
+    const blocker = previewBlocker(manifest);
+    if (blocker) throw new PlatformError('unavailable', blocker.message, { reason: blocker.reason, names: blocker.names });
+    let buildArgv: string[] | null = null;
+    if (manifest.profile === 'sde-node') {
+      try {
+        const pkg = await read(root, commit, 'package.json');
+        const j = pkg && pkg.exists ? parseJson(pkg.content) : null;
+        const scripts = isPlainObject(j) && isPlainObject(j.scripts) ? j.scripts : null;
+        if (scripts && typeof scripts.build === 'string' && scripts.build.trim() !== '') buildArgv = ['npm', 'run', 'build'];
+      } catch { buildArgv = null; }
+    }
+    return this.createExecJob(p, { action, projectId: pw.project_id, workspaceId: pw.workspace_id, key, params: { manifest, commit, buildArgv }, inputs: [{ versionId: r.versionId, slot: 'change' }],
+      retryOf: null, onlyRecipe: LIVE_PREVIEW_ID });
+  }
+
+  /** The job of a live preview (its change is the input and the subject; the manifest and build step are in its params). */
+  private createLivePreviewJob(p: Principal, o: { action: UserActionDef; projectId: string; workspaceId: string; key: string;
+    params: Record<string, unknown>; inputs: { versionId: string; slot: string }[]; retryOf: string | null }, recipe: RecipeDef, hasPrior: boolean): { job: ExecJob; created: boolean } {
+    if (!this.deps.deployments) return invalid('not_in_this_build', 'dev deployments are not available in this build');
+    const manifest = manifestFromJson(o.params.manifest);
+    if (!manifest || !recipe.profiles.includes(manifest.profile)) return invalid('preview_manifest', 'the change has no valid nexus.app.json');
+    const input = o.inputs.length === 1 && o.inputs[0].slot === 'change' ? o.inputs[0] : null;
+    if (!input) return invalid('input_not_allowed', 'a preview runs one suggested change');
+    try { this.access.requireVersionReadable(p, input.versionId, o.projectId); } catch (e) {
+      if (e instanceof PlatformError && e.code === 'invalid') throw new PlatformError('invalid', 'the input is not allowed', { reason: 'input_not_allowed' });
+      throw e;
+    }
+    const v = this.db.prepare(`SELECT v.status, a.kind FROM artifact_versions v JOIN artifacts a ON a.id = v.artifact_id WHERE v.id = ?`).get(input.versionId) as { status: string; kind: string };
+    if (v.kind !== 'change_set' || (v.status !== 'candidate' && v.status !== 'active')) return invalid('input_not_allowed', 'the input is not allowed');
+    // One preview per project: a live deployment of the project, or a preview job still waiting or running, refuses a second.
+    if (!hasPrior) {
+      const live = this.db.prepare(`SELECT 1 FROM deployments WHERE project_id = ? AND status IN ('starting','healthy','unhealthy') LIMIT 1`).get(o.projectId)
+        ?? this.db.prepare(`SELECT 1 FROM jobs WHERE project_id = ? AND recipe_id IN ('sde.preview.start', 'sde.preview.live') AND state IN (${LIVE_JOB_STATES.map(() => '?').join(', ')}) LIMIT 1`).get(o.projectId, ...LIVE_JOB_STATES);
+      if (live) throw new PlatformError('conflict', 'a preview of this project is already running', { reason: 'preview_busy' });
+    }
+    const cap: Capability = { action: o.action.id, recipe: recipe.id, recipeVersion: recipe.version, executor: recipe.executor, network: recipe.network,
+      profile: manifest.profile, subjectVersionId: input.versionId };
+    const l = recipe.limits!;
+    const limits = { cpus: l.cpus, memoryMb: l.memoryMb, pids: 512, wallClockMs: PREVIEW_IDLE_TTL_MS + SERVICE_WALL_MARGIN_MS, outputMaxBytes: l.outputMaxBytes, tmpfsMb: 512 };
+    const create = {
+      kind: 'tool.run' as const, projectId: o.projectId, workspaceId: o.workspaceId, idempotencyKey: o.key, recipeId: recipe.id,
+      params: o.params, inputs: [{ versionId: input.versionId, role: 'change' }], retry: { idempotent: false, maxAttempts: 1, backoffMs: [] }
+    };
+    return this.insertExecJob(p, o, recipe, cap, limits, create, hasPrior);
   }
 
   retry(p: Principal, jobId: string, intentId: string): { job: ExecJob } {
@@ -2739,7 +2815,7 @@ export class ExecutionService {
     const recipes = ('recipes' in o.action.run ? o.action.run.recipes : []).filter((id) => o.onlyRecipe === undefined || id === o.onlyRecipe)
       .map((id) => getRecipe(id)).filter((x): x is RecipeDef => x !== null);
     const serviceRecipe = recipes.find((rc) => rc.executor === 'service');
-    if (serviceRecipe) return this.createPreviewJob(p, o, serviceRecipe, !!prior);
+    if (serviceRecipe) return serviceRecipe.id === LIVE_PREVIEW_ID ? this.createLivePreviewJob(p, o, serviceRecipe, !!prior) : this.createPreviewJob(p, o, serviceRecipe, !!prior);
     // One live snapshot job per project (Task 9; RepoService also checks the folder first): a new request returns it.
     if (!prior && recipes.length === 1 && recipes[0].id === 'repo.snapshot') {
       const live = this.db.prepare(`SELECT * FROM jobs WHERE project_id = ? AND recipe_id = 'repo.snapshot'

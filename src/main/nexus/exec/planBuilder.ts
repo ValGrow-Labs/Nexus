@@ -160,6 +160,8 @@ export interface ServiceContext {
   files: readonly { sha256: string; path: string }[];
   /** The fixed lifetime of a dev deployment (the containers' wall clock). */
   lifetimeMs: number;
+  /** A live preview of a change: the fixed build command run in the container before the app starts (never a renderer value), or null. */
+  buildArgv?: readonly string[] | null;
 }
 
 /** A consumed approval as read from `approvals` (only the fields the builder checks). */
@@ -533,7 +535,13 @@ function buildServicePlan(ctx: PlanContext, base: ServiceBase): ServicePlan {
   if (typeof port !== 'number' || !Number.isInteger(port) || port < 1024 || port > 65535) return refuse('bad_input', 'the app port is out of range');
   const healthPath = s.manifest.healthPath;
   if (typeof healthPath !== 'string' || !HEALTH_PATH_RE.test(healthPath)) return refuse('bad_input', 'the health path is not a plain path');
-  const argv = checkRunArgv(s.manifest.run);
+  const runArgv = checkRunArgv(s.manifest.run);
+  // A live preview of a change builds first (the step is fixed: `npm run build`, only when the change's package.json has a build script), then starts the app.
+  const buildArgv = s.buildArgv ?? null;
+  if (buildArgv !== null && (recipe.id !== 'sde.preview.live' || !(buildArgv.length === 3 && buildArgv[0] === 'npm' && buildArgv[1] === 'run' && buildArgv[2] === 'build' && profile.id === 'sde-node'))) {
+    return refuse('bad_input', 'the preview build step is not the fixed build command');
+  }
+  const argv = buildArgv ? [...buildArgv, STEP_SEPARATOR, ...runArgv] : runArgv;
   const lifetime = s.lifetimeMs;
   if (!Number.isSafeInteger(lifetime) || lifetime <= 0) return refuse('bad_input', 'a dev deployment needs a lifetime');
   for (const f of s.files) {

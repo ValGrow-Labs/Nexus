@@ -697,8 +697,14 @@ stderr: ${r.stderr}` : ''}`
     }
     // A dev deployment's app runs the manifest's argv as ONE step: the entry's step separator in it would start a second
     // command (final batch item 9; main's checkRunArgv refuses it too, this is the runner's own check).
-    if (plan.kind === 'service' && (!Array.isArray(plan.app?.argv) || plan.app.argv.some((x) => typeof x !== 'string' || x === STEP_SEPARATOR_TOKEN))) {
-      return 'the app argv holds the step separator';
+    // The one exception is a live preview of a suggested change (recipe sde.preview.live): main puts the FIXED build command `npm run build` and ONE separator
+    // in front of the app's own argv; the app's argv after it still holds no separator.
+    if (plan.kind === 'service') {
+      const argv = plan.app?.argv;
+      const liveBuild = plan.recipe?.id === 'sde.preview.live' && Array.isArray(argv) && argv.length > 4
+        && argv[0] === 'npm' && argv[1] === 'run' && argv[2] === 'build' && argv[3] === STEP_SEPARATOR_TOKEN;
+      const own = Array.isArray(argv) ? (liveBuild ? argv.slice(4) : argv) : null;
+      if (!own || own.some((x) => typeof x !== 'string' || x === STEP_SEPARATOR_TOKEN)) return 'the app argv holds the step separator';
     }
     if (plan.staging.depsVolume && !DEPS_VOLUME_RE.test(plan.staging.depsVolume.name)) return 'the deps volume is not a dependency cache volume';
     const rl = plan.resourceLabels;

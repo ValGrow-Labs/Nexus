@@ -45,11 +45,11 @@ export const SDE: DomainSpec = {
     { id: 'test.run' }, { id: 'build.request' }, { id: 'preview.request' }
   ],
   recipes: ['repo.snapshot', 'sde.deps.node', 'sde.deps.python', 'sde.deps.resolve', 'sde.test.discover', 'sde.test.node', 'sde.test.pytest',
-    'sde.build.node', 'sde.build.python', 'sde.app.assemble', 'sde.preview.start', 'sde.diagnose', 'sde.try.run',
+    'sde.build.node', 'sde.build.python', 'sde.app.assemble', 'sde.preview.start', 'sde.diagnose', 'sde.try.run', 'sde.preview.live',
     'repo.worktree', 'changeset.collect', 'changeset.merge_check', 'changeset.accept', 'changeset.accept_rollback', 'repo.ff'],
   skills: ['nexus-sde-change', 'nexus-sde-tests-first', 'nexus-sde-requirement-draft', 'nexus-sde-app-manifest'],
   actions: ['sde.requirement.write', 'sde.repository.snapshot', 'sde.deps.install', 'sde.deps.prepare', 'sde.tests.discover', 'sde.tests.run',
-    'sde.build.run', 'sde.app.assemble', 'sde.preview.start', 'sde.preview.stop', 'sde.diagnose', 'sde.try.run',
+    'sde.build.run', 'sde.app.assemble', 'sde.preview.start', 'sde.preview.stop', 'sde.diagnose', 'sde.try.run', 'sde.preview.live',
     'sde.agent.turn', 'sde.changeset.review', 'sde.changeset.accept', 'sde.repo.merge'],
   lifecycle: [
     { id: 'requirement', label: 'Requirement', consumes: [], produces: ['requirement'],
@@ -81,7 +81,7 @@ export const SDE: DomainSpec = {
       status: 'REAL', subPhase: 'B2a', prerequisites: ['git', ...CONTAINER_RUN], e2eTestId: 'e2e.sde.tests',
       scopeNote: 'Supported runners: node:test, jest, vitest, mocha and pytest. Tests run on a commit; uncommitted changes are not included.' },
     { id: 'review', label: 'Review', consumes: ['change_set'], produces: [],
-      via: [{ userAction: 'sde.changeset.review' }, { userAction: 'sde.try.run' }, { userAction: 'sde.changeset.accept' }, { userAction: 'sde.repo.merge' }],
+      via: [{ userAction: 'sde.changeset.review' }, { userAction: 'sde.try.run' }, { userAction: 'sde.preview.live' }, { userAction: 'sde.changeset.accept' }, { userAction: 'sde.repo.merge' }],
       doneWhen: { record: 'review' },
       status: 'REAL', subPhase: 'B2b', prerequisites: ['git'], e2eTestId: 'e2e.sde.review',
       scopeNote: 'Accepting merges the change into a Nexus ref, never into your branch or files. Merging accepted work is a fast-forward you confirm. ' + AGENT_NEW_NOTE },

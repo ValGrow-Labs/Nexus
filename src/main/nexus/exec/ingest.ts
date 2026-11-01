@@ -143,7 +143,8 @@ export const INGEST_RULES: Readonly<Record<string, 'snapshot' | 'discovery' | 't
  * `app.preview_health`, recorded while it runs).
  */
 export const NOT_INGESTED: Readonly<Record<string, string>> = Object.freeze({
-  'sde.preview.start': 'a service: its evidence is app.preview_health'
+  'sde.preview.start': 'a service: its evidence is app.preview_health',
+  'sde.preview.live': 'a service: its evidence is app.preview_health, recorded (advisory) on the change'
 });
 /**
  * The validators an ingest rule records that are not run through `runPure` (the registry check derives main's dispatched

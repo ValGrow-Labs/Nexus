@@ -174,7 +174,8 @@ test('I-E5 B2A_IMPL equals main\'s registered recipe, validator and ingest maps 
   // Fix round 1 (the ruled defect): a dependency install has its own evidence rule; only the dev deployment is never
   // ingested at B2a. Task 8 lands changeset.collect's and changeset.merge_check's ingest; Task 9 lands changeset.accept's
   // and repo.ff's, so only the dev deployment is left never ingested (the ratchet only shrinks).
-  assert.deepEqual(sorted(m.notIngested), sorted(['sde.preview.start']));
+  // Live preview of a suggested change (sde.preview.live) is a service too: never ingested, its evidence is app.preview_health recorded on the change.
+  assert.deepEqual(sorted(m.notIngested), sorted(['sde.preview.live', 'sde.preview.start']));
   assert.ok(m.ingest.includes('sde.deps.node') && m.ingest.includes('sde.deps.python'));
   assert.ok(m.validators.includes('sde.deps.lock_matches'));
   assert.deepEqual(implementationProblems(), []);

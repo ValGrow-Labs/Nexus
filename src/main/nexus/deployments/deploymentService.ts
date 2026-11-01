@@ -63,7 +63,7 @@ import { appendJobEventTx } from '../exec/events';
 import type { ValidationService } from '../validation/validationService';
 import { errored, type ValidatorOutcome } from '../validation/normalized';
 import * as preview from '../validation/validators/appPreviewHealth';
-import { readAppManifest, previewBlocker, type AppManifest } from '../repo/repoService';
+import { readAppManifest, manifestFromJson, previewBlocker, type AppManifest } from '../repo/repoService';
 import { requireStoredUser } from '../approvals/approvalService';
 import { DEPLOYMENT_STATUSES, LIVE_DEPLOYMENT_STATUSES } from './deploymentRules';
 
@@ -238,14 +238,18 @@ export class DeploymentService {
    * (the job's existing `starting` row, or a new id). Throws PlatformError 'invalid' (`subject_unavailable`,
    * `bad_manifest`, `deployment_ended`, `tree_too_large`) or 'unavailable' (`secrets_not_supported`).
    */
-  prepareStart(jobId: string, subjectVersionId: string | null, now: number): { deploymentId: string; manifest: AppManifest; files: { sha256: string; path: string }[] } {
+  prepareStart(jobId: string, subjectVersionId: string | null, now: number): { deploymentId: string; manifest: AppManifest; files: { sha256: string; path: string }[]; buildArgv: string[] | null } {
     const subject = isStr(subjectVersionId) ? this.db.prepare(`SELECT v.id, v.status, v.storage_ref_json, a.kind FROM artifact_versions v
       JOIN artifacts a ON a.id = v.artifact_id WHERE v.id = ?`).get(subjectVersionId) as { id: string; status: string; storage_ref_json: string; kind: string } | undefined : undefined;
-    if (!subject || subject.kind !== 'application' || !['draft', 'candidate', 'active'].includes(subject.status)) {
+    if (!subject || (subject.kind !== 'application' && subject.kind !== 'change_set') || !['draft', 'candidate', 'active'].includes(subject.status)) {
       throw new PlatformError('invalid', 'the application version is not available for a dev deployment', { reason: 'subject_unavailable' });
     }
-    const manifest = readAppManifest(subject.storage_ref_json);
+    // A suggested change (a live preview): its manifest and build step are in the job's params, which main wrote after reading them from the change's own commit.
+    const live = subject.kind === 'change_set'
+      ? (parse((this.db.prepare('SELECT params_json FROM jobs WHERE id = ?').get(jobId) as { params_json: string } | undefined)?.params_json ?? null) as { manifest?: unknown; buildArgv?: unknown } | null) : null;
+    const manifest = subject.kind === 'change_set' ? manifestFromJson(isObj(live) ? live.manifest : undefined) : readAppManifest(subject.storage_ref_json);
     if (!manifest) throw new PlatformError('invalid', 'the application manifest is not valid', { reason: 'bad_manifest' });
+    const buildArgv = isObj(live) && Array.isArray(live.buildArgv) && live.buildArgv.every((x) => typeof x === 'string') ? (live.buildArgv as string[]) : null;
     const blocker = previewBlocker(manifest);
     if (blocker) throw new PlatformError('unavailable', blocker.message, { reason: blocker.reason });
     const build = this.db.prepare("SELECT version_id FROM job_inputs WHERE job_id = ? AND role = 'build' ORDER BY rowid LIMIT 1").get(jobId) as { version_id: string } | undefined;
@@ -256,7 +260,7 @@ export class DeploymentService {
     if (existing && (existing.status !== 'starting' || existing.host_port !== null)) {
       throw new PlatformError('invalid', 'the dev deployment of this job has already run', { reason: 'deployment_ended' });
     }
-    return { deploymentId: existing?.id ?? newId(now), manifest, files };
+    return { deploymentId: existing?.id ?? newId(now), manifest, files, buildArgv };
   }
 
   /** @internal Inside the lease transaction: the job's deployment row (`starting`, no port), with its activity row. */
@@ -343,6 +347,10 @@ export class DeploymentService {
    * `app.preview_health` over the recorded facts (or a given outcome), recorded on the subject bound to the job's
    * attempt, then the subject is finalized. Inside the caller's transaction. Returns the outcome and the result row.
    */
+  private subjectKind(versionId: string): string | null {
+    return (this.db.prepare('SELECT a.kind FROM artifact_versions v JOIN artifacts a ON a.id = v.artifact_id WHERE v.id = ?').get(versionId) as { kind: string } | undefined)?.kind ?? null;
+  }
+
   private judgeTx(d: DeploymentRow, a: AttemptFacts, container: string, now: number, given?: ValidatorOutcome):
     { outcome: ValidatorOutcome; check: { id: string; status: string } } {
     const sb = parse(a.sandbox_json);
@@ -357,7 +365,8 @@ export class DeploymentService {
       probes: probesOf(d.health_json).map((p) => ({ at: p.at, status: p.status, ms: p.ms })) };
     const outcome = given ?? preview.run(facts);
     const res = this.deps.validation.recordOutcomeTx(d.subject_version_id, DEPLOYMENT_VALIDATORS[0], outcome, { jobId: d.job_id, attemptN: a.n, startedAt });
-    this.deps.validation.finalizeIfReady(this.system(), d.subject_version_id);
+    // An application draft is finalized by its health check; a suggested change keeps its own checks (the health result is advisory evidence on it).
+    if (this.subjectKind(d.subject_version_id) === 'application') this.deps.validation.finalizeIfReady(this.system(), d.subject_version_id);
     return { outcome, check: { id: res.id, status: res.status } };
   }
 

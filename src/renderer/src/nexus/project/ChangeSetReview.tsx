@@ -13,7 +13,7 @@ import { useExecutionUi } from './execContext';
 import { TryIt } from './TryIt';
 import { useNexusUi } from '../state/uiStore';
 import {
-  BUTTON_LABEL, DIFF_REDACTED_NOTE, acceptedText, changeCounts, changeSetModel, proofLines, railLine, changeSetRows, classifyDiff, diffHasRedaction, diffSummary, headLine, headTitle, mergeModel, mergedOnBranch, mergedText, mergedTitle, reviewOf,
+  BUTTON_LABEL, DIFF_REDACTED_NOTE, acceptedText, changeCounts, changeSetModel, previewProof, proofLines, railLine, changeSetRows, classifyDiff, diffHasRedaction, diffSummary, headLine, headTitle, mergeModel, mergedOnBranch, mergedText, mergedTitle, reviewOf,
   type ChangeSetButton, type ChangeSetRow, type MergeModel, type RailStep
 } from './changeSetModel';
 
@@ -202,6 +202,7 @@ export function ChangeSetReview({ versionId, projectId, status, name, withEviden
   const counts = changeCounts(diff.text);
   const fileCount = counts ? Number(counts.split(' ')[1]) || null : null;
   const proof = proofLines(checks.data, fileCount);
+  const previewLine = previewProof(checks.data);
   const technical = useNexusUi((x) => x.audience) === 'technical';
   const [showDiff, setShowDiff] = useState<boolean | null>(null);
   const diffOpen = showDiff ?? technical;
@@ -218,13 +219,14 @@ export function ChangeSetReview({ versionId, projectId, status, name, withEviden
         <p className="nx-cs__did"><strong>{name ?? 'Suggested changes'}</strong></p>
         {counts && <p className="nx-muted">{counts}</p>}
       </div>
-      {proof.length > 0 && (
+      {(proof.length > 0 || previewLine) && (
         <div className="nx-cs__block">
           <h3 className="nx-cs__sub">Proof</h3>
           <p className="nx-muted">All of these must pass before you can press “Looks good”.</p>
           <ul className="nx-cs__proof" aria-label="Proof">
             {proof.map((p) => <li key={p.id} data-ok={p.ok ? 'true' : 'false'}><span aria-hidden="true">{p.pending ? '…' : p.ok ? '✓' : '✗'}</span> {p.text}</li>)}
           </ul>
+          {previewLine && <p className="nx-muted" data-ok={previewLine.ok ? 'true' : 'false'}><span aria-hidden="true">{previewLine.ok ? '✓' : '✗'}</span> {previewLine.text} (extra: not required)</p>}
         </div>
       )}
       <div className="nx-cs__block"><TryIt projectId={projectId} versionId={versionId} /></div>
