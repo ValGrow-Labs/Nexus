@@ -9,6 +9,9 @@
 // - XM2: an agent turn of a Machine learning project (the real runner core, the real Docker driver, ScriptedRuntime for the model): the
 //   helper's own container is the ML kit and `python -c "import pandas, sklearn, matplotlib"` works through the helper's real
 //   sandbox_exec path.
+// - XM3: a Machine learning project's data (phase 2): a CSV the person added through main's DatasetService is read by the helper's own
+//   container at /data/x.csv with pandas, and the folder is READ-ONLY there (writing, appending and deleting all fail; the copy is
+//   unchanged on the host), with the network off.
 // Each test removes the containers, volumes and networks it made (by this run's nexus.home label) and its temp folders. The built
 // image nexus-local/ml-python:<context12> is KEPT: it is the kit the app uses.
 const test = require('node:test');
@@ -207,6 +210,86 @@ print("ML-JOB " + json.dumps(m))
       assert.deepEqual([r.job.state, r.job.outcome], ['partial', 'no_change'], `${r.job.state} ${r.job.error_json}`);
       assert.equal(at.state, 'succeeded');
       sound(w, 'XM2');
+    } finally {
+      try { await w.close(); } catch { /* best effort */ }
+      const left = labelled(home);
+      assert.deepEqual([left.containers.length, left.volumes.length, left.networks.length], [0, 0, 0], 'nothing of this world is left in Docker');
+    }
+  });
+
+  test('XM3 an ML project\'s data: the helper\'s container reads /data/x.csv with pandas and cannot write, append or delete there; network off', LONG, async () => {
+    const { flowWorld, useFixture, sound } = require('./helpers/agentFlowWorld.cjs');
+    const { homeLabel } = loadTs('src/shared/nexus/homeLabel.ts');
+    const crypto = require('node:crypto');
+    const w = await flowWorld({ real: true });
+    const home = homeLabel(w.dataHome.root);
+    try {
+      await useFixture(w, 'pytest-app');
+      w.db.transaction(() => {
+        w.db.prepare('UPDATE project_workspaces SET is_primary = 0 WHERE project_id = ? AND is_primary = 1').run(w.PROJECT);
+        const row = w.db.prepare("SELECT id FROM project_workspaces WHERE project_id = ? AND workspace_id = 'ml'").get(w.PROJECT);
+        if (row) w.db.prepare("UPDATE project_workspaces SET status = 'active', is_primary = 1 WHERE id = ?").run(row.id);
+        else w.db.prepare(`INSERT INTO project_workspaces (id, project_id, workspace_id, objective, status, is_primary, source, created_by, created_at, updated_at)
+          VALUES ('pw-ml-xm3', ?, 'ml', NULL, 'active', 1, 'user', 'user:local', ?, ?)`).run(w.PROJECT, Date.now(), Date.now());
+      })();
+      // The person adds a dataset (main's window faked at its port: the location it would answer).
+      const src = h.tmpDir('nx-ml-data-');
+      const csv = path.join(src, 'x.csv');
+      fs.writeFileSync(csv, trainCsv(500));
+      const me = w.nx.principals.localUser();
+      const added = await w.nx.datasets.add(me, w.PROJECT, async () => csv);
+      assert.equal(added.added.file, 'x.csv');
+      const copy = path.join(w.dataHome.root, 'datasets', w.PROJECT, 'files', 'x.csv');
+      const hashOf = (p) => crypto.createHash('sha256').update(fs.readFileSync(p)).digest('hex');
+      const before = hashOf(copy);
+      await w.snapshot();
+      await w.consent();
+      await w.until(() => (w.nx.exec.health().images.find((i) => i.profile === 'ml-python') ?? {}).matches === true, 'the ML kit is seen by the probe', 3 * MIN);
+      const job = [
+        'import json, os, socket',
+        'import pandas as pd',
+        'r = {}',
+        'df = pd.read_csv("/data/x.csv")',
+        'r["shape"] = [int(df.shape[0]), int(df.shape[1])]',
+        'r["first"] = list(df.columns)[:3]',
+        'def attempt(name, fn):',
+        '    try:',
+        '        fn()',
+        '        r[name] = "done"',
+        '    except Exception as e:',
+        '        r[name] = "refused " + type(e).__name__ + " " + str(getattr(e, "errno", ""))',
+        'attempt("write", lambda: open("/data/new.txt", "w").write("x"))',
+        'attempt("append", lambda: open("/data/x.csv", "a").write("9"))',
+        'attempt("delete", lambda: os.remove("/data/x.csv"))',
+        'attempt("mkdir", lambda: os.mkdir("/data/sub"))',
+        'attempt("network", lambda: socket.create_connection(("pypi.org", 443), timeout=3))',
+        'r["listing"] = sorted(os.listdir("/data"))',
+        'print("DATA-JOB " + json.dumps(r))'
+      ].join('\n');
+      w.script(() => [{ op: 'call', tool: 'sandbox_exec', args: { argv: ['python', '-c', job], cwd: '/workspace', timeoutMs: 5 * MIN } }, { op: 'complete' }]);
+      const r = await w.turn('Profile my data', { ms: 15 * MIN });
+      const at = w.db.prepare('SELECT state, environment_json, sandbox_json FROM job_attempts WHERE job_id = ? ORDER BY n DESC').get(r.jobId);
+      const env = JSON.parse(at.environment_json);
+      const sb = JSON.parse(at.sandbox_json);
+      assert.equal(env.profile, 'ml-python', 'the helper\'s container is the ML kit');
+      assert.equal(sb.network.mode, 'none');
+      assert.deepEqual(sb.mounts.filter((m) => m.containerPath === '/data'), [{ kind: 'datasets', containerPath: '/data', readOnly: true }], 'exactly one read-only /data mount, recorded without a host path');
+      const ex = w.execResults(r.jobId);
+      assert.equal(ex.length, 1, JSON.stringify(ex));
+      assert.equal(ex[0].exit, 0, JSON.stringify(ex[0]));
+      const line = ex[0].stdout.split('\n').find((l) => l.startsWith('DATA-JOB '));
+      assert.ok(line, ex[0].stdout);
+      const got = JSON.parse(line.slice('DATA-JOB '.length));
+      console.log(`# XM3 ${JSON.stringify(got)}`);
+      assert.deepEqual(got.shape, [500, 10], 'pandas read the whole file');
+      assert.deepEqual(got.first, ['f0', 'f1', 'f2']);
+      for (const k of ['write', 'append', 'delete', 'mkdir']) assert.match(got[k], /^refused (OSError|PermissionError) 30$/, `${k}: read-only file system (EROFS): ${got[k]}`);
+      assert.match(got.network, /^refused /, 'no network');
+      assert.deepEqual(got.listing, ['x.csv'], 'only the project\'s own data, nothing written there');
+      assert.equal(hashOf(copy), before, 'Nexus\'s copy is unchanged on the host');
+      assert.equal(hashOf(csv), before, 'the person\'s original is unchanged');
+      assert.equal(at.state, 'succeeded');
+      sound(w, 'XM3');
     } finally {
       try { await w.close(); } catch { /* best effort */ }
       const left = labelled(home);
