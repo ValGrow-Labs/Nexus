@@ -115,6 +115,11 @@ const BARE_ID = /\b[0-9A-Z]{26}\b/g;
 export function plainHelperText(text: string): string {
   return text.replace(ID_PHRASE, '').replace(BARE_ID, '').replace(/[ \t]{2,}/g, ' ').replace(/\s+([.,;:])/g, '$1');
 }
+/** The one plain line shown when a conversation started from an earlier suggested change that is not in the project yet (no ids). */
+export function continuingLine(d: Pick<SessionDetailView, 'continuesFrom'> | null | undefined): string | null {
+  const t = d?.continuesFrom?.title;
+  return typeof t === 'string' && t.trim() !== '' ? `Continuing from your earlier suggested changes: ${plainHelperText(t.trim())}` : null;
+}
 export function replyOf(d: Pick<SessionDetailView, 'messages'> | null | undefined): string | null {
   const m = d ? [...d.messages].reverse().find((x) => x.from === 'agent' && hasWords(x.text)) : undefined;
   if (!m) return null;

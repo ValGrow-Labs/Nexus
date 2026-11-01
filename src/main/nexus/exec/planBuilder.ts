@@ -668,7 +668,9 @@ function buildGitEnginePlan(ctx: PlanContext, base: Omit<EnginePlan, 'kind' | 't
         integrationRef: integrationRefOf(p.branch), branch: p.branch as string,
         // B6: the integration head main recorded (null: none known, so the ref is never moved).
         expectedIntegrationHead: p.integrationBaseline === undefined || p.integrationBaseline === null ? null : commitParam(p, 'integrationBaseline'),
-        allowRewrite: p.allowRewrite === true });
+        allowRewrite: p.allowRewrite === true,
+        // A new session continuing the newest unmerged suggested change starts from that change's commit (main's choice, a full commit id).
+        baseCommit: p.baseCommit === undefined || p.baseCommit === null ? null : commitParam(p, 'baseCommit') });
     }
     case 'changeset.collect': {
       let name = sessionName(p.sessionId);

@@ -36,6 +36,7 @@ import type { JobService } from '../jobs/jobService';
 import { appendJobEventTx } from '../exec/events';
 import { GIT_BRANCH_RE, sessionName } from '../exec/planBuilder';
 import { integrationBaseline, rewriteAllowed } from './integrationBaseline';
+import { continuationOf } from './continuation';
 
 /** How long an A3 request waits for its answer (as every approval: 15 minutes). */
 export const A3_TTL_MS = 15 * 60_000;
@@ -152,7 +153,7 @@ export class WorktreeService {
   }
 
   /** See the module header. Never writes to the repository itself. `o.reuseFrom`: an interrupted session whose worktree this session continues. */
-  ensure(system: Principal, sessionId: string, turnJobId: string, o?: { reuseFrom?: string | null }): EnsureResult {
+  ensure(system: Principal, sessionId: string, turnJobId: string, o?: { reuseFrom?: string | null; continueFrom?: string | null }): EnsureResult {
     if (!this.isSystem(system)) throw new PlatformError('denied', 'worktrees are prepared by the system', { reason: 'system_only' });
     const s = typeof sessionId === 'string'
       ? this.db.prepare('SELECT id, project_id, workspace_id, participation_id, principal_id FROM agent_sessions WHERE id = ?').get(sessionId) as SessionRow | undefined
@@ -205,7 +206,7 @@ export class WorktreeService {
         try { const e = last.error_json ? JSON.parse(last.error_json) as { code?: unknown } : null; if (e && typeof e.code === 'string') code = e.code; } catch { /* kept */ }
         return { failed: code };
       }
-      return { waiting: 'job', jobId: this.enqueueTx(system, s, turn, branch, jobs.length + 1, now) };
+      return { waiting: 'job', jobId: this.enqueueTx(system, s, turn, branch, jobs.length + 1, now, o?.continueFrom ?? null) };
     });
   }
 
@@ -226,15 +227,19 @@ export class WorktreeService {
     return id;
   }
 
-  private enqueueTx(system: Principal, s: SessionRow, turn: JobLite, branch: string, seq: number, now: number): string {
+  private enqueueTx(system: Principal, s: SessionRow, turn: JobLite, branch: string, seq: number, now: number, continueFrom: string | null = null): string {
     const recipe = getRecipe('repo.worktree')!;
+    // A new conversation continuing the newest unmerged suggested change starts from that change's commit (read here from Nexus's own records, never from
+    // the agent): a change set of this project that is waiting (candidate, blocked or kept), with a full commit id. The runner still checks the rest.
+    const cont = continueFrom ? continuationOf(this.db, s.project_id, continueFrom) : null;
+    const baseCommit = cont && ['candidate', 'failed', 'active'].includes(cont.status) ? cont.commit : null;
     const res = this.deps.jobs.createTx(system, {
       kind: 'tool.run', projectId: s.project_id, workspaceId: s.workspace_id, sessionId: s.id, parentJobId: turn.id,
       idempotencyKey: `repo.worktree:${s.id}:${seq}`, recipeId: recipe.id,
       // B6: the integration head Nexus recorded (null: none yet). The runner may move the ref forward to the user's branch only from it.
       // `allowRewrite`: nothing was accepted after that head, so the user's amend, rebase or reset may move the ref (computed here, from records).
       params: { sessionId: s.id, branch, integrationBaseline: integrationBaseline(this.db, s.project_id, `refs/nexus/accepted/${branch}`).head,
-        allowRewrite: rewriteAllowed(this.db, s.project_id, `refs/nexus/accepted/${branch}`) },
+        allowRewrite: rewriteAllowed(this.db, s.project_id, `refs/nexus/accepted/${branch}`), ...(baseCommit ? { baseCommit } : {}) },
       retry: { ...WORKTREE_RETRY, backoffMs: [...WORKTREE_RETRY.backoffMs] }
     });
     const cap = { action: 'system.repo.worktree', recipe: recipe.id, recipeVersion: recipe.version, executor: recipe.executor, network: recipe.network, profile: null };

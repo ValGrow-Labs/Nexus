@@ -368,7 +368,8 @@ export function sessionDetailView(d: SessionDetailView): SessionDetailView {
     messages: d.messages.map((m) => ({ seq: m.seq, ts: m.ts, from: m.from === 'user' ? 'user' : 'agent', text: redactSecretText(String(m.text)).slice(0, 4000), displayOnly: true })),
     toolCalls: d.toolCalls.map((t) => ({ seq: t.seq, ts: t.ts, jobId: t.jobId, tool: label(t.tool) ?? 'tool', ok: t.ok, resultBytes: t.resultBytes })),
     versions: d.versions.map((v) => ({ versionId: v.versionId, kind: label(v.kind) ?? 'artifact', status: v.status })),
-    approvals: d.approvals.map((a) => ({ id: a.id, status: a.status, reason: label(a.reason) ?? 'approval', expiresAt: a.expiresAt })) };
+    approvals: d.approvals.map((a) => ({ id: a.id, status: a.status, reason: label(a.reason) ?? 'approval', expiresAt: a.expiresAt })),
+    continuesFrom: d.continuesFrom && typeof d.continuesFrom.title === 'string' ? { title: redactSecretText(d.continuesFrom.title).slice(0, 200) } : null };
 }
 
 export function reviewViewOf(r: ServiceReviewView, jobId: string | null): ReviewViewOut {

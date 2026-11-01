@@ -37,6 +37,8 @@ export interface ContextJob {
   id: string; projectId: string; workspaceId: string; sessionId: string | null;
   /** Main's own notes to the agent (for example that its working copy is fresh); secret-checked like every field. */
   notes?: readonly string[];
+  /** "Earlier in this conversation": main's own plain record of the earlier work this turn continues (already bounded); secret-checked like every field. */
+  earlier?: string | null;
 }
 export interface ContextResolverDeps { dataHome: AgentDataHome | null; now: () => number; system: Principal }
 export interface ContextResult { path: string; sha256: string; bytes: number }
@@ -66,6 +68,7 @@ export class ContextResolver {
     };
 
     if (Array.isArray(job.notes) && job.notes.length > 0) field('Notes', job.notes.join('\n'));
+    if (typeof job.earlier === 'string') field('Earlier in this conversation', job.earlier);
     const domain = getDomain(job.workspaceId);
     field('Domain', domain ? `${domain.label} (${domain.id})` : job.workspaceId);
     if (domain) {

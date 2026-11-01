@@ -4,7 +4,7 @@ import { useExecStore, useHealth } from '../data/useExecution';
 import { useSessionDetail, useSessions, useTurnJobs } from '../data/useAgents';
 import { usePlatform } from '../data/platformStore';
 import { Button } from '../ui/Button';
-import { agentFailText, agentPanelModel, chatItems, liveStepLine, replyOf } from './agentModel';
+import { agentFailText, agentPanelModel, chatItems, continuingLine, liveStepLine, replyOf } from './agentModel';
 import { buildView } from './buildModel';
 import { usePendingStart } from './pendingStart';
 
@@ -78,6 +78,7 @@ export function BuildStage({ projectId, blocked, reviewReady, onReview, blockedC
         <span>{view.status}</span>
         {elapsed && <span className="nx-build__time">{elapsed}</span>}
       </p>
+      {continuingLine(detail.data) && <p className="nx-build__next" data-continuing="true">{continuingLine(detail.data)}</p>}
       {view.next && <p className="nx-build__next">{view.next}</p>}
       {view.steps.length > 0 && (
         <ol className="nx-build__steps" aria-label="What the AI helper has done">

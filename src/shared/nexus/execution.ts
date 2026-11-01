@@ -276,7 +276,10 @@ export type EngineTask =
   /** `expectedIntegrationHead`: the integration head main RECORDED (B6): the ref may be moved forward from it to the user's branch head. */
   | { engine: 'repo.worktree'; repoPath: string; worktreePath: string; ref: string; integrationRef: string; branch: string; expectedIntegrationHead?: string | null;
       /** B6: main's own verdict that nothing was accepted after the recorded head, so a rewritten branch may replace the ref. */
-      allowRewrite?: boolean }
+      allowRewrite?: boolean;
+      /** A new session continues the newest suggested change that is not merged yet: main's choice of its commit (never an agent's). The session ref starts there
+       *  when the integration head is its ancestor; otherwise (or when the commit is gone) it starts at the integration head, as before. */
+      baseCommit?: string | null }
   /** Commits the worktree's changes within `scope` on `ref` (sizes capped); refuses links, nested repositories and gitlinks. */
   | { engine: 'changeset.collect'; repoPath: string; worktreePath: string; gitDir: string; ref: string; integrationRef: string;
       scope: string[]; message: string; maxFileBytes: number; maxTotalBytes: number }

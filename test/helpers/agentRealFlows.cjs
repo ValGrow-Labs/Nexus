@@ -268,6 +268,48 @@ const xa = {
       assert.deepEqual(w.userState(), before, 'the user\'s folder is untouched');
       sound(w, 'XA7');
     });
+  },
+
+  /**
+   * XA8 continuing an earlier suggested change in a NEW conversation (real Docker, real node:test): turn 1 makes a change whose test genuinely fails (blocked);
+   * turn 2 starts a new conversation ("the test fails: make the code and the test agree, then run the tests"): its working copy already holds turn 1's files,
+   * its context file says what happened and which check failed, it fixes the test, runs the tests in its container (they pass), registers, and the change set
+   * is the next version of the earlier one and passes its real checks. The user's own folder is never touched.
+   */
+  async XA8() {
+    return withWorld('node-test-app', async (w) => {
+      const before = w.userState();
+      const one = await makeChange(w, { files: REAL.node.fail, title: 'Add a sum with a failing test', clientKey: 'xa8-v1', message: 'Add a sum function with a test' });
+      assert.equal(one.turn.job.state, 'completed', one.turn.job.error_json);
+      assert.equal(await w.until_candidate(one.cs, 20 * MIN), 'failed', 'the real test run failed: the change is blocked');
+      const seen = { files: [], context: '' };
+      w.script((plan) => {
+        const root = plan.worktree.hostPath;
+        seen.files = [fs.existsSync(path.join(root, 'src', 'sum.js')) ? 'src/sum.js' : null, fs.existsSync(path.join(root, 'test', 'sum.test.js')) ? 'test/sum.test.js' : null].filter(Boolean);
+        try { seen.context = fs.readFileSync(path.join(w.dataHome.root, 'jobs', plan.jobId, 'agent', 'context.md'), 'utf8'); } catch { seen.context = ''; }
+        w.edit(plan, REAL.node.fixed);
+        return [{ op: 'delta', text: 'The test expected 3; it now expects 2.' },
+          { op: 'call', tool: 'sandbox_exec', args: { argv: ['node', '--test'], cwd: '/workspace', timeoutMs: 120_000 } },
+          { op: 'call', tool: 'changeset_register', args: { title: 'Add a sum', summary: 'The test and the code agree.', clientKey: 'xa8-v2' } },
+          { op: 'usage', inputTokens: 100, outputTokens: 30, costUsdCents: 1, toolCalls: 2, estimated: false }, { op: 'complete' }];
+      });
+      const t2 = await w.turn('the test fails: make the code and the test agree, then run the tests', { sessionId: null });
+      assert.equal(t2.job.state, 'completed', t2.job.error_json);
+      assert.notEqual(t2.sessionId, one.turn.sessionId, 'a new conversation');
+      assert.deepEqual(seen.files, ['src/sum.js', 'test/sum.test.js'], 'the earlier change\'s files were already in the working copy');
+      assert.match(seen.context, /## Earlier in this conversation/);
+      assert.match(seen.context, /Add a sum function with a test/);
+      assert.match(seen.context, /Its checks did not pass\. What failed: the tests/);
+      const two = w.changeSetsOf(t2.jobId)[0];
+      assert.ok(two, 'turn 2 registered a change');
+      assert.equal(await w.until_candidate(two, 20 * MIN), 'candidate', 'the real test run passed');
+      assert.equal(w.checks(two)['cs.tests_pass'], 'passed');
+      assert.equal(w.versionRow(two).artifact_id, w.versionRow(one.cs).artifact_id, 'the next version of the same suggested change');
+      assert.ok(w.db.prepare("SELECT 1 FROM artifact_edges WHERE from_version_id = ? AND to_version_id = ? AND relation = 'derived_from'").get(two, one.cs), 'v2 derived_from v1');
+      assert.equal(w.checks(one.cs)['cs.tests_pass'], 'failed', 'v1 keeps its own failed result');
+      assert.deepEqual(w.userState(), before, 'the user\'s files and branch are untouched');
+      sound(w, 'XA8');
+    });
   }
 };
 

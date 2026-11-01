@@ -24,6 +24,7 @@ import { PlatformError } from '../errors';
 import { immediateTx } from '../db/tx';
 import { appendJobEventTx } from '../exec/events';
 import type { JobService } from '../jobs/jobService';
+import { continuationOf } from './continuation';
 
 /** How long `register()` waits for the collect job to be ingested before answering `pending` (F23's 120 s). */
 export const CHANGESET_REGISTER_WAIT_MS = 120_000;
@@ -110,6 +111,27 @@ export class ChangeSetService {
     if (!last || last.status === 'draft') throw new PlatformError('invalid', 'the change set is still being checked', { reason: 'not_revisable' });
   }
 
+  /**
+   * The change-set artifact this conversation continues, or null: the first turn of the session names it (`continuesFrom`, written by main), the session's
+   * working copy really started at that version's commit, this session has not registered a change yet, and the artifact is still revisable by this participation.
+   */
+  private continuedArtifact(claims: CapabilityClaims): string | null {
+    try {
+      const first = this.db.prepare("SELECT params_json FROM jobs WHERE session_id = ? AND kind = 'agent.run' ORDER BY created_at, rowid LIMIT 1").get(claims.sessionId) as { params_json: string } | undefined;
+      const p = first ? JSON.parse(first.params_json) as unknown : null;
+      const id = isObj(p) && typeof p.continuesFrom === 'string' ? p.continuesFrom : null;
+      if (!id) return null;
+      const cont = continuationOf(this.db, claims.projectId, id);
+      if (!cont) return null;
+      const wt = this.db.prepare('SELECT base_commit AS b FROM session_worktrees WHERE session_id = ? AND removed_at IS NULL').get(claims.sessionId) as { b: string } | undefined;
+      if (!wt || wt.b !== cont.commit) return null;
+      const made = this.db.prepare("SELECT 1 FROM artifact_versions v JOIN jobs j ON j.id = v.produced_by_job_id WHERE j.session_id = ? AND j.recipe_id = 'changeset.collect' LIMIT 1").get(claims.sessionId);
+      if (made) return null;
+      this.requireRevisable(claims, cont.artifactId);
+      return cont.artifactId;
+    } catch { return null; }
+  }
+
   async register(claims: CapabilityClaims, args: ChangeSetRegisterArgs): Promise<ChangeSetRegisterAnswer> {
     if (typeof args?.title !== 'string' || args.title.trim().length === 0 || args.title.length > MAX_TITLE_CHARS) {
       throw new PlatformError('invalid', `title must be 1 to ${MAX_TITLE_CHARS} characters`);
@@ -121,6 +143,9 @@ export class ChangeSetService {
     if (requirementVersionIds.length > MAX_REQUIREMENTS) throw new PlatformError('invalid', `at most ${MAX_REQUIREMENTS} requirements`);
     this.requireRequirements(claims.projectId, requirementVersionIds);
     if (args.reviseArtifactId !== undefined) this.requireRevisable(claims, args.reviseArtifactId);
+    // A conversation that was started from an earlier suggested change (its working copy began at that change's commit) registers its FIRST change as the
+    // next version of that change set, unless the agent named another: the lineage edge `derived_from` the earlier version, one change to review.
+    const revise = args.reviseArtifactId ?? this.continuedArtifact(claims);
     const branch = this.branchOf(claims.projectId);
     if (!branch) throw new PlatformError('invalid', 'the project repository has no recorded branch yet', { reason: 'branch_unknown' });
     const recipe = getRecipe('changeset.collect');
@@ -134,7 +159,7 @@ export class ChangeSetService {
         parentJobId: claims.jobId, idempotencyKey: `changeset.collect:${claims.jobId}:${seq}`, recipeId: recipe.id,
         params: {
           sessionId: claims.sessionId, branch, scope, title: args.title, summary: args.summary,
-          requirementVersionIds, ...(args.reviseArtifactId ? { reviseArtifactId: args.reviseArtifactId } : {}),
+          requirementVersionIds, ...(revise ? { reviseArtifactId: revise } : {}),
           turnJobId: claims.jobId
         },
         retry: { idempotent: false, maxAttempts: 1, backoffMs: [] }

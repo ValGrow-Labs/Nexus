@@ -135,6 +135,39 @@ test('RW3 + RW12 the worktree job creates the integration ref at the branch head
   assert.deepEqual(all.filter((r) => !r.startsWith('refs/heads/')).sort(), ['refs/nexus/accepted/main', `refs/nexus/job/${w.name}`].sort());
 });
 
+test('RW15 a new session continues an earlier suggested change: the session ref starts at its commit when the integration head is its ancestor; a missing commit or one that does not build on the integration head falls back to the integration head (never a failure); the user\'s side is unchanged', async () => {
+  const w = world({ 'a.txt': 'a\n' });
+  const before = userState(w.repo);
+  const head = before.head;
+  const tree = out(w.repo, ['rev-parse', 'HEAD^{tree}']);
+  // An earlier session's change: a commit on top of the project's head, kept only under a Nexus ref.
+  const earlier = out(w.repo, ['commit-tree', tree, '-p', head, '-m', 'earlier change']);
+  git(w.repo, ['update-ref', `refs/nexus/job/${'z'.repeat(26)}`, earlier]);
+  const ok = await ensureWorktree(w.g, { ...w.task, baseCommit: earlier }, { dataRoot: w.dataRoot });
+  assert.equal(ok.base, earlier); assert.equal(ok.continuedFrom, earlier); assert.equal(ok.baseFallback, undefined);
+  assert.equal(refOf(w.repo, w.task.ref), earlier, 'the session ref starts at the earlier change');
+  assert.equal(ok.integrationHead, head, 'the integration head is untouched');
+  assert.equal(refOf(w.repo, 'refs/nexus/accepted/main'), head);
+  assert.deepEqual(userState(w.repo), before, 'the user\'s HEAD, branch, index, files and branch list are unchanged');
+  // A commit that is not here: the session starts at the integration head, with the reason.
+  const m = world({ 'a.txt': 'a\n' });
+  const missing = await ensureWorktree(m.g, { ...m.task, baseCommit: 'f'.repeat(40) }, { dataRoot: m.dataRoot });
+  assert.equal(missing.base, missing.integrationHead); assert.equal(missing.continuedFrom, undefined); assert.equal(missing.baseFallback, 'commit_missing');
+  // A commit that does not build on the integration head (a root commit of its own history): not used.
+  const n = world({ 'a.txt': 'a\n' });
+  const stranger = out(n.repo, ['commit-tree', out(n.repo, ['rev-parse', 'HEAD^{tree}']), '-m', 'unrelated']);
+  const far = await ensureWorktree(n.g, { ...n.task, baseCommit: stranger }, { dataRoot: n.dataRoot });
+  assert.equal(far.base, far.integrationHead); assert.equal(far.baseFallback, 'not_on_integration_head');
+  // Not a commit id at all: refused by the plan builder before anything runs (main only ever writes full ids).
+  const jobId = newId(Date.now()); const attemptId = newId(Date.now());
+  const mk = (baseCommit) => () => buildPlan({ job: { id: jobId, projectId: 'p-x' }, attempt: { id: attemptId, n: 1 }, bootId: newId(Date.now()), recipe: getRecipe('repo.worktree'),
+    dataHomeRoot: n.home, workRel: `work/${jobId}/1`, logRel: `logs/jobs/${jobId}/1.log`, inputs: [], repoPath: n.repo,
+    params: { sessionId: n.sid, branch: 'main', baseCommit } });
+  assert.throws(mk('main; rm -rf'), /not a full commit id/);
+  assert.equal(mk(earlier)().task.baseCommit, earlier);
+  assert.equal(mk(undefined)().task.baseCommit, null);
+});
+
 test('RW14 (runner) the worktree job is idempotent: a second run, a run after only the refs were made, and a run after the folder vanished all end in the same locked worktree', async () => {
   const w = world();
   const first = await ensureWorktree(w.g, w.task, { dataRoot: w.dataRoot });

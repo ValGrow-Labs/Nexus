@@ -332,6 +332,8 @@ export interface SessionDetailView extends SessionView {
   /** The versions the session's turns registered. */
   versions: { versionId: VersionId; kind: string; status: VersionStatus }[];
   approvals: { id: string; status: ApprovalStatus; reason: string; expiresAt: number }[];
+  /** Present when this conversation's working copy started from an earlier suggested change that is not in the project yet: its title (no ids). */
+  continuesFrom?: { title: string } | null;
 }
 export type ReviewDecision = 'approve' | 'request_changes' | 'reject';
 export interface ReviewView {

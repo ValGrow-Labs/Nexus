@@ -16,7 +16,7 @@ import { Icon } from '../icons';
 import { Button } from '../ui/Button';
 import { ApprovalList } from '../project/ApprovalsSection';
 import { SessionLog } from './SessionLog';
-import { ISOLATION_NOTE, agentFailText, agentPanelModel, chatItems, liveStepLine, replyOf, usageShort } from './agentModel';
+import { ISOLATION_NOTE, agentFailText, agentPanelModel, chatItems, continuingLine, liveStepLine, replyOf, usageShort } from './agentModel';
 
 /** How often the elapsed time is refreshed while a request runs (a slow tick: it is not a clock). */
 const PROGRESS_TICK_MS = 5_000;
@@ -154,6 +154,7 @@ export function AgentPanel({ projectId, workspaceId, reviewReady = 0, onReview, 
         </div>
       )}
       <div className="nx-ag__chat" ref={bodyRef} tabIndex={0} aria-label="Conversation with the AI helper">
+        {continuingLine(detail.data) && <p className="nx-ag__hint" data-continuing="true">{continuingLine(detail.data)}</p>}
         {items.length === 0 && !showTail && <p className="nx-ag__hint">{DOCK_GREETING}</p>}
         {items.map((m) => m.kind === 'steps'
           ? <p key={m.key} className="nx-ag__step">{m.text}</p>

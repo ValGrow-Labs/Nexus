@@ -309,6 +309,10 @@ export interface WorktreeFacts {
   integrationRewrite?: boolean;
   /** The user's branch head the task saw. */
   branchHead?: string;
+  /** The session ref was started at this commit (the newest unmerged suggested change), not at the integration head. */
+  continuedFrom?: string;
+  /** A commit was asked for but not used (`commit_missing`, `not_on_integration_head`, `compare_failed`): the session started at the integration head. */
+  baseFallback?: string;
 }
 
 /**
@@ -331,7 +335,7 @@ export interface WorktreeFacts {
  * The ref only ever moves forward along the user's own history; it never takes an accept's or an agent's commit.
  */
 export async function ensureWorktree(g: HardenedGit, t: { repoPath: string; worktreePath: string; ref: string; integrationRef: string; branch: string;
-  expectedIntegrationHead?: string | null; allowRewrite?: boolean },
+  expectedIntegrationHead?: string | null; allowRewrite?: boolean; baseCommit?: string | null },
   o: { dataRoot: string; signal?: AbortSignal; fs?: typeof fsp }): Promise<WorktreeFacts> {
   const fs = o.fs ?? fsp;
   if (!BRANCH_RE.test(t.branch) || t.integrationRef !== `refs/nexus/accepted/${t.branch}` || !isNexusRef(t.ref, 'job')) {
@@ -399,8 +403,23 @@ export async function ensureWorktree(g: HardenedGit, t: { repoPath: string; work
     }
   }
   let base = await resolveRef(g, repo, n, t.ref, o.signal);
+  let continuedFrom: string | undefined;
+  let baseFallback: string | undefined;
   if (!base) {
-    await updateRefCas(g, repo, n, t.ref, integrationHead, ZERO, o.signal);
+    // A new session that continues the newest unmerged suggested change starts at that change's commit, but only when it is a commit that is here and
+    // builds on the integration head (so the change set made from it is a plain continuation, and accepting it stays a fast merge). Anything else: the
+    // integration head, exactly as before, with the reason in the facts (never a failure).
+    let startAt = integrationHead;
+    if (typeof t.baseCommit === 'string' && COMMIT_RE.test(t.baseCommit)) {
+      const have = await g.run(repo, ['cat-file', '-e', `${t.baseCommit}^{commit}`], { neutral: n, signal: o.signal });
+      if (have.code !== 0) baseFallback = 'commit_missing';
+      else {
+        const desc = await g.run(repo, ['merge-base', '--is-ancestor', integrationHead, t.baseCommit], { neutral: n, signal: o.signal });
+        if (desc.code === 0) { startAt = t.baseCommit; continuedFrom = t.baseCommit; }
+        else baseFallback = desc.code === 1 ? 'not_on_integration_head' : 'compare_failed';
+      }
+    }
+    await updateRefCas(g, repo, n, t.ref, startAt, ZERO, o.signal);
     base = await resolveRef(g, repo, n, t.ref, o.signal);
     if (!base) throw new GitFailure('git_failed', 'the session ref could not be created');
   }
@@ -429,6 +448,7 @@ export async function ensureWorktree(g: HardenedGit, t: { repoPath: string; work
     if (lock.code !== 0 && !(await isLocked(g, repo, n, t.worktreePath, o.signal))) throw new GitFailure('git_failed', 'the worktree could not be locked');
   }
   return { ok: true, integrationHead, integrationCreated, ref: t.ref, base, worktree: `wt/${name}`, locked: true, reused, branchHead: head,
+    ...(continuedFrom ? { continuedFrom } : {}), ...(baseFallback ? { baseFallback } : {}),
     ...(integrationResynced ? { integrationResynced: true, integrationBefore, ...(integrationRewrite ? { integrationRewrite: true } : {}) } : {}) };
 }
 
