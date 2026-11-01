@@ -119,7 +119,8 @@ const ID_WORD = String.raw`(?:[Vv]ersion|[Aa]rtifact|[Jj]ob|[Ss]ession)\s+[Ii][D
 const ID_PHRASE = new RegExp(String.raw`\s*(?:with\s+)?${ID_WORD}(?:\s*(?:,|and)\s*(?:the\s+)?${ID_WORD})*`, 'g');
 const BARE_ID = /\b[0-9A-Z]{26}\b/g;
 export function plainHelperText(text: string): string {
-  return withoutToolMarkup(text).replace(ID_PHRASE, '').replace(BARE_ID, '').replace(/[ \t]{2,}/g, ' ').replace(/\s+([.,;:])/g, '$1').trim();
+  // Bold marks (`**`) and code quotes (backticks) the helper typed are not shown (the words and the line breaks stay).
+  return withoutToolMarkup(text).replace(/\*{2,}|`/g, '').replace(ID_PHRASE, '').replace(BARE_ID, '').replace(/[ \t]{2,}/g, ' ').replace(/\s+([.,;:])/g, '$1').trim();
 }
 /** The one plain line shown when a conversation started from an earlier suggested change that is not in the project yet (no ids). */
 export function continuingLine(d: Pick<SessionDetailView, 'continuesFrom'> | null | undefined): string | null {

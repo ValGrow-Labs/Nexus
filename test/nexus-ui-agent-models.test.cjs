@@ -1482,4 +1482,6 @@ test('tool calls and results a weaker model typed into the chat are not shown as
   assert.equal(A.plainHelperText(`I wrote the page. ${blob} It is ready.`), 'I wrote the page. It is ready.');
   assert.equal(A.chatItems(msg(`Done. ${blob}`))[0].text, 'Done.');
   assert.equal(A.plainHelperText('Use the <b> tag for bold.'), 'Use the <b> tag for bold.');
+  // bold marks and code quotes the helper typed are not shown; its line breaks and a lone * stay
+  assert.equal(A.plainHelperText('I added an `/about` page.\n- **`src/server.js`:** the new page.\n- ***Done***. 5 * 3 stays.'), 'I added an /about page.\n- src/server.js: the new page.\n- Done. 5 * 3 stays.');
 });

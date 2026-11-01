@@ -334,7 +334,7 @@
 .nx-build__steps li[data-now="true"] { color: var(--nx-ink); font-weight: 600; }
 .nx-build__mark { width: 14px; flex: none; color: var(--nx-text-3); }
 .nx-build__steps li[data-now="true"] .nx-build__mark::before { content: ""; display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--nx-ink); animation: nx-build-pulse 1.4s ease-in-out infinite; }
-.nx-build__said { margin: 0; display: grid; gap: var(--nx-s1); padding: var(--nx-s3) var(--nx-s4); border: 1px solid var(--nx-border); border-radius: var(--nx-r-obj); max-width: 64ch; }
+.nx-build__said { margin: 0; display: grid; gap: var(--nx-s1); padding: var(--nx-s3) var(--nx-s4); border: 1px solid var(--nx-border); border-radius: var(--nx-r-obj); max-width: 64ch; white-space: pre-line; overflow-wrap: anywhere; }
 .nx-build__who { font: 600 12px var(--nx-font); color: var(--nx-text-3); }
 .nx-build__acts { display: flex; gap: var(--nx-s3); align-items: center; flex-wrap: wrap; }
 .nx-build__big { min-height: 48px; padding: 0 var(--nx-s6); font-size: 16px; }

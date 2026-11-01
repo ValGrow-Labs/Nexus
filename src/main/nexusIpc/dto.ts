@@ -161,6 +161,9 @@ const textOrNull = (s: unknown, max = MAX_VIEW_TEXT): string | null => (typeof s
 const num = (n: unknown): number | null => (typeof n === 'number' && Number.isFinite(n) ? n : null);
 const LABEL = /^[a-z][a-z0-9_.:-]{0,63}$/;
 const label = (s: unknown): string | null => (typeof s === 'string' && LABEL.test(s) ? s : null);
+/** A tool's name as a program wrote it (Nexus's own are lower case, the AI program's own start with a capital: `Read`, `Edit`): a plain name, nothing else. */
+const TOOL_NAME = /^[A-Za-z][A-Za-z0-9_.:-]{0,63}$/;
+const toolName = (s: unknown): string | null => (typeof s === 'string' && TOOL_NAME.test(s) ? s : null);
 
 /** `sha256:<64 hex>` -> `sha256:<12 hex>`; anything else -> null (never a repository name, a tag or a host). */
 export function shortImageId(id: unknown): string | null {
@@ -366,7 +369,7 @@ export function sessionDetailView(d: SessionDetailView): SessionDetailView {
       createdAt: t.createdAt, startedAt: t.startedAt, finishedAt: t.finishedAt })),
     // Display-only lines the agent wrote: redacted again, never evidence.
     messages: d.messages.map((m) => ({ seq: m.seq, ts: m.ts, from: m.from === 'user' ? 'user' : 'agent', text: redactSecretText(String(m.text)).slice(0, 4000), displayOnly: true })),
-    toolCalls: d.toolCalls.map((t) => ({ seq: t.seq, ts: t.ts, jobId: t.jobId, tool: label(t.tool) ?? 'tool', ok: t.ok, resultBytes: t.resultBytes })),
+    toolCalls: d.toolCalls.map((t) => ({ seq: t.seq, ts: t.ts, jobId: t.jobId, tool: toolName(t.tool) ?? 'tool', ok: t.ok, resultBytes: t.resultBytes })),
     versions: d.versions.map((v) => ({ versionId: v.versionId, kind: label(v.kind) ?? 'artifact', status: v.status })),
     approvals: d.approvals.map((a) => ({ id: a.id, status: a.status, reason: label(a.reason) ?? 'approval', expiresAt: a.expiresAt })),
     continuesFrom: d.continuesFrom && typeof d.continuesFrom.title === 'string' ? { title: redactSecretText(d.continuesFrom.title).slice(0, 200) } : null };
