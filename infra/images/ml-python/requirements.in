@@ -1,0 +1,19 @@
+# The ml-python image's packages (the machine learning kit). tools/nexus-lock-images.cjs --profile ml-python resolves each name and
+# every dependency for CPython 3.11 on Linux x86_64 from the PyPI JSON API (metadata only), and writes requirements.lock: exact
+# versions with the sha256 of the ONE wheel pip installs on the pinned base (compiled manylinux wheels allowed, glibc up to 2.36;
+# installed with pip --require-hashes --no-deps --only-binary=:all:). Edit this list, then run the lock tool; never edit
+# requirements.lock by hand. Every ML project gets these same packages, offline: nothing is installed per project.
+# None of these packages reaches the network on its own (no telemetry, no downloads at import or run time).
+numpy         # arrays and maths: what every package below is built on
+scipy         # statistics, optimisation and sparse matrices (scikit-learn needs it)
+pandas        # reading CSV and spreadsheet data into tables, cleaning and summarising it
+scikit-learn  # training and checking classic models (forests, linear models, clustering, metrics, train/test splits)
+matplotlib    # charts written as PNG files (headless: MPLBACKEND=Agg in the image)
+seaborn       # readable statistical charts on top of matplotlib
+openpyxl      # reading and writing .xlsx spreadsheets with pandas
+pyarrow       # reading and writing Parquet files with pandas
+joblib        # saving and loading a trained model as one file
+pytest        # the project's own tests still run in this kit (the same test runner as the Python kit)
+build         # with wheel and setuptools: the Python kit's build tools, so a Python package build of an ML project still works
+wheel
+setuptools

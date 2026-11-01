@@ -101,6 +101,54 @@
           "apkSha256": "0ac9e1294b7ce603832ba8384fefd2c917de5f0fdd9fbb75edb42b49eebe1d48"
         }
       }
+    },
+    "ml-python": {
+      "base": {
+        "ref": "docker.io/library/python:3.11-slim-bookworm",
+        "repository": "docker.io/library/python",
+        "digest": "sha256:0a310eeecf4e1f5a0743f9a6520c90c88d089c903ca5fd283f501e3a805f5f89",
+        "platformDigest": "sha256:8a00ecb83ed9d0864dfd102a1bdb2067fda907ceb30bb86d09da9ee558b19590"
+      },
+      "baseEnv": [
+        "GPG_KEY",
+        "LANG",
+        "PATH",
+        "PYTHON_SHA256",
+        "PYTHON_VERSION"
+      ],
+      "imageEnv": [
+        "GPG_KEY",
+        "LANG",
+        "MPLBACKEND",
+        "MPLCONFIGDIR",
+        "PATH",
+        "PYTHON_SHA256",
+        "PYTHON_VERSION"
+      ],
+      "entrypoint": [
+        "/opt/nexus/nexus-entry"
+      ],
+      "lockfiles": {
+        "ml-python/requirements.lock": "2016292ec576b5069e0d93748f52bea74c6c66a178c817ae49011d775ffcc4e7"
+      },
+      "contextSha256": "83b032064b8d34c0efe93bd8decc7b59bbe1e7e4bdaa48bbf206c86dc0f5e076",
+      "estimatedBytes": 1090901949,
+      "versions": {
+        "python": "3.11.17",
+        "numpy": "2.4.6",
+        "scipy": "1.17.1",
+        "pandas": "3.1.0",
+        "scikit-learn": "1.9.1",
+        "matplotlib": "3.11.2",
+        "seaborn": "0.13.2",
+        "openpyxl": "3.1.5",
+        "pyarrow": "26.0.0",
+        "joblib": "1.6.0",
+        "pytest": "9.2.0",
+        "build": "1.6.1",
+        "wheel": "0.48.0",
+        "setuptools": "84.2.1"
+      }
     }
   }
 }

@@ -19,7 +19,8 @@ const loadTs = require('./load-ts.cjs');
 const ROOT = path.resolve(__dirname, '..');
 const IMAGES = path.join(ROOT, 'infra', 'images');
 const LOCK = JSON.parse(fs.readFileSync(path.join(IMAGES, 'lock.json'), 'utf8'));
-const PROFILES = ['sde-node', 'sde-python', 'nexus-fwd'];
+// ml-python (the machine learning kit) is the fourth pinned image: the same base as sde-python, its own hash-pinned wheels.
+const PROFILES = ['sde-node', 'sde-python', 'nexus-fwd', 'ml-python'];
 const { contextSha256 } = loadTs('src/runner/imageBuilder.ts');
 const { loadImageProfiles, parseImageLock, imagesDirFor, LOCKED_PROFILE_IDS } = loadTs('src/main/nexusExec/profiles.ts');
 const { buildPlan, ALLOWED_ENV_NAMES, sandboxRecord } = loadTs('src/main/nexus/exec/planBuilder.ts');
@@ -82,9 +83,32 @@ test('IL3 the Dockerfiles: non-root 10001, HEALTHCHECK NONE, the locked entrypoi
     assert.ok(d.includes(`ARG NEXUS_VERSIONS="${Object.entries(l.versions).map(([k, v]) => `${k}=${v}`).join(' ')}"`), `${p} versions`);
     assert.match(d, /^LABEL nexus\.versions="\$NEXUS_VERSIONS"$/m, p);
     assert.doesNotMatch(d, /:latest\b|^ADD /m, p);
-    assert.doesNotMatch(d, /^ENV /m, `${p}: the image declares no environment of its own (imageEnv is the base's)`);
-    assert.deepEqual(l.imageEnv, l.baseEnv, p);
+    if (p === 'ml-python') {
+      // The one image that declares environment names of its own: matplotlib's headless backend and a writable cache folder (/tmp is a
+      // tmpfs in every container). imageEnv lists them beside the base's, or preflight would refuse every container of the image.
+      assert.deepEqual(d.split('\n').filter((x) => /^ENV /.test(x)), ['ENV MPLBACKEND=Agg MPLCONFIGDIR=/tmp/matplotlib'], p);
+      assert.deepEqual(l.imageEnv, [...l.baseEnv, 'MPLBACKEND', 'MPLCONFIGDIR'].sort(), p);
+    } else {
+      assert.doesNotMatch(d, /^ENV /m, `${p}: the image declares no environment of its own (imageEnv is the base's)`);
+      assert.deepEqual(l.imageEnv, l.baseEnv, p);
+    }
   }
+  // ml-python: sde-python's pinned base (same digest), one hash per package (the one wheel pip installs on that base, named beside it),
+  // installed wheels-only with hashes and no dependency resolution; the self-test checks the label against what is installed.
+  const ml = LOCK.profiles['ml-python'];
+  assert.deepEqual(ml.base, LOCK.profiles['sde-python'].base, 'the ML kit is built on the Python kit\'s pinned base');
+  const mlReq = read('ml-python/requirements.lock').toString('utf8');
+  const mlBlocks = mlReq.split(/\n(?=[a-z0-9-]+==)/).filter((b) => /^[a-z0-9-]+==/.test(b));
+  for (const name of ['numpy', 'scipy', 'pandas', 'scikit-learn', 'matplotlib', 'seaborn', 'openpyxl', 'pyarrow', 'joblib', 'pytest']) {
+    assert.ok(mlBlocks.some((b) => b.startsWith(`${name}==${ml.versions[name]} `)), `${name} is locked at the labelled version`);
+  }
+  for (const b of mlBlocks) {
+    assert.equal((b.match(/--hash=sha256:[0-9a-f]{64}/g) ?? []).length, 1, `${b.split('\n')[0]}: one wheel, one hash`);
+    assert.match(b, /\n {4}# \S+-(?:cp311-cp311-manylinux\S*_x86_64|py2\.py3-none-any|py3-none-any)\.whl\n/, `${b.split('\n')[0]}: the wheel for the base`);
+  }
+  const mlDocker = read('ml-python/Dockerfile').toString('utf8');
+  assert.match(mlDocker, /pip install --no-cache-dir --disable-pip-version-check --require-hashes --no-deps --only-binary=:all:/);
+  assert.match(mlDocker, /if \[ "\$got" != "\$NEXUS_VERSIONS" \]; then .* exit 1; fi/, 'the build fails unless the label names exactly what is installed');
   const req = read('sde-python/requirements.lock').toString('utf8');
   const pins = req.split('\n').filter((x) => /^[a-z0-9-]+==/.test(x));
   assert.ok(pins.length >= 4);
