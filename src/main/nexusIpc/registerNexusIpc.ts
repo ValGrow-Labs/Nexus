@@ -45,6 +45,7 @@ import { MAX_LINK_SOURCES } from '../nexus/lineage/lineageService';
 import { getUserAction } from '../../shared/nexus/actions';
 import { TRY_WHATS } from '../../shared/nexus/tryRun';
 import { DATASET_REASON_MESSAGES } from '../../shared/nexus/datasets';
+import { RESULT_ID_RE, RESULT_REASON_MESSAGES } from '../../shared/nexus/results';
 import { DOMAINS } from '../../shared/nexus/domains/index';
 import { LOCAL_MODEL_KIND, modelProblem } from '../../shared/nexus/localModel';
 import { HOSTED_MODEL_KIND, hostedChoiceProblem } from '../../shared/nexus/hostedModel';
@@ -53,7 +54,7 @@ import {
   APPROVAL_STATUSES_ACCEPTED, DEPLOYMENT_STATUSES_ACCEPTED, MAX_FOCUS_VERSIONS, PREVIEW_PARTS, RequestError, V
 } from './validate';
 import {
-  acceptResultView, actionView, activityView, datasetView, datasetsView, approvalView, artifactView, deploymentView, domainView, edgeView, eventView, gcView, handoffDetailView,
+  acceptResultView, actionView, activityView, datasetView, datasetsView, resultContentView, resultsView, approvalView, artifactView, deploymentView, domainView, edgeView, eventView, gcView, handoffDetailView,
   handoffSummaryView, healthView, jobDetailView, jobView, lineageNodeView, logPageView, mergeView, participationView, previewView, repoStatusUnavailable,
   repoStatusView, reviewResultView, sessionDetailView, sessionViewOf, summaryView, validationView, versionDetail, versionView, versionViewOfKind
 } from './dto';
@@ -139,8 +140,15 @@ export const NEXUS_TRY_CHANNELS: readonly string[] = Object.freeze(['nexus:try']
  * runner have no way to it (no tool, no runner message reaches it).
  */
 export const NEXUS_DATASET_CHANNELS: readonly string[] = Object.freeze(['nexus:datasets']);
-/** Every nexus:* channel main can register (53). */
-export const NEXUS_EVERY_CHANNEL: readonly string[] = Object.freeze([...NEXUS_ALL_CHANNELS, ...NEXUS_AGENT_CHANNELS, ...NEXUS_TRY_CHANNELS, ...NEXUS_DATASET_CHANNELS]);
+/**
+ * "Results" (#54): a Machine learning project's results (list, read a shown report or chart, save a copy through main's own Save window,
+ * remove Nexus's copy, clear them all). Needs execution (the data home and the safe space that writes them), not the agents part. Called by
+ * the person only: the AI helper and the runner have no way to it (no tool, no runner message reaches it).
+ */
+export const NEXUS_RESULT_CHANNELS: readonly string[] = Object.freeze(['nexus:results']);
+/** Every nexus:* channel main can register (54). */
+export const NEXUS_EVERY_CHANNEL: readonly string[] = Object.freeze([...NEXUS_ALL_CHANNELS, ...NEXUS_AGENT_CHANNELS, ...NEXUS_TRY_CHANNELS, ...NEXUS_DATASET_CHANNELS,
+  ...NEXUS_RESULT_CHANNELS]);
 const AGENT_CHANNELS: ReadonlySet<string> = new Set(NEXUS_AGENT_CHANNELS);
 /** How long #42 and a #51 grant wait for a fresh runtime probe when the cached health is stale. */
 export const RUNTIME_REFRESH_WAIT_MS = 10_000;
@@ -149,10 +157,14 @@ export const NEXUS_HINT_CHANNEL = 'nexus:hint';
 
 /** #24-#41: they need schema v9 execution (#22 and #23 answer whenever the platform is up). */
 const EXECUTION_CHANNELS: ReadonlySet<string> = new Set([...NEXUS_EXEC_CHANNELS.filter((c) => c !== 'nexus:domains:list' && c !== 'nexus:platform:health'), ...NEXUS_TRY_CHANNELS,
-  ...NEXUS_DATASET_CHANNELS]);
+  ...NEXUS_DATASET_CHANNELS, ...NEXUS_RESULT_CHANNELS]);
 /** "Your data" (#53): at most this many adds and removes in DATASET_WINDOW_MS (a list is free); one add at a time is the service's own rule. */
 export const DATASET_WRITES_PER_WINDOW = 20;
 export const DATASET_WINDOW_MS = 60_000;
+/** "Results" (#54): at most this many saves, removes and clears, and this many reads, in RESULT_WINDOW_MS (a list is free). */
+export const RESULT_WRITES_PER_WINDOW = 30;
+export const RESULT_READS_PER_WINDOW = 240;
+export const RESULT_WINDOW_MS = 60_000;
 
 /** List limits as the renderer may ask for them; a larger integer is clamped to the channel's maximum. */
 export const ARTIFACTS_LIST_MAX = 500;
@@ -208,6 +220,11 @@ export interface NexusIpcDeps {
    * answers the chosen file's location, or null; the location never leaves main. Omitted, adding data is refused (no window).
    */
   pickDatasetFile?: () => Promise<string | null>;
+  /**
+   * "Results" (#54): MAIN's own Save window (index.ts: Electron's save dialog on the focused window, nexusExec/resultSaveDialog.ts), offered
+   * the result's plain name. It answers the chosen location, or null; the location never leaves main. Omitted, saving is refused (no window).
+   */
+  pickResultSavePath?: (defaultName: string) => Promise<string | null>;
 }
 
 /** A renderer the nexus:hint push goes to (main passes its live web contents). */
@@ -744,6 +761,55 @@ export function registerNexusIpc(registrar: IpcRegistrar, deps: NexusIpcDeps): v
       return ok({ ...datasetsView(await svc.list(me, q.projectId)), removed: true as const });
     }
     return ok(datasetsView(await svc.list(me, q.projectId)));
+  });
+
+  // #54 "Results": a Machine learning project's results. Ids only from the renderer (a result id is 32 hex characters main derived; one not
+  // in main's fresh listing is refused): `read` answers a shown report's inert text or a shown chart as a bounded PNG data URL, `save` opens
+  // main's own Save window (the location stays in main), `remove` and `clear` delete Nexus's copies. Every answer carries the fresh list.
+  const resultWrites: number[] = [];
+  const resultReads: number[] = [];
+  const within = (log: number[], max: number): void => {
+    const now = Date.now();
+    while (log.length > 0 && now - log[0] >= RESULT_WINDOW_MS) log.shift();
+    if (log.length >= max) throw new PlatformError('invalid', RESULT_REASON_MESSAGES.results_rate, { reason: 'results_rate' });
+    log.push(now);
+  };
+  reg('nexus:results', (args) => {
+    V.arity(args, 1);
+    const o = V.object(args[0], ['op', 'projectId', 'resultId'] as const, ['resultId'] as const);
+    const op = V.enumOf(o.op, 'op', ['list', 'read', 'save', 'remove', 'clear'] as const);
+    const projectId = V.projectId(o.projectId);
+    if (op === 'list' || op === 'clear') {
+      if (o.resultId !== undefined) throw new RequestError('resultId', 'is sent only with read, save and remove');
+      return { op, projectId, resultId: undefined };
+    }
+    if (typeof o.resultId !== 'string' || !RESULT_ID_RE.test(o.resultId)) throw new RequestError('resultId', 'is not a valid id');
+    return { op, projectId, resultId: o.resultId };
+  }, async (nx, me, q) => {
+    const svc = nx.results;
+    if (!svc) throw execOffError('not_started');
+    if (q.op === 'read') within(resultReads, RESULT_READS_PER_WINDOW);
+    else if (q.op !== 'list') within(resultWrites, RESULT_WRITES_PER_WINDOW);
+    const fresh = async () => resultsView(await svc.list(me, q.projectId));
+    if (q.op === 'read') {
+      const content = resultContentView(await svc.read(me, q.projectId, q.resultId!));
+      if (!content) throw new PlatformError('invalid', RESULT_REASON_MESSAGES.results_not_shown, { reason: 'results_not_shown' });
+      return ok({ ...(await fresh()), content });
+    }
+    if (q.op === 'save') {
+      const pick = deps.pickResultSavePath ?? (async () => { throw new Error('no save window'); });
+      const r = await svc.save(me, q.projectId, q.resultId!, pick);
+      return ok('cancelled' in r ? { ...(await fresh()), cancelled: true as const } : { ...(await fresh()), saved: true as const });
+    }
+    if (q.op === 'remove') {
+      await svc.remove(me, q.projectId, q.resultId!);
+      return ok({ ...(await fresh()), removed: true as const });
+    }
+    if (q.op === 'clear') {
+      const r = await svc.clear(me, q.projectId);
+      return ok({ ...(await fresh()), cleared: r.cleared });
+    }
+    return ok(await fresh());
   });
 
   // #52 "Try it": the buttons a suggested change gets (`options`), and one run of the change in the safe space (`run`), started because the

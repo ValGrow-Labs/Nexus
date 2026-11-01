@@ -66,7 +66,9 @@ function validArgs(w, ids = {}) {
     // "Try it" (#52): gated with the execution channels.
     'nexus:try': [{ op: 'options', projectId: 'p-ledger', versionId: w.repoV }],
     // "Your data" (#53): gated with the execution channels too.
-    'nexus:datasets': [{ op: 'list', projectId: 'p-ledger' }]
+    'nexus:datasets': [{ op: 'list', projectId: 'p-ledger' }],
+    // "Results" (#54): gated with the execution channels too.
+    'nexus:results': [{ op: 'list', projectId: 'p-ledger' }]
   };
 }
 
@@ -79,18 +81,18 @@ test('I-E1 the twenty execution channels are frozen, distinct, and registered th
   const reg = (deps) => { const got = []; registerNexusIpc({ handle: (c) => got.push(c) }, { platform: () => null, unavailableReason: () => 'held',
     sources: {}, log: () => {}, ...deps }); return got; };
   assert.deepEqual(reg({}).sort(), [...NEXUS_CHANNELS].sort());
-  // "Try it" (#52) and "Your data" (#53) are registered with the execution deps too (they need execution only, not the agents part).
-  assert.deepEqual(reg({ executionUnavailableReason: () => null }).sort(), [...NEXUS_ALL_CHANNELS, 'nexus:try', 'nexus:datasets'].sort());
-  assert.deepEqual(reg({ exec: () => null }).sort(), [...NEXUS_ALL_CHANNELS, 'nexus:try', 'nexus:datasets'].sort());
+  // "Try it" (#52), "Your data" (#53) and "Results" (#54) are registered with the execution deps too (they need execution only, not the agents part).
+  assert.deepEqual(reg({ executionUnavailableReason: () => null }).sort(), [...NEXUS_ALL_CHANNELS, 'nexus:try', 'nexus:datasets', 'nexus:results'].sort());
+  assert.deepEqual(reg({ exec: () => null }).sort(), [...NEXUS_ALL_CHANNELS, 'nexus:try', 'nexus:datasets', 'nexus:results'].sort());
   assert.equal(NEXUS_HINT_CHANNEL, 'nexus:hint');
 });
 
 test('I-E2 with no platform every one of the 41 channels answers platform_unavailable with the store\'s reason', async () => {
   const w = { nx: null, dataHome: null, repoV: UNKNOWN };
   const x = ipcOver(w, { platform: () => null });
-  assert.equal(x.handlers.size, 43, '41 B1 and B2a channels, Try it and Your data');
+  assert.equal(x.handlers.size, 44, '41 B1 and B2a channels, Try it, Your data and Results');
   const args = validArgs(w);
-  for (const ch of [...NEXUS_ALL_CHANNELS, 'nexus:try', 'nexus:datasets']) {
+  for (const ch of [...NEXUS_ALL_CHANNELS, 'nexus:try', 'nexus:datasets', 'nexus:results']) {
     const r = await x.call(ch, ...args[ch]);
     assert.deepEqual([r.ok, r.code, r.reason], [false, 'platform_unavailable', 'held'], ch);
   }

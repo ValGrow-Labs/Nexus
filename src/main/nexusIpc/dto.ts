@@ -15,7 +15,8 @@ import type {
   AcceptResultView, ActionAvailabilityView, ActivityDetailsView, ActivityView, AgentSetupView, ApprovalView, ArtifactSummaryView, ArtifactView, BlobGcView,
   ChangeSetAcceptView, DeploymentView, DiskGate, DomainSpecView, EdgeView, EventView, HandoffDetailView, HandoffSummaryView, HealthView, JobDetailView, JobView,
   LineageNodeView, LogPageView, MergeView as MergeViewOut, ParticipationView, PreviewView, RepoStatusView, ReviewResultView, ReviewView as ReviewViewOut,
-  SessionDetailView, SessionView, ValidationResultView, VersionContent, VersionDetail, VersionView, DatasetView, DatasetsView
+  SessionDetailView, SessionView, ValidationResultView, VersionContent, VersionDetail, VersionView, DatasetView, DatasetsView, ResultContentView, ResultView,
+  ResultsView
 } from '../../shared/nexus/ipc';
 import type { DomainSpec } from '../../shared/nexus/domainSpec';
 import { DELIVERED_SUB_PHASE, isAtOrBefore, isExecutableEndToEnd } from '../../shared/nexus/domainSpec';
@@ -30,6 +31,8 @@ import type { AcceptStatus, AcceptView, MergeView as ServiceMergeView } from '..
 import type { ReviewView as ServiceReviewView } from '../nexus/review/reviewService';
 import type { DatasetRecord } from '../../shared/nexus/datasets';
 import type { DatasetList } from '../nexus/datasets/datasetService';
+import type { ResultContent, ResultEntry, ResultsList } from '../nexus/results/resultsService';
+import { RESULT_ID_RE, cleanReportText, isPlainResultName } from '../../shared/nexus/results';
 import { redactSecretText } from '../nexus/activity/redact';
 import { SYSTEM_ID as SYSTEM_PRINCIPAL } from '../nexus/auth/principals';
 import { EXECUTION_SUB_REASONS, scrubMessage } from './envelope';
@@ -426,4 +429,25 @@ export function datasetView(r: DatasetRecord): DatasetView {
 }
 export function datasetsView(l: DatasetList): DatasetsView {
   return { applies: l.applies, datasets: l.datasets.map(datasetView), damaged: l.damaged, aiOnThisComputer: l.aiOnThisComputer };
+}
+
+/**
+ * One result of a Machine learning project: its plain name (main lists only plain names; a name that is not plain never gets here, and
+ * this re-check drops one anyway), kind, size, when it was written, and whether it is shown or too big to save. Never a location.
+ */
+export function resultView(r: ResultEntry): ResultView | null {
+  if (!RESULT_ID_RE.test(r.id) || !isPlainResultName(r.name)) return null;
+  return { id: r.id, name: r.name, kind: r.kind, bytes: r.bytes, modifiedAt: r.modifiedAt, shown: r.shown === true, tooBig: r.tooBig === true };
+}
+export function resultsView(l: ResultsList): ResultsView {
+  const results = l.results.map(resultView).filter((v): v is ResultView => v !== null);
+  return { applies: l.applies, results, skipped: l.skipped + (l.results.length - results.length), more: l.more, totalBytes: l.totalBytes, overLimit: l.overLimit };
+}
+/** A shown result's content: a report's text cleaned again (inert text), a chart only as a PNG data URL. */
+export function resultContentView(c: ResultContent): ResultContentView | null {
+  if (c.kind === 'report') return { id: c.id, kind: 'report', text: cleanReportText(c.text), truncated: c.truncated === true };
+  if (c.kind === 'chart' && c.dataUrl.startsWith('data:image/png;base64,') && /^[A-Za-z0-9+/=]*$/.test(c.dataUrl.slice('data:image/png;base64,'.length))) {
+    return { id: c.id, kind: 'chart', dataUrl: c.dataUrl };
+  }
+  return null;
 }

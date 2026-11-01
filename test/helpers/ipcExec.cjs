@@ -27,7 +27,9 @@ function ipcOver(w, o = {}) {
     ...(o.agentsUnavailableReason ? { agentsUnavailableReason: o.agentsUnavailableReason } : {}),
     ...(o.confirmMerge ? { confirmMerge: o.confirmMerge } : {}),
     // "Your data" (#53): main's file window, faked at its port (a test hands the location main's window would answer).
-    ...(o.pickDatasetFile ? { pickDatasetFile: o.pickDatasetFile } : {})
+    ...(o.pickDatasetFile ? { pickDatasetFile: o.pickDatasetFile } : {}),
+    // "Results" (#54): main's Save window, faked at its port (a test hands the location main's window would answer).
+    ...(o.pickResultSavePath ? { pickResultSavePath: o.pickResultSavePath } : {})
   });
   const call = (ch, ...a) => { const f = handlers.get(ch); assert.ok(f, `no handler ${ch}`); return f({ sender: {} }, ...a); };
   const ok = async (ch, ...a) => { const r = await call(ch, ...a); assert.equal(r.ok, true, `${ch}: ${JSON.stringify(r)}`); return r.data; };

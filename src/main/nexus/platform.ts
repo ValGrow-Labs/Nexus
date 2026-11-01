@@ -70,6 +70,7 @@ import type { LocalServerConfig } from './agents/localModelSettings';
 import type { HostedKeys } from './agents/hostedModelSettings';
 import { ContextResolver } from './agents/contextResolver';
 import { DatasetService } from './datasets/datasetService';
+import { ResultsService } from './results/resultsService';
 import { LOCAL_MODEL_KIND } from '../../shared/nexus/localModel';
 import { Skills } from './agents/skills';
 import { McpGateway } from './agents/mcpGateway';
@@ -155,6 +156,11 @@ export interface NexusPlatform {
    * /data). Null unless execution is available with a data home.
    */
   datasets: DatasetService | null;
+  /**
+   * A Machine learning project's results (files its sandboxed code wrote to /results; in the data home, no schema change). Null unless
+   * execution is available with a data home.
+   */
+  results: ResultsService | null;
   startup(): NexusStartupReport;
 }
 
@@ -339,7 +345,9 @@ export function createNexusPlatform(db: Database.Database, opts?: NexusPlatformO
     ? new DatasetService(db, { dataHome: dataHomeForData, projects, now, log,
       aiOnThisComputer: () => { try { return budget?.live()?.runtimeKind === LOCAL_MODEL_KIND; } catch { return false; } } })
     : null;
-  const contextResolver = agentsAvailable ? new ContextResolver(db, { dataHome: opts?.dataHome ?? null, now, system: principals.system(), datasets }) : null;
+  // A Machine learning project's results (phase 3): the files its code wrote to /results; the AI helper's context says when they are over the limit.
+  const results = executionAvailable && dataHomeForData ? new ResultsService(db, { dataHome: dataHomeForData, projects, now, log }) : null;
+  const contextResolver = agentsAvailable ? new ContextResolver(db, { dataHome: opts?.dataHome ?? null, now, system: principals.system(), datasets, results }) : null;
   const skills = agentsAvailable ? new Skills({ dataHome: opts?.dataHome ?? null, resourcesDir: opts?.skillsResourcesDir ?? null }) : null;
   // B2b Task 10: change-set registration (the `changeset_register` tool), the session worktrees and the agent service itself.
   const changeSets = agentsAvailable ? new ChangeSetService(db, { jobs, system: principals.system(), now }) : null;
@@ -473,7 +481,7 @@ export function createNexusPlatform(db: Database.Database, opts?: NexusPlatformO
   return {
     principals, auth, activity, workspaces, projects, artifacts, lineage, jobs, sessions, handoffs, handoffsAvailable, executionAvailable,
     exec, blobs, validation, approvals, deployments, repo, queries, registry: { valid: registryValid, problems: problems.length }, bootId,
-    agentsAvailable, tokens, budget, mcpGateway, contextResolver, skills, gitRead, agents, worktrees, changeSets, reviews, accepts, agentProbe, datasets,
+    agentsAvailable, tokens, budget, mcpGateway, contextResolver, skills, gitRead, agents, worktrees, changeSets, reviews, accepts, agentProbe, datasets, results,
     startup(): NexusStartupReport {
       // The seeded principals must resolve; a missing one throws platform_unavailable.
       principals.localUser();

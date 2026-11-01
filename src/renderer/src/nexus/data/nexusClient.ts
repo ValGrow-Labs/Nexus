@@ -9,7 +9,7 @@ import type {
   HandoffsListFilter, LineageQuery, LineageView, LinkSourcesView, NexusFail, NexusResult, ParticipationView, SaveCommitArgs,
   SaveResultView, SaveTextFileArgs, SendHandoffArgs, SendHandoffView, VersionDetail, VersionView,
   AcceptResultView, AgentConsentArgs, AgentConsentView, AgentStartArgs, AgentStartResultView, MergeView, RepoMergeArgs, RepoStatusView, TryArgs, TryResultView,
-  ReviewDecideArgs, ReviewResultView, SessionDetailView, SessionView, SessionsListFilter, DatasetsArgs, DatasetsView
+  ReviewDecideArgs, ReviewResultView, SessionDetailView, SessionView, SessionsListFilter, DatasetsArgs, DatasetsView, ResultsArgs, ResultsView
 } from '@shared/nexus/ipc';
 
 const INTERNAL: NexusFail = { ok: false, code: 'internal', message: 'The request could not be completed.' };
@@ -144,6 +144,8 @@ export const nexusClient = {
   tryRun: (args: TryArgs): Promise<NexusResult<TryResultView>> => execCall(() => window.cth.nexusTry(args)),
   /** #53 "Your data": a Machine learning project's files of data; `add` opens main's own file window (no location crosses). */
   datasets: (args: DatasetsArgs): Promise<NexusResult<DatasetsView>> => execCall(() => window.cth.nexusDatasets(args)),
+  /** #54 "Results": a Machine learning project's results; `save` opens main's own Save window (no location crosses). */
+  results: (args: ResultsArgs): Promise<NexusResult<ResultsView>> => execCall(() => window.cth.nexusResults(args)),
   /** The nexus:hint push (the newest event seq only). Returns an unsubscribe; a no-op when the preload has none. */
   onHint: (cb: (hint: NexusHint) => void): (() => void) => {
     try {

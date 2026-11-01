@@ -542,3 +542,31 @@ export interface DatasetsView {
   applies: boolean; datasets: DatasetView[]; damaged: boolean; aiOnThisComputer: boolean;
   added?: DatasetView; cancelled?: true; removed?: true;
 }
+
+// ---------- "Results" request (channel #54): a Machine learning project's results ----------
+/**
+ * "Results" (#54, `nexus:results`): what a Machine learning project's code wrote to /results in the safe space (a report, charts, a table
+ * of predictions, a trained model...). `list` answers them (newest first); `read` answers a shown report's inert text or a shown chart's
+ * PNG image as a bounded data URL; `save` makes MAIN open its own Save window and copy the file there (the renderer never sends a location
+ * and never receives one); `remove` deletes Nexus's copy of one result; `clear` deletes them all. Ids only from the renderer: an id that is
+ * not in main's fresh listing is refused.
+ */
+export type ResultsArgs = { op: 'list'; projectId: string } | { op: 'clear'; projectId: string }
+  | { op: 'read'; projectId: string; resultId: string } | { op: 'save'; projectId: string; resultId: string } | { op: 'remove'; projectId: string; resultId: string };
+/** One result as the person sees it: its plain name, kind, size, when it was written, and whether Nexus shows it or it is too big to save. */
+export interface ResultView {
+  id: string; name: string; kind: 'report' | 'chart' | 'table' | 'model' | 'spreadsheet' | 'file'; bytes: number; modifiedAt: number;
+  shown: boolean; tooBig: boolean;
+}
+/** A shown result's content: a report as plain text (never HTML), a chart as a `data:image/png;base64,` URL. */
+export type ResultContentView = { id: string; kind: 'report'; text: string; truncated: boolean } | { id: string; kind: 'chart'; dataUrl: string };
+/**
+ * A project's results. `applies` is false for a project that is not a Machine learning project (the renderer then shows nothing).
+ * `skipped`: files left out (a link, a folder, a name that is not plain, a kind Nexus does not keep); `more`: older results not listed;
+ * `overLimit`: the results together are over 1 GB. After a `read`, `content`; after a `save`, `saved` (or `cancelled`); after a `remove`,
+ * `removed`; after a `clear`, `cleared`.
+ */
+export interface ResultsView {
+  applies: boolean; results: ResultView[]; skipped: number; more: number; totalBytes: number; overLimit: boolean;
+  content?: ResultContentView; saved?: true; cancelled?: true; removed?: true; cleared?: number;
+}

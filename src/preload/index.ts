@@ -9,7 +9,7 @@ import type {
   DeploymentView, DomainSpecView, EventsPageView, EventsQuery, HealthQuery, HealthView, ImageProfileArg, InlineSaveView, JobDetailView, JobLogsQuery,
   JobsListFilter, JobStartArgs, JobStartView, JobView, LogPageView, NexusHint, PreviewQuery, PreviewView, SaveInlineArgs, ValidationResultView,
   AcceptResultView, AgentConsentArgs, AgentConsentView, AgentStartArgs, AgentStartResultView, MergeView, RepoMergeArgs, RepoStatusView, ReviewDecideArgs,
-  ReviewResultView, SessionDetailView, SessionsListFilter, SessionView, TryArgs, TryResultView, DatasetsArgs, DatasetsView
+  ReviewResultView, SessionDetailView, SessionsListFilter, SessionView, TryArgs, TryResultView, DatasetsArgs, DatasetsView, ResultsArgs, ResultsView
 } from '../shared/nexus/ipc';
 
 export type { HireManifest } from '../shared/hire';
@@ -1762,6 +1762,9 @@ const api = {
   /** #53 "Your data": a Machine learning project's files of data (list; add, which opens main's own file window; remove Nexus's copy). */
   nexusDatasets: (args: DatasetsArgs): Promise<NexusResult<DatasetsView>> =>
     ipcRenderer.invoke('nexus:datasets', args),
+  /** #54 "Results": a Machine learning project's results (list; read a shown report or chart; save a copy through main's own Save window; remove; clear). */
+  nexusResults: (args: ResultsArgs): Promise<NexusResult<ResultsView>> =>
+    ipcRenderer.invoke('nexus:results', args),
   /** The hint push: the newest event seq only (pull nexusEventsSince for what changed). Returns an unsubscribe. */
   onNexusHint: (cb: (hint: NexusHint) => void): (() => void) => {
     const listener = (_e: IpcRendererEvent, hint: NexusHint) => {
