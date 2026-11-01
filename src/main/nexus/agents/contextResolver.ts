@@ -7,7 +7,9 @@
  *   'focus'), up to MAX_PRIOR_MESSAGES prior user messages of the session (from the activity log), outstanding
  *   `request_changes` review comments on the project's change sets, and a short note of the project's newest
  *   diagnostic report, when one exists. A Machine learning project with data gets a bounded "Datasets" block (main's record of the
- *   files under /data, labelled as data, not instructions; datasets/datasetContext.ts) right after main's own notes.
+ *   files under /data, labelled as data, not instructions; datasets/datasetContext.ts) right after main's own notes, and EVERY Machine
+ *   learning project then gets the static "How to work on a data question" block (results/resultsContext.ts: how the helper looks at the
+ *   data, writes its script under ml/, runs it with sandbox_exec and writes its outputs only to /results), once per context file.
  * - Every field is secret-checked before it is written (`containsSecret`). A single-value field (Domain, Vocabulary,
  *   Focus versions, Diagnostic facts) that hits is dropped whole; a list field (prior user messages, requested
  *   changes) is checked ITEM BY ITEM, so one secret-shaped message never costs the rest of the history. Either way
@@ -28,7 +30,8 @@ import { PlatformError } from '../errors';
 import type { Principal } from '../../../shared/nexus/platform';
 import type { DatasetRecord } from '../../../shared/nexus/datasets';
 import { datasetsBlock } from '../datasets/datasetContext';
-import { isMachineLearningProject } from '../exec/sandboxProfile';
+import { isMachineLearningProject, ML_PROFILE, projectAgentProfile } from '../exec/sandboxProfile';
+import { ANALYST_BLOCK_TITLE, analystBlock } from '../results/resultsContext';
 
 /** The data home surface ContextResolver and Skills need: confinement and the per-job relative folder. */
 export interface AgentDataHome {
@@ -48,6 +51,8 @@ export interface ContextResolverDeps {
   dataHome: AgentDataHome | null; now: () => number; system: Principal;
   /** A Machine learning project's data records (DatasetService.records): the "Datasets" block. Absent or null: no block. */
   datasets?: { records(projectId: string): Promise<DatasetRecord[]> } | null;
+  /** A Machine learning project's results folder usage (ResultsService.usage): only whether it is over its limit is written. */
+  results?: { usage(projectId: string): Promise<{ overLimit: boolean }> } | null;
 }
 export interface ContextResult { path: string; sha256: string; bytes: number }
 
@@ -83,6 +88,14 @@ export class ContextResolver {
       let block: ReturnType<typeof datasetsBlock> = null;
       try { block = datasetsBlock(await this.deps.datasets.records(job.projectId)); } catch { block = null; }
       if (block) { sections.push(`## Datasets\n\n${block.text.trim()}\n`); redacted += block.hidden; }
+    }
+    // Every Machine learning project: how to work on a data question (static text; one optional line when /results is over its limit).
+    // Written once here, right after the data, so a small model's cut-down context keeps it too.
+    if (isMachineLearningProject(this.db, job.projectId)) {
+      const inKit = projectAgentProfile(this.db, job.projectId) === ML_PROFILE;
+      let overLimit = false;
+      if (inKit && this.deps.results) { try { overLimit = (await this.deps.results.usage(job.projectId)).overLimit === true; } catch { overLimit = false; } }
+      sections.push(`## ${ANALYST_BLOCK_TITLE}\n\n${analystBlock({ inKit, overLimit }).trim()}\n`);
     }
     const domain = getDomain(job.workspaceId);
     field('Domain', domain ? `${domain.label} (${domain.id})` : job.workspaceId);

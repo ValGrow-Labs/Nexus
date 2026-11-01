@@ -83,3 +83,16 @@ export function projectSandboxProfile(db: Database.Database, projectId: string):
     ORDER BY (v.id = a.current_version_id) DESC, v.version_no DESC LIMIT 1`).get(projectId) as { metadata_json: string } | undefined;
   return profileFromFacts(db, projectId, row ? [{ metadata: parse(row.metadata_json) }] : []);
 }
+
+/**
+ * The AI helper's own container profile for a project as it stands (its newest live repository version's recorded profile, else the
+ * project's languages; then the machine learning rule): what the turn's context says the helper can use (phase 3).
+ */
+export function projectAgentProfile(db: Database.Database, projectId: string): SandboxProfileId {
+  try {
+    const row = db.prepare(`SELECT v.metadata_json FROM artifacts a JOIN artifact_versions v ON v.artifact_id = a.id
+      WHERE a.project_id = ? AND a.kind = 'repository' AND a.status = 'active' AND v.status IN ('candidate','active')
+      ORDER BY (v.id = a.current_version_id) DESC, v.version_no DESC LIMIT 1`).get(projectId) as { metadata_json: string } | undefined;
+    return agentProfileFromFacts(db, projectId, row ? [{ metadata: parse(row.metadata_json) }] : []);
+  } catch { return isMachineLearningProject(db, projectId) ? ML_PROFILE : 'sde-node'; }
+}
