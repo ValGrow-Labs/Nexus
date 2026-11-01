@@ -39,6 +39,7 @@ import { ExecutionNotice } from '../components/ExecutionNotice';
 import { ExecutionSetupSheet } from '../components/ExecutionSetupSheet';
 import { JobLogSheet } from '../runs/JobLogSheet';
 import { ApprovalsSection } from './ApprovalsSection';
+import { YourData } from './YourData';
 import { AiDock } from '../agent/AiDock';
 import { BuildStage } from '../agent/BuildStage';
 import { RequirementSheet } from './RequirementSheet';
@@ -357,6 +358,8 @@ function Workbench({ project, tool }: { project: Project; tool: ProjectTool }) {
           {firstLine && <FirstBuildLine line={firstLine} onOpen={execUi.openSetup} />}
           <ExecutionNotice availability={availability} onSetup={execUi.openSetup} />
           <ApprovalsSection projectId={project.id} except={hasSde ? ['repo.write_refs'] : []} />
+          {/* A Machine learning project's data (nothing for any other project: main answers by the safe space's own rule). */}
+          <YourData projectId={project.id} />
         </div>
         <div className="nx-bench">
           <ToolRail projectId={project.id} rootPath={project.rootPath} tool={tool} hasChanges={hasChanges} canTry={hasSde && !card} onOpenTerminal={openTerminal}

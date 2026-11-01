@@ -454,12 +454,17 @@ export interface IntentWords {
   followLabel: string;
 }
 
-export function intentWords(i: { mode: 'agent' | 'legacy'; lead: LeadHelperState; onSoftwareProject: boolean; note?: string | null; replyHint?: string | null }): IntentWords {
+/** The request box's placeholder in a Machine learning project that has data ("Your data"). */
+export const DATA_REQUEST_PLACEHOLDER = 'Ask about your data, for example: which customers are likely to leave?';
+
+export function intentWords(i: { mode: 'agent' | 'legacy'; lead: LeadHelperState; onSoftwareProject: boolean; note?: string | null; replyHint?: string | null;
+  /** The project in view is a Machine learning project with data (its placeholder asks about the data). */
+  hasData?: boolean }): IntentWords {
   if (i.mode === 'agent') {
     return {
       label: 'AI helper for this project',
       explain: `Your message goes to the AI helper for this project. It works in a ${GLOSSARY.safeCopy.name}, and your real files change only when you press “${GLOSSARY.addToProject.name}”. You can follow it in the AI helper panel on the project page.${i.note ? ` ${i.note}` : ''}`,
-      placeholder: 'Describe the change you want',
+      placeholder: i.hasData === true ? DATA_REQUEST_PLACEHOLDER : 'Describe the change you want',
       button: 'Ask the AI helper',
       ariaLabel: 'Ask this project’s AI helper',
       chipTitle: (chip) => `You are looking at: ${chip}. The AI helper is told your message and which project this is, not this selection.`,

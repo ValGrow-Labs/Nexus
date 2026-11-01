@@ -17,6 +17,7 @@ import { useExecStore } from '../data/useExecution';
 import { agentPanelModel, intentRoute, intentWords } from '../agent/agentModel';
 import { sendToProjectAgent } from '../agent/sendToAgent';
 import { isRunRequest, useRunReply } from '../agent/runIntent';
+import { useProjectData } from '../project/yourDataModel';
 
 const TOOL_PAGE: Record<ProjectTool, string> = { bench: 'Work area', changes: 'Suggested changes', completion: 'Checklist', runs: 'Tasks', try: 'Try it' };
 
@@ -117,7 +118,10 @@ export function IntentLine({ summoned = false, inline = false, compact = false, 
   // ONE plain line that says who gets the message and what happens next, and a short label for the same thing.
   // In the project dock the box never reaches the lead AI helper: while the project's own AI helper is not ready it is locked, text kept.
   const lockedBox = (locked || dock) && mode !== 'agent';
-  const baseWords = intentWords({ mode: lockedBox ? 'agent' : mode, lead: s, onSoftwareProject: route.name === 'project' && ctx.ws?.id === 'sde' && !canAsk, note: askable.note, replyHint: port.replyHint });
+  // A Machine learning project with data ("Your data" records how many files it holds): the box asks about the data.
+  const dataCount = useProjectData((st) => (ctx.project ? st.counts[ctx.project.id] ?? 0 : 0));
+  const baseWords = intentWords({ mode: lockedBox ? 'agent' : mode, lead: s, onSoftwareProject: route.name === 'project' && ctx.ws?.id === 'sde' && !canAsk, note: askable.note, replyHint: port.replyHint,
+    hasData: !lockedBox && dataCount > 0 });
   const words = lockedBox ? { ...baseWords, placeholder: 'Get this computer ready first', explain: 'The AI helper for this project is not ready yet. Get this computer ready first, then ask here; what you typed is kept.' } : baseWords;
 
   const sendToAgent = async (text: string, projectId: string) => {
