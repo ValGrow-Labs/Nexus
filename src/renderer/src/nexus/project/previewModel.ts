@@ -10,7 +10,7 @@ export type PreviewStep = 'snapshot' | 'deps' | 'build' | 'assemble' | 'start';
 
 export const PREVIEW_TITLE = 'Preview';
 export const PREVIEW_INTRO = 'Run your app in the safe space and see it here. It runs on this computer only, with no internet, and stops by itself after two hours.';
-export const PREVIEW_LIMITS = 'It runs the version you last added to your project. The app needs its own start file (nexus.app.json) and a build step; the AI helper writes them when you ask for an app. If the app uses add-ons (packages), Nexus asks you once to download them from the package website, and only from there; the app itself still has no internet.';
+export const PREVIEW_LIMITS = 'It runs the version you last added to your project. The app needs its own start file (nexus.app.json) and a build step; the AI helper writes them when you ask for an app. If the app uses add-ons (packages), Nexus asks you once to download them from the package website, and only from there; the app itself still has no internet. If the app saves data, it is kept only inside the safe space and is deleted when the preview stops.';
 /** What the person sees while Nexus waits for the answer to the download question. */
 export const PREVIEW_DEPS_WAITING = 'Waiting for your answer: the app lists add-ons (packages) it needs. Nexus can download them for this one step, from the package website only, and does not run them while they are installed.';
 export const PREVIEW_EMBED_LABEL = 'The running app (this is your app, not Nexus)';

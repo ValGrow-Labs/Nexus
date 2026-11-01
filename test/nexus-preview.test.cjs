@@ -204,3 +204,26 @@ test('PV7 the two hour limit is shown as a countdown, in plain words', () => {
   assert.match(read('src/renderer/src/nexus/project/PreviewPanel.tsx'), /countdownText\(deployment\.endsAt, now\)/);
   assert.doesNotMatch(M.countdownText(NOW + 3_600_000, NOW), VENDOR);
 });
+
+test('PV8 full-stack in one container (live preview phase 3): the helper is told one process, an API, a SQLite file through a package with no native part; the fixtures are valid apps; the data is said to be temporary', () => {
+  const p = systemPrompt({ hasSandbox: true, hasChangeset: true });
+  const line = p.split('\n').find((l) => l.includes('RUNNABLE'));
+  for (const needle of ['ONE process', '/api', 'data/app.db', 'node-sqlite3-wasm', 'no native part', 'no built-in SQLite', 'gone when the preview stops', '/health should also read the database']) {
+    assert.ok(line.includes(needle), needle);
+  }
+  assert.doesNotMatch(line, VENDOR, 'the rule names no vendor');
+  const skill = read('resources/skills/nexus-sde-app-manifest/SKILL.md');
+  for (const needle of ['full-stack app', 'ONE process in ONE container', 'data/app.db', 'node-sqlite3-wasm', 'No second process']) assert.ok(skill.includes(needle), needle);
+  assert.match(M.PREVIEW_LIMITS, /If the app saves data, it is kept only inside the safe space and is deleted when the preview stops/);
+  const { appManifestErrors } = loadTs('src/main/nexus/validation/normalized.ts');
+  for (const name of ['node-deps-app', 'node-fullstack-app']) {
+    const dir = path.join(ROOT, 'test', 'fixtures', 'exec', name);
+    assert.deepEqual(appManifestErrors(JSON.parse(fs.readFileSync(path.join(dir, 'nexus.app.json'), 'utf8'))), [], name);
+    const pkg = JSON.parse(fs.readFileSync(path.join(dir, 'package.json'), 'utf8'));
+    assert.ok(Object.keys(pkg.dependencies).length === 1 && !pkg.scripts.install && !pkg.scripts.postinstall, `${name}: one add-on, no install script`);
+    assert.ok(/^\d+\.\d+\.\d+$/.test(Object.values(pkg.dependencies)[0]), `${name}: pinned`);
+    assert.ok(!fs.existsSync(path.join(dir, 'package-lock.json')), `${name}: no lockfile (the lock-less install is what they prove)`);
+  }
+  const server = fs.readFileSync(path.join(ROOT, 'test/fixtures/exec/node-fullstack-app/src/server.js.tpl'), 'utf8');
+  assert.match(server, /listen\(PORT, '0\.0\.0\.0'/); assert.match(server, /\/api\/notes/); assert.match(server, /db\.ping\(\)/);
+});
