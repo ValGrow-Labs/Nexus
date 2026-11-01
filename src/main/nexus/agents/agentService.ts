@@ -50,6 +50,7 @@ import { requireStoredUser, type PrincipalResolver } from '../auth/principals';
 import { immediateTx } from '../db/tx';
 import { PlatformError } from '../errors';
 import { agentEnvironmentRecord, agentSandboxRecord, buildAgentPlan } from '../exec/planBuilder';
+import { isMachineLearningProject } from '../exec/sandboxProfile';
 import { agentTurnGuard, type AgentWaitReason } from '../exec/scheduler';
 import { appendJobEventTx } from '../exec/events';
 import type { AgentLease, AgentLeaseCtx, AgentPrepare, AgentPrepared, AgentSettlement, AgentTurnPort, ExecDataHome, ExecutionService } from '../exec/executionService';
@@ -856,7 +857,9 @@ export class AgentService implements AgentTurnPort {
         skills: p.skills, context: { hash: p.contextSha256 }, message: this.messageOf(j), mcpUrl: c.mcpUrl, model, ...(endpoint ? { endpoint } : {}), ...(apiKey !== undefined ? { apiKey } : {}) },
       egress: { allow: hosts, consentHostsSha256: consent.hostsSha256 },
       caps: { turnTokens: consent.caps.turnTokens, turnUsdCents: consent.caps.turnUsdCents, dayRemainingUsdCents: dayRemaining, toolCalls: consent.caps.toolCalls },
-      wallClockMs: consent.caps.wallClockMs, mcpTools
+      wallClockMs: consent.caps.wallClockMs, mcpTools,
+      // A Machine learning project's data, read-only at /data in the turn's container (the plan adds it only when that is the ML kit).
+      datasets: isMachineLearningProject(this.db, j.project_id)
     });
     const adapterVersion = health && health.health.ok ? health.health.version : null;
     return {

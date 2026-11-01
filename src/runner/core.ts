@@ -44,6 +44,7 @@ import {
   type RefusalReason, type RunnerToMain, type SandboxExecGrant
 } from '../shared/nexus/runnerProtocol';
 import { expectedNetworkName } from '../shared/nexus/preflightCheck';
+import { DATA_CONTAINER_PATH } from '../shared/nexus/datasets';
 import { leaseFloorBytes } from '../shared/nexus/resourceGate';
 import { MCP_TOOLS, SANDBOX_EXEC_OUTPUT_MAX_BYTES } from '../shared/nexus/mcpTools';
 import { containsSecret, redactSecretText } from '../main/nexus/activity/redact';
@@ -713,17 +714,44 @@ stderr: ${r.stderr}` : ''}`
     for (const s of specs) {
       const l = s.labels;
       if (l['nexus.attempt'] !== attemptId || l['nexus.home'] !== this.home || l['nexus.job'] !== plan.jobId) return 'a container\'s labels are not this attempt\'s';
+      // A Machine learning project's data: only the tool container itself (never a proxy, a service or a forwarder), checked whole.
+      const data = this.dataMountProblem(s, plan.kind === 'tool' && s === plan.container, rl['nexus.project']);
+      if (data) return data;
       for (const m of s.mounts) {
         const bind = /^[A-Za-z]:[\\/]/.test(m.hostPath) || m.hostPath.startsWith('/');
         if (bind) {
           const ok = (m.kind === 'input' && this.paths.same(m.hostPath, path.join(plan.workDir, 'in')) && m.readOnly)
-            || (m.kind === 'out' && this.paths.same(m.hostPath, path.join(plan.workDir, 'out')));
+            || (m.kind === 'out' && this.paths.same(m.hostPath, path.join(plan.workDir, 'out')))
+            || m.kind === 'datasets';
           if (!ok) return 'a bind mount is not this attempt\'s staging folder';
         } else if (!(m.kind === 'workspace' && m.hostPath === `nexus-ws-${attemptId}`)
           && !(m.kind === 'deps' && m.hostPath === plan.staging.depsVolume?.name && DEPS_VOLUME_RE.test(m.hostPath))) {
           return 'a volume mount is not this attempt\'s';
         }
       }
+    }
+    return null;
+  }
+
+  /**
+   * A Machine learning project's data mount (`kind: 'datasets'`), re-derived here, never trusted from the plan: at most one; only where it
+   * may be (`allowed`: a tool plan's own container, or an agent turn's); only in the ML kit (ml-python) with no network; read-only; at
+   * exactly /data; and its host folder exactly `<home>/datasets/<the attempt's nexus.project>/files`. No mount of that kind: null.
+   */
+  private dataMountProblem(spec: ContainerSpec, allowed: boolean, projectId: unknown): string | null {
+    const data = (Array.isArray(spec.mounts) ? spec.mounts : []).filter((m) => m && m.kind === 'datasets');
+    if (data.length === 0) return null;
+    if (!allowed) return 'a data mount is only for a run or an AI helper turn';
+    if (data.length > 1) return 'a container has more than one data mount';
+    const m = data[0];
+    if (spec.profile !== 'ml-python') return 'a data mount is only for the machine learning kit';
+    if (spec.network?.mode !== 'none') return 'a data mount is only for a container with no network';
+    if (m.readOnly !== true) return 'the data mount must be read-only';
+    if (m.containerPath !== DATA_CONTAINER_PATH) return 'the data mount is at /data only';
+    let want: string;
+    try { want = this.paths!.datasetsDir(String(projectId)); } catch { return 'the data mount names no project of this attempt'; }
+    if (typeof m.hostPath !== 'string' || m.hostPath.includes('\0') || m.hostPath.split(/[\\/]/).includes('..') || !this.paths!.same(m.hostPath, want)) {
+      return 'the data mount is not this project\'s data folder';
     }
     return null;
   }
@@ -763,7 +791,11 @@ stderr: ${r.stderr}` : ''}`
     if (!isObj(req.worktree) || typeof req.worktree.hostPath !== 'string' || !this.paths!.same(req.worktree.hostPath, wt)) return 'the run request names another worktree';
     if (!isObj(req.container) || typeof req.container.id !== 'string' || req.container.id.length === 0 || req.container.id.length > 128) return 'the run request has no container reference';
     let sawWorktree = false;
+    // A Machine learning project's data (read-only at /data, in the ML kit): the one other mount an agent container may have.
+    const data = this.dataMountProblem(spec, true, rl['nexus.project']);
+    if (data) return data;
     for (const m of spec.mounts) {
+      if (m.kind === 'datasets') continue;
       if (m.kind !== 'worktree') return 'an agent container may only mount its own worktree';
       if (m.readOnly) return 'the worktree mount must be read-write';
       if (m.containerPath !== '/workspace') return 'the worktree is mounted at /workspace only';
@@ -939,6 +971,7 @@ stderr: ${r.stderr}` : ''}`
     this.event(a, 'staging');
     const staged = await stageInputs(this.fs, this.paths!, this.git!, plan, a.workDir, a.abort.signal);
     if (!staged.ok) return this.refuse(a, staged.reason, staged.detail);
+    if (!(await this.ensureDataFolder(spec))) return this.refuse(a, 'bad_plan', 'the project\'s data folder is not a plain folder under the data home');
     await this.writeRecord(a, 'plan.json', { plan } satisfies PlanRecord);
     this.checkStop(a);
     this.event(a, 'creating');
@@ -1164,6 +1197,17 @@ stderr: ${r.stderr}` : ''}`
 
   // ---------- agent turns (B2b Task 11) ----------
 
+  /**
+   * A Machine learning project's data folder, before its container is created: a bind mount needs it to exist, so an empty one is made
+   * (one folder at a time, a link at any step refused: ensureDirUnder). The path is the plan's, already checked to be exactly
+   * `<home>/datasets/<project>/files` (dataMountProblem). No data mount: true.
+   */
+  private async ensureDataFolder(spec: ContainerSpec): Promise<boolean> {
+    const m = spec.mounts.find((x) => x.kind === 'datasets');
+    if (!m) return true;
+    try { return await ensureDirUnder(this.fs, this.paths!.root, m.hostPath); } catch { return false; }
+  }
+
   /** Builds this turn's agentAttempt.ts port (post, log, the registry, the proxy starter, the guard-refusal flag) and runs it. */
   private async runAgent(a: AttemptState, plan: AgentPlan): Promise<void> {
     await this.openLog(a);
@@ -1171,6 +1215,7 @@ stderr: ${r.stderr}` : ''}`
     if (!(await noLinkUnder(this.fs, this.paths!.root, plan.runtime.request.configDir)) || !(await noLinkUnder(this.fs, this.paths!.root, plan.worktree.hostPath))) {
       return this.refuse(a, 'bad_plan', 'a link stands in the turn\'s config or worktree folder');
     }
+    if (!(await this.ensureDataFolder(plan.container))) return this.refuse(a, 'bad_plan', 'the project\'s data folder is not a plain folder under the data home');
     // The turn's host egress proxy URL, known once agentAttempt has started the proxy: the cli-agent runtime reads it
     // through `egressProxyUrl` and never starts without one.
     const egress: { url: string | null } = { url: null };

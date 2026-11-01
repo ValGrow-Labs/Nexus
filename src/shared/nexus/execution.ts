@@ -55,8 +55,11 @@ export type NetworkMode =
   | { mode: 'test-internal'; network: string };                                  // joins a preview's internal network
 
 export interface MountSpec {
-  /** `worktree` (B2b): an agent turn's session worktree, bind-mounted read-write at `/workspace`. */
-  kind: 'input' | 'workspace' | 'out' | 'deps' | 'log' | 'worktree';
+  /**
+   * `worktree` (B2b): an agent turn's session worktree, bind-mounted read-write at `/workspace`. `datasets`: a Machine learning project's
+   * data folder (`<data home>/datasets/<projectId>/files`), bind-mounted READ-ONLY at `/data`, only in the ML kit (ml-python) with no network.
+   */
+  kind: 'input' | 'workspace' | 'out' | 'deps' | 'log' | 'worktree' | 'datasets';
   /** An absolute host path (a bind mount) or a named volume (`nexus-ws-<attemptId>`, `nexus-deps-…`). */
   hostPath: string;
   containerPath: string;

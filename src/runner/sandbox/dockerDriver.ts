@@ -28,6 +28,7 @@ import {
 } from '../../shared/nexus/execution';
 import { comparePreflight, expectedEndpoints, isPinnedImageRef } from '../../shared/nexus/preflightCheck';
 import { EGRESS_PROXY_ALIAS } from '../../shared/nexus/egressPolicy';
+import { DATA_CONTAINER_PATH as DATA_MOUNT_PATH } from '../../shared/nexus/datasets';
 import { redactSecretText } from '../../main/nexus/activity/redact';
 import type { RunResult } from '../proc';
 import type { CreateOptions, ImageInfo, ResourceFacts, ResourceKind, RunnerDriver } from '../types';
@@ -126,6 +127,8 @@ export function createArgv(spec: ContainerSpec, o: CreateOptions = {}): string[]
     const bind = /^[A-Za-z]:[\\/]/.test(m.hostPath) || m.hostPath.startsWith('/');
     if (!bind && !NAME_RE.test(m.hostPath)) throw new SpecError('a volume mount is not a nexus volume');
     if (!bind && m.kind === 'deps' && !DEPS_VOLUME_RE.test(m.hostPath)) throw new SpecError('a deps mount is not a dependency cache volume');
+    // A Machine learning project's data: a bind mount, read-only, at /data, and nothing else.
+    if (m.kind === 'datasets' && (!bind || m.readOnly !== true || m.containerPath !== DATA_MOUNT_PATH)) throw new SpecError('a data mount is a read-only bind at /data only');
     const fields = [`type=${bind ? 'bind' : 'volume'}`, `src=${m.hostPath}`, `dst=${m.containerPath}`];
     if (m.readOnly) fields.push('readonly');
     argv.push('--mount', fields.map(csvField).join(','));

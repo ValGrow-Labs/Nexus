@@ -387,6 +387,12 @@ function compare(spec: ContainerSpec, inspect: unknown): PreflightReport {
       if (!isAgentContainer) problems.push(`mount ${clip(w.containerPath)} is a worktree mount outside an agent container`);
       if (w.readOnly) problems.push(`mount ${clip(w.containerPath)} is a read-only worktree mount, expected read-write`);
     }
+    // A Machine learning project's data: read-only, at /data, in the ML kit only (the observed RW flag is compared below like any mount's).
+    if (w.kind === 'datasets') {
+      if (!w.readOnly) problems.push(`mount ${clip(w.containerPath)} is a read-write data mount, expected read-only`);
+      if (w.containerPath !== '/data') problems.push(`mount ${clip(w.containerPath)} is a data mount outside /data`);
+      if (spec.profile !== 'ml-python') problems.push(`mount ${clip(w.containerPath)} is a data mount outside the machine learning kit`);
+    }
     wanted.add(w.containerPath);
     const got = byDst.get(w.containerPath);
     if (!got) { problems.push(`mount ${clip(w.containerPath)} is missing`); continue; }

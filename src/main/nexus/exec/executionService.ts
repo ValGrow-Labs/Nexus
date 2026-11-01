@@ -98,7 +98,7 @@
 import type Database from 'better-sqlite3';
 import type { AgentPlan, ImageStatus, SandboxProfile, SandboxProfileId, StagedOutput, ParsedOutput, ExitInfo, ResourceLimits } from '../../../shared/nexus/execution';
 import { DIAGNOSE_MAX_RANGES } from '../../../shared/nexus/execution';
-import { agentProfileFromFacts, anyMachineLearningProject, ML_PROFILE, profileFromFacts } from './sandboxProfile';
+import { agentProfileFromFacts, anyMachineLearningProject, isMachineLearningProject, ML_PROFILE, profileFromFacts } from './sandboxProfile';
 import type { RuntimeEvent } from '../../../shared/nexus/runtime';
 import type { Job, JobKind, JobState, Principal, ScopeRef } from '../../../shared/nexus/platform';
 import { getUserAction, USER_ACTIONS, type UserActionDef } from '../../../shared/nexus/actions';
@@ -1794,7 +1794,9 @@ export class ExecutionService {
           // B2b Task 7: the git write recipes plan from the params the system stored when it queued them.
           approval: null, service, diagnose, params: parseJson(j.params_json),
           // B2b Task 10: a collect names the session's RECORDED worktree (a reused one carries the earlier session's name).
-          worktree: recipe.id === 'changeset.collect' ? this.sessionWorktreeOf(j) : null });
+          worktree: recipe.id === 'changeset.collect' ? this.sessionWorktreeOf(j) : null,
+          // A Machine learning project's data, read-only at /data (the plan adds it only in the ML kit with no network).
+          datasets: isMachineLearningProject(this.db, j.project_id) });
       } catch (e) {
         planError = refused(e);
       }
