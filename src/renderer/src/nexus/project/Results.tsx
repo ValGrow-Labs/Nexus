@@ -102,7 +102,7 @@ export function Results({ projectId }: { projectId: string }) {
   return (
     <section className="nx-results" aria-labelledby="nx-results-title">
       <div className="nx-results__head">
-        <h2 id="nx-results-title" className="nx-results__title">{RESULTS_TITLE}</h2>
+        <h2 id="nx-results-title" className="nx-results__title" title={STAYS_LINE}>{RESULTS_TITLE}</h2>
         {rows.length > 0 && !confirmClear && <Button variant="quiet" disabled={busy !== null} onClick={() => setConfirmClear(true)}>{REMOVE_ALL_LABEL}</Button>}
       </div>
       {confirmClear && (
@@ -173,7 +173,6 @@ export function Results({ projectId }: { projectId: string }) {
         )}
       {view.skipped > 0 && <p className="nx-muted nx-results__p">{skippedLine(view.skipped)}</p>}
       {note && <p className={note.alert ? 'nx-passport__note' : 'nx-muted'} role={note.alert ? 'alert' : 'status'}>{note.text}</p>}
-      <p className="nx-muted nx-results__note">{STAYS_LINE}</p>
     </section>
   );
 }

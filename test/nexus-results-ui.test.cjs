@@ -121,7 +121,8 @@ test('RU6 the wiring: only for a Machine learning project, never a location or H
   assert.match(ui, /dataUrl\.startsWith\('data:image\/png;base64,'\)/, 'an image is only ever a PNG data URL main sent');
   assert.match(ui, /<img src=\{url\} alt=\{`Chart: \$\{c\.name\}`\} \/>/);
   assert.match(ui, /\{d\.isModel && <span className="nx-muted nx-results__model">\{MODEL_NOTE\}<\/span>\}/);
-  assert.match(ui, /<p className="nx-muted nx-results__note">\{STAYS_LINE\}<\/p>/);
+  assert.match(ui, /className="nx-results__title" title=\{STAYS_LINE\}/);
+  assert.ok(!ui.includes('nx-results__note'), 'no extra line under the block: it would push the work area down');
   const bench = read('src/renderer/src/nexus/project/ProjectBench.tsx');
   assert.ok(bench.indexOf('<YourData projectId={project.id} />') < bench.indexOf('<Results projectId={project.id} />'), 'after "Your data"');
   const client = read('src/renderer/src/nexus/data/nexusClient.ts');

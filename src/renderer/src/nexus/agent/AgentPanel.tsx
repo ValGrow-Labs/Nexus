@@ -52,6 +52,8 @@ export function AgentPanel({ projectId, workspaceId, reviewReady = 0, onReview, 
   const [more, setMore] = useState(false);
   const [logOf, setLogOf] = useState<string | null>(null);
   const [snapshotStarted, setSnapshotStarted] = useState(false);
+  // The request the helper could not start for want of a starting point: it is sent again by itself once the starting point is saved (once).
+  const [resend, setResend] = useState<{ text: string; ok: boolean } | null>(null);
   const running = panel.progress !== null;
   useEffect(() => {
     if (!running) return;
@@ -102,6 +104,13 @@ export function AgentPanel({ projectId, workspaceId, reviewReady = 0, onReview, 
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [handed, ready, draft, projectId]);
+  useEffect(() => {
+    if (!resend || !resend.ok || !ready || running || tail?.button?.kind === 'snapshot') return;
+    const text = resend.text;
+    setResend(null);
+    void sendToProjectAgent(text, projectId).then((r) => { setNote(r.ok ? null : r.error); refresh(); });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [resend, ready, running, tail?.button?.kind]);
   const press = async () => {
     const b = tail?.button;
     if (!b || busy) return;
@@ -114,10 +123,12 @@ export function AgentPanel({ projectId, workspaceId, reviewReady = 0, onReview, 
       setBusy(null); setNote(r.ok ? 'Asked the AI helper to stop.' : agentFailText(r)); refresh();
     } else if (b.kind === 'snapshot') {
       setBusy('snapshot'); setNote(null);
+      const lastAsk = [...items].reverse().find((i) => i.kind === 'you')?.text ?? null;
       const r = await withIntent(`agent:snapshot:${projectId}`, (intentId) => nexusClient.jobStart({ projectId, workspaceId, actionId: 'sde.repository.snapshot', inputs: [], params: {}, intentId }));
       setBusy(null);
       if (r.ok) setSnapshotStarted(true);
-      setNote(r.ok ? 'Saving a starting point. Then ask again.' : agentFailText(r)); refresh();
+      if (r.ok && lastAsk) { setResend({ text: lastAsk, ok: false }); setTimeout(() => setResend((x) => (x ? { ...x, ok: true } : x)), 3000); }
+      setNote(r.ok ? (lastAsk ? 'Saving a starting point. Your request starts again by itself.' : 'Saving a starting point. Then ask again.') : agentFailText(r)); refresh();
     }
   };
   const end = async (id: string) => {

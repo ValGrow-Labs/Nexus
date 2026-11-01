@@ -30,8 +30,8 @@
 .nx-data__title { margin: 0; font: 600 12px/1.2 var(--nx-font); color: var(--nx-text-3); }
 .nx-data__privacy, .nx-data__empty, .nx-data__note { margin: 0; font-size: 12.5px; }
 .nx-data__list { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--nx-s1); }
-.nx-data__row { display: flex; align-items: center; justify-content: space-between; gap: var(--nx-s2); padding: var(--nx-s2) var(--nx-s3); border: 1px solid var(--nx-line); border-radius: var(--nx-r-obj); background: var(--nx-surface); font-size: 12.5px; }
-.nx-data__text { display: grid; gap: 2px; min-width: 0; }
+.nx-data__row { display: flex; align-items: center; justify-content: space-between; gap: var(--nx-s2); padding: 6px var(--nx-s3); border: 1px solid var(--nx-line); border-radius: var(--nx-r-obj); background: var(--nx-surface); font-size: 12.5px; }
+.nx-data__text { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0 var(--nx-s3); min-width: 0; }
 .nx-data__name { overflow-wrap: anywhere; }
 .nx-data__facts { color: var(--nx-text-2); }
 

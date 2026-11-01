@@ -3,7 +3,7 @@ import type { DatasetsView } from '@shared/nexus/ipc';
 import { nexusClient } from '../data/nexusClient';
 import { Button } from '../ui/Button';
 import {
-  DAMAGED_LINE, EMPTY_LINE, REMOVED_LINE, REMOVE_LABEL, REMOVE_NOTE, UPLOADING_LABEL, UPLOAD_LABEL, YOUR_DATA_TITLE, addedLine, dataFailureText, dataRows,
+  DAMAGED_LINE, EMPTY_LINE, REMOVE_LABEL, REMOVE_NOTE, UPLOADING_LABEL, UPLOAD_LABEL, YOUR_DATA_TITLE, dataFailureText, dataRows,
   privacyLine, useProjectData
 } from './yourDataModel';
 
@@ -37,7 +37,6 @@ export function YourData({ projectId }: { projectId: string }) {
     setBusy(null);
     if (!r.ok) { setNote({ text: dataFailureText(r), alert: true }); return; }
     take(r.data);
-    if (r.data.added) setNote({ text: addedLine(r.data.added.name), alert: false });
   };
   const remove = async (datasetId: string) => {
     if (busy) return;
@@ -47,7 +46,6 @@ export function YourData({ projectId }: { projectId: string }) {
     setBusy(null);
     if (!r.ok) { setNote({ text: dataFailureText(r), alert: true }); return; }
     take(r.data);
-    setNote({ text: REMOVED_LINE, alert: false });
   };
 
   return (
@@ -61,8 +59,7 @@ export function YourData({ projectId }: { projectId: string }) {
       {rows.length === 0
         ? <p className="nx-data__empty">{EMPTY_LINE}</p>
         : (
-          <>
-            <ul className="nx-data__list" aria-label="Your data files">
+          <ul className="nx-data__list" aria-label="Your data files">
               {rows.map((d) => (
                 <li key={d.id} className="nx-data__row">
                   <div className="nx-data__text">
@@ -70,14 +67,12 @@ export function YourData({ projectId }: { projectId: string }) {
                     <span className="nx-data__facts">{d.facts}</span>
                     <span className="nx-muted nx-data__added">{d.added}</span>
                   </div>
-                  <Button disabled={busy !== null} ariaLabel={d.removeLabel} onClick={() => { void remove(d.id); }}>{busy === d.id ? 'Removing…' : REMOVE_LABEL}</Button>
+                  <Button disabled={busy !== null} ariaLabel={d.removeLabel} title={REMOVE_NOTE} onClick={() => { void remove(d.id); }}>{busy === d.id ? 'Removing…' : REMOVE_LABEL}</Button>
                 </li>
               ))}
-            </ul>
-            <p className="nx-muted nx-data__note">{REMOVE_NOTE}</p>
-          </>
+          </ul>
         )}
-      {note && <p className={note.alert ? 'nx-passport__note' : 'nx-muted'} role={note.alert ? 'alert' : 'status'}>{note.text}</p>}
+      {note && <p className="nx-passport__note" role="alert">{note.text}</p>}
     </section>
   );
 }
