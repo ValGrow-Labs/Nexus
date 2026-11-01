@@ -221,3 +221,9 @@ test('the project page\'s "Your first build" line goes away once the AI helper c
   const pb = read('src/renderer/src/nexus/project/ProjectBench.tsx');
   assert.match(pb, /ready: helperCanAsk/, 'the bench passes the same ready test the request box uses');
 });
+
+test('the three ways of "Choose your AI helper" are one column: the fold is not pushed into a second column, and the stack can shrink to the sheet (it ran off the right edge)', () => {
+  const css = read('src/renderer/src/nexus/styles/execution.css');
+  assert.match(css, /\.nx-xg__way > \.nx-xs__fold, \.nx-fb__step > \.nx-xs__fold \{ grid-column: auto; \}/);
+  assert.match(css, /\.nx-xg__ways > li, \.nx-xg__way > \*, \.nx-fb__step > \*, \.nx-xs > \* \{ min-width: 0; \}/);
+});

@@ -186,6 +186,10 @@
 .nx-xg__controls { display: grid; gap: var(--nx-s2); }
 .nx-xg__controls .nx-xs__action { grid-column: auto; }
 .nx-xg__buttons { display: flex; flex-wrap: wrap; gap: var(--nx-s2); }
+/* A card of the three ways is ONE column. The row rules above put the "Is this safe?" fold in column 2, which made the card invent a
+   second column and push its content past the sheet's right edge. Everything in the stack may also shrink to the sheet's width. */
+.nx-xg__way > .nx-xs__fold, .nx-fb__step > .nx-xs__fold { grid-column: auto; }
+.nx-xg__ways > li, .nx-xg__way > *, .nx-fb__step > *, .nx-xs > * { min-width: 0; }
 
 /* Get this computer ready: the three steps of "Your first build" (the exact numbers sit behind "More details", closed). */
 .nx-fb { display: grid; gap: var(--nx-s2); }
