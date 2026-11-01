@@ -27,6 +27,9 @@ export interface BuildView {
 
 export const BUILD_REVIEW_LABEL = 'Look at the suggested changes';
 export const BUILD_BACK_LABEL = 'Back to the project';
+export const BUILD_BLOCKED_LABEL = 'Look at what it made';
+export const BUILD_BLOCKED_STATUS = 'The AI helper made changes, but they did not pass the checks.';
+export const BUILD_BLOCKED_NEXT = 'Look at what it made to see what failed, or ask the AI helper to fix it.';
 const HEADING_CHARS = 90;
 
 /** The request's words cut at a word edge so the heading stays one line. */
@@ -55,6 +58,8 @@ export interface BuildInput {
   sawLive: boolean;
   /** The person closed the ended view. */
   dismissed: boolean;
+  /** A suggested change this request made whose checks failed (it is kept as Blocked): the request did change things. */
+  blockedChange?: { name: string } | null;
 }
 
 /** What the building page shows, or null when the page should show the project as usual. */
@@ -90,6 +95,9 @@ export function buildView(i: BuildInput): BuildView | null {
   const end = i.panel.ending;
   if (end && end.tone === 'handed_in') {
     return { state: 'ready', heading: 'Your changes are ready', status: 'The AI helper finished. Look over what it changed before anything touches your files.', elapsed: null, steps: stepsOf(false), said, canStop: false, button: { kind: 'review', label: BUILD_REVIEW_LABEL }, next: null };
+  }
+  if (end && end.tone === 'no_change' && i.blockedChange) {
+    return { state: 'ended', heading: requestHeading(youText), status: BUILD_BLOCKED_STATUS, elapsed: null, steps: stepsOf(false), said: end.reply ?? null, canStop: false, button: { kind: 'review', label: BUILD_BLOCKED_LABEL }, next: BUILD_BLOCKED_NEXT };
   }
   if (end) {
     const status = end.tone === 'failed' ? 'It did not work.' : end.tone === 'no_change' ? 'The AI helper finished without suggesting changes.'

@@ -108,10 +108,17 @@ function isData(text: string): boolean {
   try { return typeof JSON.parse(t) === 'object'; } catch { return false; }
 }
 function hasWords(text: string): boolean { return text.trim() !== '' && text.split('').every((ch) => ' \t\r\n{}[]'.includes(ch)) === false && !isData(text); }
+/** Ids the helper copied out of a tool result ("version ID 01M6...") are not words a person can use: they are removed from what it said. */
+const ID_WORD = String.raw`(?:[Vv]ersion|[Aa]rtifact|[Jj]ob|[Ss]ession)\s+[Ii][Dd]s?\s*:?\s*[0-9A-Z]{26}`;
+const ID_PHRASE = new RegExp(String.raw`\s*(?:with\s+)?${ID_WORD}(?:\s*(?:,|and)\s*(?:the\s+)?${ID_WORD})*`, 'g');
+const BARE_ID = /\b[0-9A-Z]{26}\b/g;
+export function plainHelperText(text: string): string {
+  return text.replace(ID_PHRASE, '').replace(BARE_ID, '').replace(/[ \t]{2,}/g, ' ').replace(/\s+([.,;:])/g, '$1');
+}
 export function replyOf(d: Pick<SessionDetailView, 'messages'> | null | undefined): string | null {
   const m = d ? [...d.messages].reverse().find((x) => x.from === 'agent' && hasWords(x.text)) : undefined;
   if (!m) return null;
-  const t = tidyCut(m.text).split(/[\t\n\r ]+/).join(' ').trim();
+  const t = plainHelperText(tidyCut(m.text)).split(/[\t\n\r ]+/).join(' ').trim();
   return t.length > 600 ? `${t.slice(0, 599)}…` : t;
 }
 /** One line of the chat: what you said, what the AI helper said, or the steps it took in between (small grey line). */
@@ -127,7 +134,7 @@ export function chatItems(d: Pick<SessionDetailView, 'messages' | 'toolCalls'> |
   for (const x of all) {
     if (x.msg && x.msg.from === 'agent' && !hasWords(x.msg.text)) continue;
     if (x.msg) {
-      out.push({ kind: x.msg.from === 'agent' ? 'helper' : 'you', key: `m${x.msg.seq}`, text: x.msg.from === 'agent' ? tidyCut(x.msg.text) : x.msg.text, when: clock(x.msg.ts) });
+      out.push({ kind: x.msg.from === 'agent' ? 'helper' : 'you', key: `m${x.msg.seq}`, text: x.msg.from === 'agent' ? plainHelperText(tidyCut(x.msg.text)) : x.msg.text, when: clock(x.msg.ts) });
     } else if (x.step) {
       const last = out[out.length - 1];
       if (last && last.kind === 'steps') { const labels = last.text.split(' · '); if (!labels.includes(x.step) && labels.length < 3) last.text = `${last.text} · ${x.step}`; }

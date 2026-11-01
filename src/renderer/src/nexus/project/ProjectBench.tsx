@@ -321,6 +321,11 @@ function Workbench({ project, tool }: { project: Project; tool: ProjectTool }) {
   const hasSde = (idx.byProject.get(project.id) ?? []).some((r) => r.status === 'active' && r.workspaceId === 'sde');
   // The newest suggested change that is waiting for a decision or kept but not added yet: Try it can run it as well as the project as it stands.
   const tryChange = useMemo(() => { const r = changeSetRows(artifacts).find((x) => x.status === 'candidate' || x.status === 'active'); return r ? { versionId: r.versionId, name: r.name } : null; }, [artifacts]);
+  // The newest suggested change whose checks failed: the building page says the helper DID make changes, but they did not pass.
+  const blockedChange = useMemo(() => {
+    const s = artifacts.filter((a) => a.artifact.kind === 'change_set' && a.artifact.status === 'active' && a.latest?.status === 'failed').sort((x, y) => y.artifact.createdAt - x.artifact.createdAt)[0];
+    return s ? { name: s.artifact.name, createdAt: s.artifact.createdAt } : null;
+  }, [artifacts]);
   // A brand-new project: the three steps of "Your first build", until it has any suggested changes.
   // The same test the request box uses: once the AI helper can take a request, the three steps are done and the card goes away.
   const helperCanAsk = agentPanelModel({ health, availability, sessions: [], sessionsFail: null }).canAsk;
@@ -360,7 +365,7 @@ function Workbench({ project, tool }: { project: Project; tool: ProjectTool }) {
           {!wide && notice && <p className="nx-passport__note" role="alert">{notice}</p>}
           {tool === 'bench' && hasSde && !card
             ? (
-              <BuildStage projectId={project.id} blocked={false} reviewReady={reviewReady} onReview={() => navigate({ name: 'project', id: project.id, tool: 'changes' })}>
+              <BuildStage projectId={project.id} blocked={false} reviewReady={reviewReady} blockedChange={blockedChange} onReview={() => navigate({ name: 'project', id: project.id, tool: 'changes' })}>
                 <FocusSurface tool={tool} project={project} node={sourceNode} git={git} onRetryGit={refresh} tryChange={tryChange} />
               </BuildStage>
             )

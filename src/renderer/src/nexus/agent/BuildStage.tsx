@@ -18,7 +18,9 @@ const TICK_MS = 2_000;
  * and one button (Stop while it works, then "Look at the suggested changes", or "Back to the project" when it ended without any).
  * Otherwise it shows `children`, the project as usual. The AI helper dock stays on the right as the chat.
  */
-export function BuildStage({ projectId, blocked, reviewReady, onReview, children }: { projectId: string; blocked: boolean; reviewReady: number; onReview: () => void; children: ReactNode }) {
+export function BuildStage({ projectId, blocked, reviewReady, onReview, blockedChange = null, children }: { projectId: string; blocked: boolean; reviewReady: number; onReview: () => void;
+  /** The newest suggested change whose checks failed, with when it was made. */
+  blockedChange?: { name: string; createdAt: number } | null; children: ReactNode }) {
   const { health, availability } = useHealth();
   const sessions = useSessions(projectId);
   const jobs = useTurnJobs(projectId);
@@ -47,7 +49,10 @@ export function BuildStage({ projectId, blocked, reviewReady, onReview, children
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [live, startingText !== null]);
 
-  const view = buildView({ panel, items: chatItems(detail.data), liveLine: liveStepLine(detail.data), reviewReady, starting: startingText, startFailed, sawLive: sawLive.current, dismissed });
+  // A blocked change counts for this request only when it was made after the request started (an older one never changes what this says).
+  const turnStart = Math.max(0, ...[...jobs.values()].map((j) => j.createdAt ?? 0));
+  const blockedNow = blockedChange && blockedChange.createdAt >= turnStart ? { name: blockedChange.name } : null;
+  const view = buildView({ panel, items: chatItems(detail.data), liveLine: liveStepLine(detail.data), reviewReady, starting: startingText, startFailed, sawLive: sawLive.current, dismissed, blockedChange: blockedNow });
   if (blocked || !view) return <>{children}</>;
 
   const liveSession = panel.sessions.find((s) => s.canStop) ?? null;

@@ -1443,3 +1443,24 @@ test('a request that ran and then failed in the AI service says so, and does not
   // the setup-check sentence itself is unchanged for the setup screens
   assert.equal(R.agentTurnHeadline(j({ outcome: 'runtime_auth' })).includes('stopped partway'), false);
 });
+
+test('a request that registered a change whose checks failed says it DID make changes (not "no changes"), and the helper\'s copied ids are not shown', () => {
+  const ended = (state, outcome = null, o = {}) => buildPanel([job({ id: 'J1', state, outcome, startedAt: NOW, finishedAt: NOW + 1000, ...o })], [session({ status: 'running', liveJobId: null })]);
+  const blocked = BM.buildView(bi({ panel: ended('completed', 'no_change'), items: chat(['you', 'build a date page'], ['steps', 'Writing a file']), blockedChange: { name: 'Add web page showing today’s date' } }));
+  assert.equal(blocked.state, 'ended');
+  assert.equal(blocked.status, 'The AI helper made changes, but they did not pass the checks.');
+  assert.equal(blocked.next, 'Look at what it made to see what failed, or ask the AI helper to fix it.');
+  assert.deepEqual(blocked.button, { kind: 'review', label: 'Look at what it made' });
+  assert.doesNotMatch(blocked.status, /no changes|without suggesting/i);
+  // without a blocked change it still says no changes; a failed or stopped request is unchanged
+  const plain = BM.buildView(bi({ panel: ended('completed', 'no_change'), items: chat(['you', 'hi']) }));
+  assert.equal(plain.status, 'The AI helper finished without suggesting changes.');
+  assert.equal(BM.buildView(bi({ panel: ended('failed', null, { error: { code: 'x' }, headline: 'failed' }), items: chat(['you', 'x']), blockedChange: { name: 'n' } })).status, 'It did not work.');
+  // ids the helper copied out of a tool result
+  const said = 'The change has been registered for review with version ID 01M6AWJXDTD3HJ8QWAN6D6PVPQ and artifact ID 01M6AWJXDTC4WT3A6BET5Y9XHA. The title is "Add web page" and the getDate test still fails.';
+  assert.equal(A.plainHelperText(said), 'The change has been registered for review. The title is "Add web page" and the getDate test still fails.');
+  assert.equal(A.plainHelperText('See 01M6AWJXDTD3HJ8QWAN6D6PVPQ now.'), 'See now.');
+  assert.equal(A.plainHelperText('The word PRODUCTIVITY is not an id.'), 'The word PRODUCTIVITY is not an id.');
+  assert.equal(A.chatItems({ messages: [{ seq: 1, ts: 1, from: 'agent', text: said, displayOnly: true }], toolCalls: [] })[0].text.includes('01M6'), false);
+  assert.equal(A.replyOf({ messages: [{ seq: 1, ts: 1, from: 'agent', text: said, displayOnly: true }] }).includes('01M6'), false);
+});
