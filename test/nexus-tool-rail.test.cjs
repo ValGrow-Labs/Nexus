@@ -30,3 +30,9 @@ test('TR2 a Machine learning project has no code editor, no terminal and no Try 
   assert.match(bench, /const isMl = .*r\.isPrimary && r\.workspaceId === 'ml'/, 'only a project whose main kind of work is Machine learning');
   assert.match(bench, /canTry=\{hasSde && !card && !isMl\} codeTools=\{!isMl\}/);
 });
+
+test('TR3 Details is a symbol in the rail (with a name for tools that read it), not a word', () => {
+  const bench = src('src/renderer/src/nexus/project/ProjectBench.tsx');
+  assert.match(bench, /className="nx-rail__item" title="Details" aria-label="Details".*?><Icon name="panel" size=\{17\} \/><\/button>/);
+  assert.ok(!/>Details<\/button>/.test(bench), 'no word-button called Details in the rail');
+});

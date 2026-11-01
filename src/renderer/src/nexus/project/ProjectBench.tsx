@@ -27,6 +27,7 @@ import { ProjectHeader } from './ProjectHeader';
 import { ProgressSection } from './ProgressSection';
 import { changeSetRows } from './changeSetModel';
 import { ToolRail } from './ToolRail';
+import { Icon } from '../icons';
 import { FocusSurface } from './FocusSurface';
 import { Passport } from './PassportPanel';
 import { SaveArtifactSheet } from './SaveArtifactSheet';
@@ -370,7 +371,7 @@ function Workbench({ project, tool }: { project: Project; tool: ProjectTool }) {
         <div className="nx-bench">
           <ToolRail projectId={project.id} rootPath={project.rootPath} tool={tool} hasChanges={hasChanges} canTry={hasSde && !card && !isMl} codeTools={!isMl} onOpenTerminal={openTerminal}
             extra={!wide && (
-              <button type="button" className="nx-passport-btn" aria-haspopup="dialog" aria-expanded={detailsOpen} onClick={() => setDetailsOpen(true)}>Details</button>
+              <button type="button" className="nx-rail__item" title="Details" aria-label="Details" aria-haspopup="dialog" aria-expanded={detailsOpen} onClick={() => setDetailsOpen(true)}><Icon name="panel" size={17} /></button>
             )} />
           {tool === 'bench' && hasSde && !card
             ? (
