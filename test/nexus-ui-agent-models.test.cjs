@@ -1452,6 +1452,13 @@ test('a request that registered a change whose checks failed says it DID make ch
   assert.equal(blocked.next, 'Look at what it made to see what failed, or ask the AI helper to fix it.');
   assert.deepEqual(blocked.button, { kind: 'review', label: 'Look at what it made' });
   assert.doesNotMatch(blocked.status, /no changes|without suggesting/i);
+  // a request that registered a change which is then blocked is never "ready" (the helper's own "ready for review" words are not shown)
+  const handedBlocked = BM.buildView(bi({ panel: ended('completed', 'handed_in'), items: chat(['you', 'build a date page'], ['agent', 'Changeset registered successfully. The change is now ready for review.']), blockedChange: { name: 'Add web page' } }));
+  assert.equal(handedBlocked.state, 'ended');
+  assert.equal(handedBlocked.status, 'The AI helper made changes, but they did not pass the checks.');
+  assert.equal(handedBlocked.said, null);
+  assert.deepEqual(handedBlocked.button, { kind: 'review', label: 'Look at what it made' });
+  assert.equal(BM.buildView(bi({ panel: ended('completed', 'handed_in'), items: chat(['you', 'x']) })).state, 'ready', 'without a blocked change it is ready');
   // without a blocked change it still says no changes; a failed or stopped request is unchanged
   const plain = BM.buildView(bi({ panel: ended('completed', 'no_change'), items: chat(['you', 'hi']) }));
   assert.equal(plain.status, 'The AI helper finished without suggesting changes.');

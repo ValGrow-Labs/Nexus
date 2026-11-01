@@ -39,15 +39,22 @@ function toContinuation(db: Database.Database, r: Row): Continuation | null {
 
 const COLUMNS = 'v.id, v.artifact_id, v.status, v.storage_ref_json, v.metadata_json, v.produced_by_job_id AS job_id, a.name';
 
+/**
+ * A blocked change (its checks did not pass) is carried on only right after it was made, as a follow-up ("fix it"). An hour later a new request is
+ * most likely about something else, and starting from a stale blocked change would drag its files and its name into it.
+ */
+export const BLOCKED_CONTINUE_MS = 30 * 60_000;
+
 /** The newest suggested change of the project that a new conversation continues, or null (none waiting, or the records are not those of a change). */
-export function newestUnmergedChange(db: Database.Database, projectId: string): Continuation | null {
+export function newestUnmergedChange(db: Database.Database, projectId: string, now: number = Date.now()): Continuation | null {
   try {
     const r = db.prepare(`SELECT ${COLUMNS} FROM artifacts a JOIN artifact_versions v ON v.artifact_id = a.id
       WHERE a.project_id = ? AND a.kind = 'change_set' AND a.status = 'active'
         AND v.version_no = (SELECT MAX(w.version_no) FROM artifact_versions w WHERE w.artifact_id = a.id)
-        AND (v.status IN ('candidate','failed')
+        AND (v.status = 'candidate'
+          OR (v.status = 'failed' AND v.created_at >= ?)
           OR (v.status = 'active' AND NOT EXISTS (SELECT 1 FROM change_set_accepts c WHERE c.version_id = v.id)))
-      ORDER BY v.created_at DESC, v.rowid DESC LIMIT 1`).get(projectId) as Row | undefined;
+      ORDER BY v.created_at DESC, v.rowid DESC LIMIT 1`).get(projectId, now - BLOCKED_CONTINUE_MS) as Row | undefined;
     return r ? toContinuation(db, r) : null;
   } catch { return null; }
 }

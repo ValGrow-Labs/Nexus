@@ -93,11 +93,12 @@ export function buildView(i: BuildInput): BuildView | null {
   }
   if (!i.sawLive || i.dismissed) return null;
   const end = i.panel.ending;
+  // The request made changes whose checks did not pass (a blocked change): never "ready". Its own words ("registered successfully, ready for review") are not shown then.
+  if (end && (end.tone === 'no_change' || end.tone === 'handed_in') && i.blockedChange) {
+    return { state: 'ended', heading: requestHeading(youText), status: BUILD_BLOCKED_STATUS, elapsed: null, steps: stepsOf(false), said: end.tone === 'no_change' ? end.reply ?? null : null, canStop: false, button: { kind: 'review', label: BUILD_BLOCKED_LABEL }, next: BUILD_BLOCKED_NEXT };
+  }
   if (end && end.tone === 'handed_in') {
     return { state: 'ready', heading: 'Your changes are ready', status: 'The AI helper finished. Look over what it changed before anything touches your files.', elapsed: null, steps: stepsOf(false), said, canStop: false, button: { kind: 'review', label: BUILD_REVIEW_LABEL }, next: null };
-  }
-  if (end && end.tone === 'no_change' && i.blockedChange) {
-    return { state: 'ended', heading: requestHeading(youText), status: BUILD_BLOCKED_STATUS, elapsed: null, steps: stepsOf(false), said: end.reply ?? null, canStop: false, button: { kind: 'review', label: BUILD_BLOCKED_LABEL }, next: BUILD_BLOCKED_NEXT };
   }
   if (end) {
     const status = end.tone === 'failed' ? 'It did not work.' : end.tone === 'no_change' ? 'The AI helper finished without suggesting changes.'

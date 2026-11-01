@@ -674,7 +674,7 @@ export class AgentService implements AgentTurnPort {
       }
       // A NEW conversation (no session to continue, no interrupted worktree to reuse) continues the newest suggested change that is not in the project yet:
       // its working copy starts from that change and the change set it makes revises it (`continuesFrom`: the version, read from Nexus's own records).
-      const continues = o.session === null && !o.reuseFrom ? newestUnmergedChange(this.db, o.pw.project_id) : null;
+      const continues = o.session === null && !o.reuseFrom ? newestUnmergedChange(this.db, o.pw.project_id, now) : null;
       const params: Record<string, unknown> = { message: o.message, ...(o.skillId ? { skillId: o.skillId } : {}), ...(o.reuseFrom ? { reuseFrom: o.reuseFrom } : {}),
         ...(continues ? { continuesFrom: continues.versionId } : {}), ...(o.params ?? {}) };
       const res = this.deps.jobs.createTx(user, { kind: 'agent.run', projectId: o.pw.project_id, workspaceId: o.pw.workspace_id, sessionId, idempotencyKey: key,

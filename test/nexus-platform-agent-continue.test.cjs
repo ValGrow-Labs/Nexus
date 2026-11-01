@@ -138,8 +138,13 @@ test('CT4 the block is bounded and labelled; a blocked change says which checks 
     const one = await seenTurn(w, { message: 'Add things', files: { 'src/a.js': "const k = 'sk-ant-api03-abcdefghijklmnopqrstuvwxyz0123456789ABCDEFGH';\n" }, title: 'Things', summary: long });
     await w.until_candidate(one.cs);
     assert.equal(w.versionRow(one.cs).status, 'failed', 'the change is blocked');
-    const row = newestUnmergedChange(w.db, w.PROJECT);
+    // The test's clock is not the wall clock: time is given to the lookup, as the service gives it its own.
+    const made = w.versionRow(one.cs).created_at;
+    const row = newestUnmergedChange(w.db, w.PROJECT, made + MIN);
     assert.ok(row && row.versionId === one.cs, 'the blocked change is waiting to be continued');
+    // A blocked change is carried on only right after it was made: half an hour later a new request starts from the project (or a waiting change), not from it.
+    assert.equal(newestUnmergedChange(w.db, w.PROJECT, made + 29 * MIN)?.versionId, one.cs, 'still a follow-up after 29 minutes');
+    assert.equal(newestUnmergedChange(w.db, w.PROJECT, made + 31 * MIN), null, 'a stale blocked change is not continued');
     const two = await seenTurn(w, { message: 'The test fails', files: { 'src/b.js': 'module.exports = 2;\n' }, title: 'Things, fixed', clientKey: 'k2' });
     const block = earlierBlock(two.seen.context);
     assert.ok(block && block.length <= 2048, `bounded (${block && block.length})`);
