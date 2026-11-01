@@ -316,6 +316,8 @@
 .nx-review.nx-surface { padding-bottom: 0; }
 .nx-cs__block > p, .nx-cs__block > h3 { margin: 0; }
 .nx-cs__bar { padding-bottom: var(--nx-s4); }
+.nx-cs__use { display: grid; gap: var(--nx-s2); justify-items: start; margin-bottom: var(--nx-s3); }
+.nx-cs__use .nx-muted { margin: 0; max-width: 64ch; }
 
 /* The building page: the request as the heading, what the AI helper is doing, its steps, and one big button after the work. */
 .nx-build { display: grid; align-content: start; gap: var(--nx-s4); padding: var(--nx-s6) var(--nx-s6) var(--nx-s8); min-width: 0; overflow: auto; flex: 1 1 auto; }

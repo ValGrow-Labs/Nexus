@@ -12,6 +12,8 @@ import { EvidenceSection } from './EvidenceSection';
 import { useExecutionUi } from './execContext';
 import { TryIt } from './TryIt';
 import { useNexusUi } from '../state/uiStore';
+import { navigate } from '../router/useRoute';
+import { FLOW_STEP_WORD, isCancelled, runChangesFlow } from './changesFlow';
 import {
   BUTTON_LABEL, DIFF_REDACTED_NOTE, acceptedText, changeCounts, changeSetModel, previewProof, proofLines, railLine, changeSetRows, classifyDiff, diffHasRedaction, diffSummary, headLine, headTitle, mergeModel, mergedOnBranch, mergedText, mergedTitle, reviewOf,
   type ChangeSetButton, type ChangeSetRow, type MergeModel, type RailStep
@@ -193,6 +195,28 @@ export function ChangeSetReview({ versionId, projectId, status, name, withEviden
     setNote(r.ok ? { text: acceptedText(), alert: false } : { text: agentFailText(r), alert: true });
     refresh();
   };
+  // "Use these changes": Looks good, Keep these changes and Add to my project from one button (same calls, same order, each only after the one before worked).
+  const useThese = async () => {
+    if (busy) return;
+    setBusy('flow'); setNote(null);
+    const out = await runChangesFlow({
+      head: repo.data?.acceptedHead ?? null,
+      approve: () => withIntent(`review:${versionId}:approve`, (intentId) => nexusClient.reviewDecide(versionId, { decision: 'approve' }, intentId)),
+      keep: (head) => nexusClient.changeSetAccept(versionId, head),
+      repoStatus: () => nexusClient.repoStatus(projectId),
+      add: (args) => nexusClient.repoMergeAccepted(projectId, args)
+    });
+    setBusy(null);
+    if (!out) setNote({ text: 'Nexus could not read the state of your project. Try again in a moment.', alert: true });
+    else if ('failed' in out) {
+      setNote(isCancelled(out.result)
+        ? { text: 'Kept. You did not confirm adding it, so your project is unchanged. Press “Add to my project” when you are ready.', alert: false }
+        : { text: `“${FLOW_STEP_WORD[out.failed]}” did not work. ${agentFailText(out.result)}`, alert: true });
+    } else if (out.done === 'kept') setNote({ text: `${acceptedText()}${out.sentence ? ` ${out.sentence}` : ''}`, alert: false });
+    else setNote({ text: mergedText(out.merge), alert: false, });
+    refresh();
+    if (out && 'done' in out && out.done === 'added') navigate({ name: 'project', id: projectId, tool: 'try' });
+  };
   const press = (b: ChangeSetButton) => {
     if (b === 'approve') void decide('approve');
     else if (b === 'accept') void accept();
@@ -254,6 +278,12 @@ export function ChangeSetReview({ versionId, projectId, status, name, withEviden
               <Button variant="quiet" disabled={busy !== null} onClick={() => { setAsking(null); setComment(''); }}>Cancel</Button>
             </div>
             {comment.trim() === '' && <p className="nx-muted">Write a short note first. The AI helper reads it.</p>}
+          </div>
+        )}
+        {view.buttons.includes('approve') && (
+          <div className="nx-cs__use">
+            <Button variant="primary" disabled={busy !== null} onClick={() => { void useThese(); }}>{busy === 'flow' ? 'Working… confirm in the other window if it opens' : 'Use these changes'}</Button>
+            <p className="nx-muted">One press: looks good, keep these changes, and add them to your project. You confirm once, in a separate window. Or use the steps below one at a time.</p>
           </div>
         )}
         {view.buttons.length > 0 && (
