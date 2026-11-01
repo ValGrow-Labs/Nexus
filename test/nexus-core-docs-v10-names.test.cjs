@@ -19,7 +19,9 @@ const { AGENT_DEFAULTS } = loadTs('src/shared/nexus/agentPolicy.ts');
 const { BUILTIN_TOOLS, DISALLOWED_TOOLS } = loadTs('src/runner/runtimes/cliAgent/args.ts');
 
 const PART4_HEAD = '\n# Part IV: Schema v10 and B2b\n';
-const PART4 = DOC.slice(DOC.indexOf(PART4_HEAD));
+// Part IV ends where Part V (schema v11) begins; sections 64 and 65 are Part V's own (test/nexus-core-docs-v11-names.test.cjs).
+const PART5_AT = DOC.indexOf('# Part V: Schema v11');
+const PART4 = DOC.slice(DOC.indexOf(PART4_HEAD), PART5_AT === -1 ? undefined : PART5_AT);
 
 /** The text from the heading line that starts with `start` up to the next heading line that starts with `end`. */
 function between(start, end, text = DOC) {

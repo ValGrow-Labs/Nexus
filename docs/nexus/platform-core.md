@@ -24,6 +24,8 @@ This is the reference for the Nexus platform core. It has four parts.
 - the local-model runtime, a second real agent runtime whose only destination is a loopback address ([section 62](#62-the-local-model-runtime));
 - the hosted-model runtime, a third real agent runtime that calls a hosted free-tier model API with the user's own key ([section 63](#63-the-hosted-model-runtime)).
 
+**[Part V](#part-v-schema-v11-and-the-live-preview-of-a-change) (sections 64 and 65)** covers schema v11, one replaced trigger that lets a live preview of a suggested change be recorded, opt-in, with its own backup, shape check and runbook.
+
 Part I is kept as the B0b reference. Where B1, B2a or B2b changed a statement in it, the section says so and links to Part II, Part III or Part IV.
 
 **Why one document.** The B1, B2a and B2b material is part of this file, not a separate `platform-b1.md`, `platform-b2a.md` or `platform-b2b.md`, for three reasons:
@@ -5157,3 +5159,31 @@ Other failures keep their code's generic outcome with a fixed runner sentence: t
 - **Not proven:** **no real provider call has been made**, with any key. That a real provider's answers have the shape the client reads, that its schema, tool-result and error quirks are as the table says, that a free key's limits allow a task to finish, and that a hosted model completes a task through Nexus: **none of this is verified.** See [section 59](#59-known-limitations), items 93 and 96.
 
 ---
+
+---
+
+# Part V: Schema v11 and the live preview of a change
+
+Schema v11 is the smallest schema step there is: **one trigger is replaced and nothing else changes.** It exists so that a live preview of a suggested change (an app run in the safe space before the change is added to the project) can be recorded as a deployment whose subject is the change.
+
+## 64. Schema v11: the one trigger, and its migration
+
+**What it changes.** v9 created the trigger `tr_deployments_insert` and froze it: a deployment's subject had to be an `application` or `inference_service` version of the project. A suggested change is a `change_set` version, so a preview of it was refused at the trigger (`deployment_refused`). `V11_DDL` (`src/main/nexus/db/schemaV11.ts`) is exactly two statements: `DROP TRIGGER IF EXISTS tr_deployments_insert;` and its replacement (`V11_TRIGGER_DDL`, `src/main/nexus/db/schemaV11Trigger.ts`). The replacement is the v9 text word for word with two edits: `change_set` is added to the list of allowed subject kinds, and the refusal sentence names it. Every other check is unchanged: the deployment starts as `starting`, the participation is active and in the project, the subject is a `draft`, `candidate` or `active` version of the project, and a tool job of the project and participation runs it. **A subject of any other kind is still refused**, and so is a change set that is `failed` or `deprecated`.
+
+**What it does not change.** No table, column, index, seed or other trigger; no v7, v8, v9 or v10 text. `V9_DDL` and `V10_DDL` stay as they are. Only the shape check changed in code: `v9ShapeProblem` accepts the v11 definition of that one trigger when the database is at v11 (or when the v11 step itself asks), so a v11 database is not reported as a damaged v9 one. At v10 the v11 text is *not* accepted, and a changed trigger at v11 is a damaged v9 object (execution, and so agents and the change preview, go off with `shape`).
+
+**How it runs (the same procedure as v9 and v10).**
+- **Opt-in.** `V11_ENABLED_BY_DEFAULT = false` in `src/main/db.ts`; `NEXUS_ENABLE_V11=1` turns it on (`enableV11`). Nothing migrates without it. It runs only on a v10 that is in place with agents enabled (`v10_unavailable` otherwise, no line).
+- **Holds.** `NEXUS_DB_HOLD_V11=1` keeps the file at v10; the v7, v8, v9 and v10 holds imply it. Three failed transactions in a row hold it automatically (`<db>.v11-failures.json`; delete it to retry).
+- **Backup first.** A verified `harness-v10-<UTC>.db` is taken after the v10 commit and before anything changes (integrity check and free-space check first; a fresh database needs none).
+- **One transaction.** exact v7, v8, v9 (trigger as v9 or v11), v10 shapes, a pre-check that the stored trigger is the v9 text or already the v11 text, the DDL, the `nexus_migrations` record (version 11), one activity row, then `verifyV11` (all shapes, `foreign_key_check`, every other table keeps its row count) and `user_version = 11`. Any throw rolls it all back, the dropped trigger included.
+- **Idempotent.** On a database that already has the v11 trigger the step changes nothing and records nothing.
+- **Post-check** after the commit (`quick_check`); a failure turns the change preview off and says where the backup is.
+
+**Restore and downgrade.** The restore tool (`tools/nexus-db-restore.cjs`) restores the `harness-v10-*.db` backup and names `NEXUS_DB_HOLD_V11=1` to stay on schema v10. A build older than v11 opens a v11 file as a newer schema: legacy use only, nothing migrated, the platform off, as it does for any newer schema.
+
+**Reasons.** `PersistStore.changePreviewAvailable`, `lastMigrationV11` and `changePreviewUnavailableReason` (`not_enabled`, `held`, `auto_held`, `backup_failed`, `failed`, `shape`; when agents are not in place the reason is the agents one). Tests: `test/nexus-db-v11-migration.test.cjs` (a v10 file with real rows including a deployment, intact after; the subject kinds refused and accepted; holds; rollback; idempotence; shapes; source pins).
+
+## 65. The live preview of a change
+
+Built on v11 and phase 1 of the preview (the project as it stands): the change's own manifest and build step are read by main from the change's commit, the same sandbox rules apply (no network, 127.0.0.1 only, a fixed two-hour life), and the preview is offered only when `changePreviewAvailable` is true. Without v11 the project as it stands is still previewed; a suggested change is not.

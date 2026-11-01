@@ -47,7 +47,7 @@
  * user_version from its SQLite header (bytes 60-63, big-endian; backups are written
  * by VACUUM INTO in journal mode DELETE, so the header is current) and names the
  * switch that keeps the app on that schema: a v6 backup -> NEXUS_DB_HOLD_V7=1, a v7
- * backup -> NEXUS_DB_HOLD_V8=1, a v8 backup -> NEXUS_DB_HOLD_V9=1, a v9 backup -> NEXUS_DB_HOLD_V10=1. A file without a
+ * backup -> NEXUS_DB_HOLD_V8=1, a v8 backup -> NEXUS_DB_HOLD_V9=1, a v9 backup -> NEXUS_DB_HOLD_V10=1, a v10 backup -> NEXUS_DB_HOLD_V11=1. A file without a
  * SQLite header, or a version with no switch, gets a plain sentence instead; the restore itself never depends on it.
  */
 const fs = require('node:fs');
@@ -172,7 +172,7 @@ const SQLITE_MAGIC = Buffer.from('SQLite format 3\0', 'latin1');
 /** Offset of the 4-byte big-endian user_version in the 100-byte database header. */
 const USER_VERSION_OFFSET = 60;
 /** The schema a hold switch keeps the database on: NEXUS_DB_HOLD_V<n+1>=1 stays on v<n>. */
-const HOLD_SWITCHES = Object.freeze({ 6: 'NEXUS_DB_HOLD_V7', 7: 'NEXUS_DB_HOLD_V8', 8: 'NEXUS_DB_HOLD_V9', 9: 'NEXUS_DB_HOLD_V10' });
+const HOLD_SWITCHES = Object.freeze({ 6: 'NEXUS_DB_HOLD_V7', 7: 'NEXUS_DB_HOLD_V8', 8: 'NEXUS_DB_HOLD_V9', 9: 'NEXUS_DB_HOLD_V10', 10: 'NEXUS_DB_HOLD_V11' });
 
 /**
  * The user_version stored in a SQLite file's header (bytes 60-63, big-endian), read

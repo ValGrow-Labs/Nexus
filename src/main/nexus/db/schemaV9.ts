@@ -40,6 +40,7 @@ import {
 } from './v9Seed';
 import { ddlObjects, normaliseSql, v7ShapeProblem, type V7DdlObject } from './schemaV7';
 import { v8ShapeProblem } from './schemaV8';
+import { V11_TRIGGER_NAME, V11_TRIGGER_SQL } from './schemaV11Trigger';
 import { appendActivityRow } from '../activity/writer';
 
 export const V9_DDL: string = `
@@ -542,7 +543,10 @@ const columnsOf = (db: Database.Database, table: string): string[] =>
  * included). With `requireAll` false only the v9 objects that already exist are checked
  * (the pre-check before IF NOT EXISTS). It checks only v9 objects; v7 and v8 have their own.
  */
-export function v9ShapeProblem(db: Database.Database, requireAll = true): string | null {
+export function v9ShapeProblem(db: Database.Database, requireAll = true, opts?: { v11?: boolean }): string | null {
+  // Schema v11 replaces exactly one v9 trigger (tr_deployments_insert: the subject may also be a change set). That one stored definition is accepted when the
+  // database is at v11 (user_version >= 11) or the caller is the v11 step itself; every other v9 object is still compared exactly.
+  const v11Trigger = opts?.v11 === true || (db.pragma('user_version', { simple: true }) as number) >= 11;
   const rows = db.prepare('SELECT type, name, tbl_name, sql FROM sqlite_master WHERE sql IS NOT NULL').all() as
     Array<{ type: string; name: string; tbl_name: string; sql: string }>;
   const byName = new Map(rows.map((r) => [r.name, r]));
@@ -559,7 +563,9 @@ export function v9ShapeProblem(db: Database.Database, requireAll = true): string
     if (row.type !== obj.type || row.tbl_name !== obj.table) {
       return `${obj.name} exists as a ${row.type} on ${row.tbl_name}, expected a ${obj.type} on ${obj.table}`;
     }
-    if (normaliseSql(row.sql) !== obj.sql) return `${obj.type} ${obj.name} has a different definition`;
+    if (normaliseSql(row.sql) !== obj.sql && !(v11Trigger && obj.name === V11_TRIGGER_NAME && normaliseSql(row.sql) === V11_TRIGGER_SQL)) {
+      return `${obj.type} ${obj.name} has a different definition`;
+    }
   }
   return null;
 }

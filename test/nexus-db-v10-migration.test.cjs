@@ -489,7 +489,8 @@ test('M10-17 at v10 the platform, handoffs, execution and agents are all on, and
   assert.equal(s.handoffsUnavailableReason, null);
   for (const k of ['lastMigration', 'lastMigrationV8', 'lastMigrationV9', 'lastMigrationV10']) assert.equal(s[k].state, 'not_needed', k);
   assert.equal(s.lastMigrationV9.version, 9); assert.equal(s.lastMigrationV10.version, 10);
-  assert.deepEqual(logs.map(plain), ['[db] schema version 10'], 'the reopen logs only the version line');
+  // Schema v11 is opt-in and off: a reopen at v10 also says so, as the v10 step does at v9.
+  assert.deepEqual(logs.map(plain), ['[db] schema version 10', '[db] v11 migration: not enabled; database stays at v10'], 'the reopen logs the version line and that v11 is off');
   assert.ok(s.platformDatabase());
   s.close();
   assert.deepEqual(backups(file), before);
@@ -519,29 +520,30 @@ test('M10-18 a v10 file with v10 not enabled leaves execution on and agents off 
   assert.deepEqual(backups(file), before); assert.equal(userVersion(file), 10);
 });
 
-test('M10-19 a newer schema (v11) is opened for legacy use only: nothing migrated, every feature off', () => {
+test('M10-19 a newer schema (v12) is opened for legacy use only: nothing migrated, every feature off', () => {
   const file = v10File();
-  const pre = C.openRaw(file); pre.pragma('user_version = 11'); pre.close();
+  const pre = C.openRaw(file); pre.pragma('user_version = 12'); pre.close();
   const before = backups(file);
   const { s, logs } = openV10(file);
-  assert.equal(s.schemaVersion, 11); assert.equal(s.platformAvailable, false); assert.equal(s.platformDatabase(), null);
+  assert.equal(s.schemaVersion, 12); assert.equal(s.platformAvailable, false); assert.equal(s.platformDatabase(), null);
   assert.equal(s.handoffsAvailable, false); assert.equal(s.executionAvailable, false); assert.equal(s.agentsAvailable, false);
   assert.equal(s.executionUnavailableReason, null); assert.equal(s.agentsUnavailableReason, null);
   for (const k of ['lastMigration', 'lastMigrationV8', 'lastMigrationV9', 'lastMigrationV10']) assert.equal(s[k].reason, 'newer_schema', k);
-  assert.ok(logs.some((l) => l.includes('schema v11 is newer than this build (v10)')), logs.join('\n'));
+  assert.ok(logs.some((l) => l.includes('schema v12 is newer than this build (v11)')), logs.join('\n'));
   assert.equal(s.getKv('window_bounds').width, 1200);
   s.close();
-  assert.deepEqual(backups(file), before); assert.equal(userVersion(file), 11);
+  assert.deepEqual(backups(file), before); assert.equal(userVersion(file), 12);
 });
 
 test('M10-20 the exact-version sites in db.ts read v10 (source pins)', () => {
   const src = fs.readFileSync(path.join(REPO, 'src', 'main', 'db.ts'), 'utf8');
   assert.match(src, /export const V10_ENABLED_BY_DEFAULT = false;/);
   assert.match(src, /export const V10_FAILURE_LIMIT = 3;/);
-  assert.match(src, /this\.version >= V7 && this\.version <= V10 && this\.platformOk/);
-  assert.match(src, /this\.version >= V8 && this\.version <= V10 && this\.handoffsOk/);
-  assert.match(src, /this\.version >= V9 && this\.version <= V10 && this\.executionOk && this\.v9Enabled/);
-  assert.match(src, /if \(from > V10\)/);
+  // Schema v11 (live preview of a change) raised the newest version this build knows to 11: the upper bounds read V11 now.
+  assert.match(src, /this\.version >= V7 && this\.version <= V11 && this\.platformOk/);
+  assert.match(src, /this\.version >= V8 && this\.version <= V11 && this\.handoffsOk/);
+  assert.match(src, /this\.version >= V9 && this\.version <= V11 && this\.executionOk && this\.v9Enabled/);
+  assert.match(src, /if \(from > V11\)/);
   assert.doesNotMatch(src, /this\.version === V9\b/);
   assert.doesNotMatch(src, /version === V8 \|\| this\.version === V9/);
   assert.doesNotMatch(src, /from > V9\b/);
