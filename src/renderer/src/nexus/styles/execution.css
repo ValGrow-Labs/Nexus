@@ -35,6 +35,29 @@
 .nx-data__name { overflow-wrap: anywhere; }
 .nx-data__facts { color: var(--nx-text-2); }
 
+/* "Results" in a Machine learning project (project/Results.tsx): the newest report as plain text, the charts, the files (rows as in "Your data"). */
+.nx-results { display: grid; gap: var(--nx-s3); }
+.nx-results__head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--nx-s2); }
+.nx-results__title { margin: 0; font: 600 12px/1.2 var(--nx-font); color: var(--nx-text-3); }
+.nx-results__sub { margin: 0 0 var(--nx-s2); font: 600 12.5px/1.3 var(--nx-font); color: var(--nx-text-2); }
+.nx-results__empty, .nx-results__note, .nx-results__p { margin: 0; font-size: 12.5px; }
+.nx-results__reportbox { display: grid; gap: var(--nx-s2); padding: var(--nx-s3); border: 1px solid var(--nx-line); border-radius: var(--nx-r-obj); background: var(--nx-surface); max-height: 420px; overflow: auto; }
+.nx-results__report { display: grid; gap: var(--nx-s2); font: 400 13px/1.55 var(--nx-font); color: var(--nx-ink); overflow-wrap: anywhere; }
+.nx-results__h { margin: var(--nx-s1) 0 0; font-family: var(--nx-font); color: var(--nx-ink); }
+.nx-results__h--1 { font-size: 15px; font-weight: 650; }
+.nx-results__h--2 { font-size: 14px; font-weight: 600; }
+.nx-results__h--3 { font-size: 13px; font-weight: 600; }
+.nx-results__ul { margin: 0; padding-left: var(--nx-s4); display: grid; gap: 2px; }
+.nx-results__pre { margin: 0; padding: var(--nx-s2); border-radius: var(--nx-r-ctl); background: var(--nx-sunken); font: 400 12px/1.45 var(--nx-font-code); white-space: pre-wrap; overflow-x: auto; color: var(--nx-text-2); }
+.nx-results__charts { display: flex; flex-wrap: wrap; gap: var(--nx-s2); }
+.nx-results__chart { flex: 1 1 220px; max-width: 460px; margin: 0; display: grid; gap: var(--nx-s1); padding: var(--nx-s2); border: 1px solid var(--nx-line); border-radius: var(--nx-r-obj); background: var(--nx-surface); }
+/* A chart is drawn on white by its own code: it keeps that white in the dark theme too, so its axes and labels stay readable. */
+.nx-results__chart img { display: block; width: 100%; height: auto; background: #fff; border-radius: var(--nx-r-ctl); }
+.nx-results__chart figcaption { font-size: 12px; overflow-wrap: anywhere; color: var(--nx-text-2); }
+.nx-results__chartwait { aspect-ratio: 3 / 2; background: var(--nx-sunken); border-radius: var(--nx-r-ctl); }
+.nx-results__actions { display: flex; flex-wrap: wrap; gap: var(--nx-s1); align-items: center; }
+.nx-results__model { font-size: 12px; }
+
 /* The setup sheet (components/ExecutionSetupSheet.tsx) and the log reader (runs/JobLogSheet.tsx). */
 .nx-xs, .nx-xl { flex: 1; min-height: 0; display: grid; align-content: start; gap: var(--nx-s3); padding: var(--nx-s4); overflow: auto; font: 400 13px/1.5 var(--nx-font); color: var(--nx-ink); }
 .nx-xs__head { display: grid; gap: 4px; }

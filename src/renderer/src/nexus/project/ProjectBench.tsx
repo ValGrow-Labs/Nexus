@@ -40,6 +40,7 @@ import { ExecutionSetupSheet } from '../components/ExecutionSetupSheet';
 import { JobLogSheet } from '../runs/JobLogSheet';
 import { ApprovalsSection } from './ApprovalsSection';
 import { YourData } from './YourData';
+import { Results } from './Results';
 import { AiDock } from '../agent/AiDock';
 import { BuildStage } from '../agent/BuildStage';
 import { RequirementSheet } from './RequirementSheet';
@@ -360,6 +361,8 @@ function Workbench({ project, tool }: { project: Project; tool: ProjectTool }) {
           <ApprovalsSection projectId={project.id} except={hasSde ? ['repo.write_refs'] : []} />
           {/* A Machine learning project's data (nothing for any other project: main answers by the safe space's own rule). */}
           <YourData projectId={project.id} />
+          {/* Its results: the newest report, the charts and the files its code wrote (nothing for any other project, by the same rule). */}
+          <Results projectId={project.id} />
         </div>
         <div className="nx-bench">
           <ToolRail projectId={project.id} rootPath={project.rootPath} tool={tool} hasChanges={hasChanges} canTry={hasSde && !card} onOpenTerminal={openTerminal}
