@@ -478,6 +478,11 @@ export class IngestService implements IngestPort {
         ...(previous ? [{ versionId: previous.id, role: 'previous', relation: 'derived_from' as const, source: 'ingest' as const }] : [])
       ]
     });
+    // A revised change set is named after its newest request (the name only; its identity and history are unchanged), so a new request that
+    // carried on an earlier change does not show the earlier change's name in the list and on the review page.
+    if (reviseArtifactId && title.trim() !== '' && title.length <= 200) {
+      this.db.prepare('UPDATE artifacts SET name = ? WHERE id = ? AND name IS NOT ?').run(title, reviseArtifactId, title);
+    }
     this.bindAttempt(v.id, job.id, attempt.n);
     this.deps.faults?.afterRows?.(ctx.recipe.id);
     const pathsFacts: pathsInScope.PathsInScopeFacts = { head, paths, pathsTruncated, scope };
