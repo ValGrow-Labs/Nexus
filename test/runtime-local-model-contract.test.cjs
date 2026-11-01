@@ -234,7 +234,7 @@ test('LM7 malformed arguments and unknown tools get a corrective result and a st
     ]);
     assertRuntimeContract(events, { terminal: 'run.completed' });
     const done = events.filter((e) => e.t === 'tool.completed');
-    assert.deepEqual(done.map((e) => e.ok), [false, false, true]);
+    assert.deepEqual(done.map((e) => e.ok), [false, false, true, true], 'the last true is Nexus handing in the written file (the model ended without registering)');
     assert.equal(fs.readFileSync(path.join(w.wt, 'ok.txt'), 'utf8'), 'fine');
     const toolMsgs = w.model.chats().flatMap((b) => b.messages).filter((m) => m.role === 'tool').map((m) => m.content);
     assert.ok(toolMsgs.some((m) => /must be a JSON object/.test(m)));
@@ -266,7 +266,7 @@ test('LM8 near misses are repaired: a namespaced or mis-cased name, a string of 
     assert.equal(fs.readFileSync(path.join(w.wt, 'a.txt'), 'utf8'), 'one');
     assert.equal(fs.readFileSync(path.join(w.wt, 'b.txt'), 'utf8'), 'two');
     assert.deepEqual(w.mcp.calls()[0].params.arguments, { argv: ['echo', 'hi'], timeoutMs: 60000, cwd: '/workspace' });
-    assert.deepEqual(events.filter((e) => e.t === 'tool.started').map((e) => e.tool), ['write_file', 'write_file', 'sandbox_exec']);
+    assert.deepEqual(events.filter((e) => e.t === 'tool.started').map((e) => e.tool), ['write_file', 'write_file', 'sandbox_exec', 'changeset_register'], 'the last is Nexus handing in what was written');
   } finally { await w.stop(); }
 });
 
@@ -345,7 +345,7 @@ test('LM11 file tools refuse every path that leaves the worktree or names a rese
     const events = await run(w, [call('write_file', { path: '../escape.txt', content: 'x' }), call('write_file', { path: '.git/config', content: 'x' }),
       call('write_file', { path: 'fine/a.txt', content: 'x' }), { text: 'ok' }]);
     assertRuntimeContract(events, { terminal: 'run.completed' });
-    assert.deepEqual(events.filter((e) => e.t === 'tool.completed').map((e) => e.ok), [false, false, true]);
+    assert.deepEqual(events.filter((e) => e.t === 'tool.completed').map((e) => e.ok), [false, false, true, true], 'the last true is Nexus handing in the one file that was written');
     assert.ok(!fs.existsSync(path.join(w.root, 'escape.txt')));
     assert.ok(fs.existsSync(path.join(w.wt, 'fine', 'a.txt')));
   } finally { await w.stop(); }
@@ -675,7 +675,7 @@ test('LM23 text calls as a small model writes them: several JSON objects one aft
   try {
     const events = await run(w, [{ text: `${a}\n${b}` }, { text: 'ok' }], { reqOver: { message: 'Do the thing.' } });
     assertRuntimeContract(events, { terminal: 'run.completed' });
-    assert.deepEqual(events.filter((e) => e.t === 'tool.started').map((e) => e.tool), ['write_file', 'sandbox_exec']);
+    assert.deepEqual(events.filter((e) => e.t === 'tool.started').map((e) => e.tool), ['write_file', 'sandbox_exec', 'changeset_register'], 'the last is Nexus handing in the written file');
   } finally { await w.stop(); }
 });
 
@@ -741,7 +741,10 @@ test('LM26 a command\'s answer is given as plain lines (exit code, no runner noi
     assert.equal(chats.length, 7, 'the call, the run, two fix nudges, two give-up nudges, then the turn ends');
     // After two fix nudges that changed nothing, the work is not lost: the model is told to register it as it is, saying what fails.
     assert.match(chats[5].messages.slice(-1)[0].content, /Your fixes did not make the tests pass.*register the change anyway.*which tests still fail \(a\)/);
-    assert.equal(w.mcp.calls().filter((c) => c.params.name === 'changeset_register').length, 0, 'nothing is registered by the runtime itself: only the model own call does it');
+    // Deliberate change: the model never registered, but its files are not lost. Nexus hands them in once, saying so in fixed words (the platform's own gate judges them).
+    const handed = w.mcp.calls().filter((c) => c.params.name === 'changeset_register');
+    assert.equal(handed.length, 1, 'Nexus handed in the written files once');
+    assert.equal(handed[0].params.arguments.summary, promptMod.HANDED_IN_AS_LEFT);
     // The helpers alone.
     assert.equal(loopMod.failureLocation('x\n# /workspace/node_modules/z/i.js:3\n# /workspace/test/t.js:9:1'), 'test/t.js line 9');
     assert.equal(loopMod.failureLocation('nothing here'), null);
@@ -766,7 +769,7 @@ test('LM27 a write that changes nothing is refused as such (a model that keeps "
     const events = await run(w, [call('write_file', { path: 'a.txt', content: 'same' }), call('write_file', { path: 'a.txt', content: 'same' }), call('write_file', { path: 'a.txt', content: 'other' }), { text: 'ok' }],
       { reqOver: { message: 'Do the thing.' } });
     const done = events.filter((e) => e.t === 'tool.completed').map((e) => e.ok);
-    assert.deepEqual(done, [true, false, true]);
+    assert.deepEqual(done, [true, false, true, true], 'the last true is Nexus handing in the written file');
     const second = w.model.chats()[2].messages.slice(-1)[0].content;
     assert.match(second, /nothing changed: this file already has exactly this content/);
     assert.equal(fs.readFileSync(path.join(w.wt, 'a.txt'), 'utf8'), 'other');
@@ -788,7 +791,7 @@ test('LM28 a call that ends with its closing braces missing is repaired (the con
     const cut = '{"name": "write_file", "arguments": {"path": "a.js", "content": "x = 1;\\ny = ';
     const events = await run(w, [{ text: whole.slice(0, -1) }, { text: cut }, { text: whole }, { text: 'done' }], { reqOver: { message: 'Do the thing.' } });
     assertRuntimeContract(events, { terminal: 'run.completed' });
-    assert.equal(events.filter((e) => e.t === 'tool.started').length, 2, 'the repaired call ran, the cut one did not, the whole one did');
+    assert.equal(events.filter((e) => e.t === 'tool.started').length, 3, 'the repaired call ran, the cut one did not, the whole one did, then Nexus handed in what was written');
     const nudge = w.model.chats()[2].messages.slice(-1)[0].content;
     assert.match(nudge, /not valid JSON, so it was not run/);
     assert.match(nudge, /\{"name": "<tool>"/);
@@ -845,4 +848,36 @@ test('LM31 the wall clock is nearly used up with work written and not registered
     assert.ok(times.every((n) => n <= 1), 'only once in any history');
     assert.equal(chats[0].messages.filter((m) => /Time is almost up/.test(m.content)).length, 0, 'not told before anything was written');
   } finally { await w.stop(); }
+});
+
+test('LM-handin a model that wrote files and ends without registering does not lose them: Nexus hands them in once, in fixed words; a model that registers itself, or wrote nothing, gets no extra call', async () => {
+  const w = await world();
+  try {
+    // wrote a file, then only talked (the nudges run out): Nexus registers it.
+    let events = await run(w, [call('write_file', { path: 'src/a.js', content: 'x' }), { text: 'Please run npm test yourself.' }, { text: 'Please run it.' }, { text: 'Run it.' }, { text: 'bye' }],
+      { reqOver: { message: 'Build a date page\nwith a start script.' } });
+    assertRuntimeContract(events, { terminal: 'run.completed' });
+    const handed = w.mcp.calls().filter((c) => c.params.name === 'changeset_register');
+    assert.equal(handed.length, 1);
+    assert.deepEqual(handed[0].params.arguments, { title: 'Build a date page with a start script.', summary: promptMod.HANDED_IN_AS_LEFT, clientKey: 'nexus1' });
+    const regEvents = events.filter((e) => e.t === 'tool.started' && e.tool === 'changeset_register');
+    assert.equal(regEvents.length, 1);
+    assert.ok(!/AI helper (checked|finished)/.test(promptMod.HANDED_IN_AS_LEFT) && /did not finish or check them/.test(promptMod.HANDED_IN_AS_LEFT), 'it never claims the work was checked');
+    // the title is one plain line
+    assert.equal(promptMod.handedInTitle('  a\u0000b\n\nc  '), 'a b c');
+    assert.equal(promptMod.handedInTitle('   '), 'Changes made by the AI helper');
+    assert.equal(promptMod.handedInTitle('x'.repeat(200)).length, 80);
+  } finally { await w.stop(); }
+  // the model registers by itself: no second registration
+  const w2 = await world();
+  try {
+    await run(w2, [call('write_file', { path: 'src/a.js', content: 'x' }), call('changeset_register', { title: 't', summary: 's', clientKey: 'cs1' }), { text: 'done' }]);
+    assert.equal(w2.mcp.calls().filter((c) => c.params.name === 'changeset_register').length, 1);
+  } finally { await w2.stop(); }
+  // nothing written (a chat): nothing is registered
+  const w3 = await world();
+  try {
+    await run(w3, [{ text: 'Hi! What would you like to build?' }]);
+    assert.equal(w3.mcp.calls().filter((c) => c.params.name === 'changeset_register').length, 0);
+  } finally { await w3.stop(); }
 });

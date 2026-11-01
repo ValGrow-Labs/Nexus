@@ -25,7 +25,7 @@ import { chat, type ChatMessage, type ChatReply, type ChatTool, type ClientFailu
 import type { Target } from './endpoint';
 import { FILE_TOOL_NAMES, checkRelPath, type FileTools } from './fileTools';
 import { McpClient, redactToken } from './mcpClient';
-import { HINT_FINISH, HINT_READ_FIX, HINT_RUN, NOTE_TEXT_CALL, NUDGE_BAD_CALL, NUDGE_EMPTY, NUDGE_FINISH, NUDGE_FORMAT, NUDGE_REGISTER, NUDGE_RUN, NUDGE_STUCK, NUDGE_TIME, hintFix, hintMissing, nudgeFix, nudgeGiveUp, nudgeMissing, nudgeNoTools } from './prompt';
+import { HANDED_IN_AS_LEFT, HINT_FINISH, HINT_READ_FIX, HINT_RUN, NOTE_TEXT_CALL, NUDGE_BAD_CALL, NUDGE_EMPTY, NUDGE_FINISH, NUDGE_FORMAT, NUDGE_REGISTER, NUDGE_RUN, NUDGE_STUCK, NUDGE_TIME, handedInTitle, hintFix, hintMissing, nudgeFix, nudgeGiveUp, nudgeMissing, nudgeNoTools } from './prompt';
 import { canonicalToolName, coerceArgs, coerceBySchema, looksLikeCall, recoverTextCalls } from './toolCalls';
 
 /** The most tool calls any turn may make, whatever its cap says. */
@@ -326,7 +326,21 @@ export async function* runLoop(d: LoopDeps): AsyncGenerator<RuntimeEvent> {
           if (nudge === null && text.trim().length === 0 && nudgesEmpty < MAX_NUDGES) { nudge = NUDGE_EMPTY; nudgesEmpty++; }
         }
       }
-      if (nudge === null) { yield usageEvent(); yield { t: 'run.completed', at: at(), stopReason: reply.doneReason === 'length' ? 'max_tokens' : 'end_turn' }; return; }
+      if (nudge === null) {
+        // The model wrote files and is ending without registering them: they are not lost. Nexus hands them in itself, saying so in plain words;
+        // the platform's own gate (the tests run again before review) judges them, and the person decides what to keep.
+        if (hasChangeset && wroteFiles && !registered && d.mcp) {
+          const callId = String(++usage.toolCalls);
+          yield { t: 'tool.started', callId, tool: 'changeset_register', argsSummary: 'handed in as the AI helper left it' };
+          const args = coerceBySchema({ title: handedInTitle(d.req.message), summary: HANDED_IN_AS_LEFT, clientKey: 'nexus1' }, d.mcpSchemas.get('changeset_register'));
+          const mr = await d.mcp.call('changeset_register', args, d.signal);
+          if (mr.ok) registered = true;
+          yield { t: 'tool.completed', callId, ok: mr.ok, resultBytes: mr.bytes };
+          const stop4 = ended();
+          if (stop4) { yield usageEvent(); yield stop4; return; }
+        }
+        yield usageEvent(); yield { t: 'run.completed', at: at(), stopReason: reply.doneReason === 'length' ? 'max_tokens' : 'end_turn' }; return;
+      }
       nudgesTotal++;
       d.messages.push({ role: 'user', content: `${nudge}${NUDGE_FORMAT}` });
       continue;

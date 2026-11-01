@@ -101,6 +101,14 @@ export function userMessage(i: PromptInput): string {
   return parts.join('\n\n');
 }
 
+/** The summary of a change Nexus handed in itself because the model wrote files and ended without registering them (the work is not lost). */
+export const HANDED_IN_AS_LEFT = 'Nexus handed in the files the AI helper wrote, as it left them. The AI helper did not finish or check them, so read the proof before you keep them.';
+/** A plain, short title from the person's request (one line, no control characters). */
+export function handedInTitle(message: string): string {
+  const t = message.replace(/[\u0000-\u001f\u007f]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 80);
+  return t.length > 0 ? t : 'Changes made by the AI helper';
+}
+
 // ---- nudges: a reply with no tool call, when work is left; each says the one thing to do next ----
 
 /** The reply was text only, before any tool was used. */

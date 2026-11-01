@@ -252,7 +252,7 @@ test('HM5 weak-model paths reach the provider as the same corrective messages: m
   try {
     let events = await run(w, [call('write_file', 'not json {'), call('launch_missiles', { x: 1 }), call('write_file', { path: 'ok.txt', content: 'fine' }), { text: 'done' }]);
     assertRuntimeContract(events, { terminal: 'run.completed' });
-    assert.deepEqual(events.filter((e) => e.t === 'tool.completed').map((e) => e.ok), [false, false, true]);
+    assert.deepEqual(events.filter((e) => e.t === 'tool.completed').map((e) => e.ok), [false, false, true, true], 'the last true is Nexus handing in the written file');
     const toolMsgs = w.model.chats().flatMap((b) => b.messages).filter((m) => m.role === 'tool').map((m) => m.content);
     assert.ok(toolMsgs.some((m) => /must be a JSON object/.test(m)));
     assert.ok(toolMsgs.some((m) => /no tool named "launch_missiles"/.test(m)));
@@ -262,7 +262,7 @@ test('HM5 weak-model paths reach the provider as the same corrective messages: m
     assert.equal(fs.readFileSync(path.join(w.wt, 'x.txt'), 'utf8'), 'from text');
     // Names and arguments near a miss are repaired.
     events = await run(w, [call('functions.write_file', JSON.stringify({ path: 'a.txt', content: 'one' })), call('sandbox_exec', { argv: '["echo","hi"]', timeoutMs: '60000', cwd: '/workspace' }), { text: 'ok' }]);
-    assert.deepEqual(w.mcp.calls().pop().params.arguments, { argv: ['echo', 'hi'], timeoutMs: 60000, cwd: '/workspace' });
+    assert.deepEqual(w.mcp.calls().filter((c) => c.params.name === 'sandbox_exec').pop().params.arguments, { argv: ['echo', 'hi'], timeoutMs: 60000, cwd: '/workspace' });
     // The provider answers 400 tool_use_failed (it could not parse the model's call): retried twice at once, then handed over as an empty reply
     // (nudged, never shown), and the turn goes on with the next reply.
     events = await run(w, [{ status: 400, code: 'tool_use_failed' }, { status: 400, code: 'tool_use_failed' }, call('write_file', { path: 'k.txt', content: 'recovered' }), { text: 'fin' }]);
