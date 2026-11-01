@@ -379,6 +379,8 @@ function Workbench({ project, tool }: { project: Project; tool: ProjectTool }) {
       </div>
       {!wide && (
         <Sheet open={detailsOpen} onClose={closeDetails} side={mobile ? 'bottom' : 'right'} labelledBy="nx-passport-title" focusHeading>
+          {/* The list of every task is not in the tool rail (normal use never needs it): it is here, and one press away from a running request. */}
+          <p><Button variant="quiet" onClick={() => { closeDetails(); navigate({ name: 'project', id: project.id, tool: 'runs' }); }}>See all tasks</Button></p>
           <Passport project={project} node={node} headSha={head?.sha ?? null} onRefreshProject={refreshFromSheet} onOpenTerminal={openTerminal} notice={null} onBeforeAction={closeDetails} artifacts={artifacts} onSave={onSave} onHandOff={onHandOff} />
         </Sheet>
       )}

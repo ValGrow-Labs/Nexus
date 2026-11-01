@@ -15,7 +15,8 @@ const ROUTES: { tool: ProjectTool; label: string; icon: NexusIconName }[] = [
 /** Vertical project tools: the routed tools, then the two app actions. */
 export function ToolRail({ projectId, rootPath, tool, hasChanges, canTry = true, onOpenTerminal, extra }: { extra?: ReactNode; canTry?: boolean; projectId: string; rootPath: string; tool: ProjectTool; hasChanges: boolean; onOpenTerminal: () => void }) {
   const actions = useShellActions();
-  const items = ROUTES.filter((r) => (r.tool !== 'changes' || hasChanges || tool === 'changes') && (r.tool !== 'try' || canTry || tool === 'try'));
+  // The task list is engine output a person rarely needs: it is out of the rail unless it is the page being shown (it is in Details, and a running request links to it).
+  const items = ROUTES.filter((r) => (r.tool !== 'changes' || hasChanges || tool === 'changes') && (r.tool !== 'try' || canTry || tool === 'try') && (r.tool !== 'runs' || tool === 'runs'));
   return (
     <nav className="nx-rail" aria-label="Project tools">
       {items.map((r) => (
