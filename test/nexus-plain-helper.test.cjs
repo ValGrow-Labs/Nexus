@@ -306,7 +306,8 @@ test('PH10 the request box says who gets your message: this project\'s AI helper
   assert.equal(agent.label, 'AI helper for this project');
   assert.equal(agent.explain, 'Your message goes to the AI helper for this project. It works in a safe copy of your project, and your real files change only when you press “Add to my project”. You can follow it in the AI helper panel on the project page.');
   assert.equal(agent.button, 'Ask the AI helper');
-  assert.equal(agent.ariaLabel, 'Ask this project’s AI helper');
+  // The box's own name is the button's words (shortened: the dock already says it is this project's AI helper).
+  assert.equal(agent.ariaLabel, 'Ask the AI helper');
   const legacy = A.intentWords({ mode: 'legacy', lead, onSoftwareProject: false, note: null, replyHint: 'Its reply shows up in Agents.' });
   assert.equal(legacy.label, 'Lead AI helper');
   assert.equal(legacy.explain, 'Your message goes to the lead AI helper, which passes the work on to others. Its reply shows up in Agents.');
@@ -322,8 +323,9 @@ test('PH10 the request box says who gets your message: this project\'s AI helper
   assert.equal(off.reason, 'The lead AI helper is not running. Open Agents to start it.');
   assert.equal(A.intentWords({ mode: 'legacy', lead: off, onSoftwareProject: false }).explain, 'The lead AI helper is not running. Open Agents to start it.');
   // What is sent, and where to follow it.
-  assert.equal(agent.sentLead(true), 'Sent to the AI helper in your open conversation.');
-  assert.equal(agent.sentLead(false), 'Sent to the AI helper in a new conversation.');
+  // Shortened: the box is inside the AI helper's own conversation, so "Sent." says it; a new conversation is still said.
+  assert.equal(agent.sentLead(true), 'Sent.');
+  assert.equal(agent.sentLead(false), 'Sent in a new conversation.');
   assert.equal(legacy.sentLead(false), 'Sent to the lead AI helper.');
   assert.equal(agent.followLabel, 'See how it is going in the AI helper panel');
   assert.equal(legacy.followLabel, 'See it in Runs');
@@ -335,6 +337,12 @@ test('PH10 the request box says who gets your message: this project\'s AI helper
   const il = src('intent/IntentLine.tsx');
   assert.ok(il.includes('className="nx-intent__mode"') && il.includes('{words.label}'));
   assert.ok(il.includes('<span>{words.explain}</span>'));
+  // The dock's box is compact: no caption under it (only a locked box says why), and the send button is a small icon with a name and a tooltip.
+  assert.ok(!il.includes('Works in a safe copy of your project.'));
+  assert.ok(il.includes('(lockedBox && <span className="nx-intent__details">{words.explain}</span>)'));
+  assert.ok(il.includes('aria-label={words.button} title={words.button}'));
+  const dockCss = fs.readFileSync(path.join(__dirname, '..', 'src', 'renderer', 'src', 'nexus', 'styles', 'execution.css'), 'utf8');
+  assert.ok(dockCss.includes('.nx-ag__input .nx-intent__send-text { display: none; }') && /\.nx-ag__input \.nx-intent__field \{[^}]*max-height: 80px/.test(dockCss));
   assert.equal((il.match(/port\.replyHint/g) || []).length, 1);
 });
 

@@ -118,11 +118,11 @@ export function IntentLine({ summoned = false, inline = false, compact = false, 
   // ONE plain line that says who gets the message and what happens next, and a short label for the same thing.
   // In the project dock the box never reaches the lead AI helper: while the project's own AI helper is not ready it is locked, text kept.
   const lockedBox = (locked || dock) && mode !== 'agent';
-  // A Machine learning project with data ("Your data" records how many files it holds): the box asks about the data.
+  // A Machine learning project (or a project with data: "Your data" records how many files it holds): the box asks about the data.
   const dataCount = useProjectData((st) => (ctx.project ? st.counts[ctx.project.id] ?? 0 : 0));
   const baseWords = intentWords({ mode: lockedBox ? 'agent' : mode, lead: s, onSoftwareProject: route.name === 'project' && ctx.ws?.id === 'sde' && !canAsk, note: askable.note, replyHint: port.replyHint,
-    hasData: !lockedBox && dataCount > 0 });
-  const words = lockedBox ? { ...baseWords, placeholder: 'Get this computer ready first', explain: 'The AI helper for this project is not ready yet. Get this computer ready first, then ask here; what you typed is kept.' } : baseWords;
+    hasData: !lockedBox && (dataCount > 0 || (ctx.project !== null && ctx.ws?.id === 'ml')) });
+  const words = lockedBox ? { ...baseWords, placeholder: 'Get this computer ready first', explain: 'The AI helper is not ready yet. What you typed is kept.' } : baseWords;
 
   const sendToAgent = async (text: string, projectId: string) => {
     if (sending) return;
@@ -132,7 +132,8 @@ export function IntentLine({ summoned = false, inline = false, compact = false, 
     if (!r.ok) { setError(r.error); setSent(null); return; }
     setDraft(''); setError(null);
     useRunReply.getState().clear();
-    setSent({ href: formatRoute({ name: 'project', id: projectId, tool: 'bench' }), label: words.followLabel, lead: words.sentLead(r.continued) });
+    // In the dock the box is already inside the AI helper panel: no link to it.
+    setSent({ href: formatRoute({ name: 'project', id: projectId, tool: 'bench' }), label: dock ? '' : words.followLabel, lead: words.sentLead(r.continued) });
   };
 
   const send = () => {
@@ -203,7 +204,7 @@ export function IntentLine({ summoned = false, inline = false, compact = false, 
             </ul>
           )}
         </div>
-        <button type="submit" className="nx-btn nx-btn--primary" aria-label={words.button} disabled={!draft.trim() || sending || lockedBox}>
+        <button type="submit" className="nx-btn nx-btn--primary nx-intent__send" aria-label={words.button} title={words.button} disabled={!draft.trim() || sending || lockedBox}>
           <Icon name="send" size={15} /><span className="nx-intent__send-text">{words.button}</span>
         </button>
         {summoned && onClose && (
@@ -214,11 +215,12 @@ export function IntentLine({ summoned = false, inline = false, compact = false, 
       </div>
       {error && <p id={ids.error} className="nx-intent__error" role="alert">{error}</p>}
       <p id={ids.status} className="nx-intent__status">
+        {/* Compact (the dock): no caption under the box; only a locked box says why (what the AI helper can see and change is behind "i"). */}
         {compact
-          ? <span className="nx-intent__details">{lockedBox ? words.explain : 'Works in a safe copy of your project.'}</span>
+          ? (lockedBox && <span className="nx-intent__details">{words.explain}</span>)
           : <span>{words.explain}</span>}
         <span role="status">
-          {sent && <> {sent.lead} <a href={sent.href}>{sent.label}</a></>}
+          {sent && <> {sent.lead}{sent.label && <> <a href={sent.href}>{sent.label}</a></>}</>}
         </span>
       </p>
     </form>

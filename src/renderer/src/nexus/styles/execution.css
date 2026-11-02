@@ -294,9 +294,12 @@
 .nx-dock-rail__dot { position: absolute; top: -3px; right: -3px; width: 10px; height: 10px; border-radius: 50%; background: var(--nx-border-strong); border: 2px solid var(--nx-surface); }
 .nx-dock-rail__dot[data-attention="true"] { background: var(--nx-ink); }
 .nx-dock--drawer { position: fixed; right: 12px; top: calc(var(--nx-bar-h) + 8px); bottom: 20px; width: min(420px, calc(100vw - 24px)); z-index: 30; border: 1px solid var(--nx-border-strong); box-shadow: var(--nx-shadow-float); }
-/* The request box in the dock: the text field takes the full width on its own line, its label, chip and buttons wrap under it. */
-.nx-ag__input .nx-intent__row { flex-wrap: wrap; row-gap: var(--nx-s2); }
-.nx-ag__input .nx-intent__field { order: -1; flex: 1 1 100%; min-height: 56px; max-height: 160px; }
+/* The request box in the dock is compact so the conversation gets the room: one line that grows to about four, and the send
+   button as a small icon on the same row (its name and tooltip say "Ask the AI helper"). No caption under it. */
+.nx-ag__input .nx-intent__row { flex-wrap: nowrap; align-items: flex-end; gap: var(--nx-s2); }
+.nx-ag__input .nx-intent__field { flex: 1 1 auto; min-height: 22px; max-height: 80px; overflow-y: auto; padding: 4px 0; }
+.nx-ag__input .nx-intent__send { width: 30px; padding: 0; justify-content: center; flex: none; }
+.nx-ag__input .nx-intent__send-text { display: none; }
 .nx-ag__input .nx-intent__chip { max-width: 100%; flex: 1 1 auto; }
 /* A calmer dock: one 12px rhythm, a subtle background for what you said, one rule for what the AI helper said, notices as plain rows,
    and one quiet footer row (earlier conversations and today's use) above the request box. */
@@ -328,7 +331,9 @@
 .nx-ag__who { font-size: 12px; color: var(--nx-text-3); }
 .nx-ag__tail { display: grid; gap: var(--nx-s2); justify-items: start; color: var(--nx-ink); }
 .nx-ag__input .nx-intent__mode, .nx-ag__input .nx-intent__chip, .nx-ag__input .nx-intent__suggest { display: none; }
-.nx-ag__input .nx-intent { border: 1px solid var(--nx-border-strong); }
+.nx-ag__input .nx-intent { border: 1px solid var(--nx-border-strong); gap: 0; padding: 2px 4px 2px var(--nx-s3); }
+.nx-ag__input { padding: var(--nx-s2); }
+.nx-ag__input .nx-intent__error, .nx-ag__input .nx-intent__details { display: block; margin-top: 4px; }
 .nx-ag__input .nx-intent__status { font-size: 12px; color: var(--nx-text-3); margin: 0; }
 .nx-ag__input .nx-intent__status span[role="status"] { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 /* The setup panel that stands where the AI helper dock will be: one title, one sentence, one button. */

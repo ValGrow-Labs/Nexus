@@ -24,7 +24,8 @@ test('YD1 the words: the title, the button, the empty line and the privacy sente
   assert.equal(M.privacyLine(true), 'Nothing leaves this computer.', 'when the AI service in use runs on this computer');
   assert.match(M.REMOVE_NOTE, /^Remove deletes only Nexus’s copy\.$/);
   assert.match(M.REMOVED_LINE, /original file is untouched/);
-  assert.equal(DATA_REQUEST_PLACEHOLDER, 'Ask about your data, for example: which customers are likely to leave?');
+  // Shortened on purpose: the dock's request box is one line now, and the example made the placeholder two lines on a narrow window.
+  assert.equal(DATA_REQUEST_PLACEHOLDER, 'Ask about your data');
   const all = [M.YOUR_DATA_TITLE, M.UPLOAD_LABEL, M.UPLOADING_LABEL, M.EMPTY_LINE, M.PRIVACY_LINE, M.PRIVACY_LINE_LOCAL, M.REMOVE_NOTE, M.DAMAGED_LINE, M.REMOVED_LINE,
     M.NOT_READY_LINE, M.GENERIC_FAILURE, M.addedLine('x.csv'), DATA_REQUEST_PLACEHOLDER, ...Object.values(DATASET_REASON_MESSAGES)].join('\n');
   assert.doesNotMatch(all, /\bcard\b|dashboard|gradient|docker|container|sandbox|mount|ml-python|pandas|manifest|upload(ed)? to|cloud|server|\/data/i, 'plain words, no tool or vendor word');
@@ -53,11 +54,12 @@ test('YD3 failures read as plain sentences: too big, wrong kind, too many files,
   assert.equal(M.dataFailureText({ code: 'internal', message: 'C:\\Users\\x\\boom' }), M.GENERIC_FAILURE, 'never a raw message');
 });
 
-test('YD4 the request box asks about the data only in a project with data, only when it goes to the project\'s AI helper', () => {
+test('YD4 the request box asks about the data only in a Machine learning project (or one with data), only when it goes to the project\'s AI helper', () => {
   const lead = { state: 'ready' };
   assert.equal(intentWords({ mode: 'agent', lead, onSoftwareProject: false, hasData: true }).placeholder, DATA_REQUEST_PLACEHOLDER);
-  assert.equal(intentWords({ mode: 'agent', lead, onSoftwareProject: false }).placeholder, 'Describe the change you want');
-  assert.equal(intentWords({ mode: 'agent', lead, onSoftwareProject: false, hasData: false }).placeholder, 'Describe the change you want');
+  // Any other project: the short "Ask the AI helper" (was "Describe the change you want"; the box is one line now).
+  assert.equal(intentWords({ mode: 'agent', lead, onSoftwareProject: false }).placeholder, 'Ask the AI helper');
+  assert.equal(intentWords({ mode: 'agent', lead, onSoftwareProject: false, hasData: false }).placeholder, 'Ask the AI helper');
   assert.equal(intentWords({ mode: 'legacy', lead, onSoftwareProject: false, hasData: true }).placeholder, 'Ask the lead AI helper to plan, build or fix something');
   const store = M.useProjectData;
   store.getState().set('p1', 2);
@@ -67,7 +69,8 @@ test('YD4 the request box asks about the data only in a project with data, only 
   assert.equal(store.getState(), before, 'an unchanged count does not redraw');
   const line = read('src/renderer/src/nexus/intent/IntentLine.tsx');
   assert.match(line, /useProjectData\(\(st\) => \(ctx\.project \? st\.counts\[ctx\.project\.id\] \?\? 0 : 0\)\)/);
-  assert.match(line, /hasData: !lockedBox && dataCount > 0/);
+  // A Machine learning project asks about its data even before a file is added (only the placeholder changes, never where the message goes).
+  assert.match(line, /hasData: !lockedBox && \(dataCount > 0 \|\| \(ctx\.project !== null && ctx\.ws\?\.id === 'ml'\)\)/);
 });
 
 test('YD5 the wiring: shown only for a Machine learning project (main\'s answer), the renderer never sends or receives a location, mounted in the work area', () => {
