@@ -15,7 +15,7 @@ export interface FirstBuildLine {
   button: string;
 }
 
-export const FIRST_BUILD_LEAD = 'Nexus needs these three things before your AI helper can build for you. The steps open in one place, and Nexus tells you what is done.';
+export const FIRST_BUILD_LEAD = 'Your AI helper needs these three things first.';
 
 /** The line for a project, or null when it should not show: not a place the AI helper works, still reading the saved items, or suggested changes already exist. */
 export function firstBuildLine(i: { hasAiHelper: boolean; loaded: boolean; artifacts: readonly Pick<ArtifactSummaryView, 'artifact'>[];
