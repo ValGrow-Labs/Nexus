@@ -709,7 +709,8 @@ test('R4-I5 the intent chip makes no promise the code does not keep in agent mod
 
 test('R4-minors copy and hygiene: merge copy, no raw ids, hashed intent keys, plain tool labels, refusal next steps, repo.write_refs', () => {
   const rv = src('project/ChangeSetReview.tsx');
-  assert.match(rv, /Your project’s main version and its files change only if you confirm\. New files you have not saved, and your other versions, are not touched\./);
+  // Shortened on purpose: the same promise (your files change only if you confirm; unsaved files are not touched) in fewer words.
+  assert.match(rv, /Your files change only if you confirm, in a separate window\. Files you have not saved are not touched\./);
   assert.match(rv, /Nothing here touches your files until you press “Add to my project”\./);
   assert.doesNotMatch(rv, /Nothing here has touched your files|nothing else in your folder changes/);
   assert.doesNotMatch(rv, /Head of the change: <span/, 'no raw sha as visible text');
@@ -1326,7 +1327,8 @@ test('V9n the review page: what the AI helper did, plain proof with ticks (no ha
   assert.ok(!lines.join(' ').match(/sha256|junit|image|[0-9a-f]{12}|errored/i), 'no hash, tool name or count breakdown in the proof');
   assert.deepEqual(CS.proofLines(null), []);
   assert.equal(CS.proofLines([validation('git.applies_cleanly', 'failed')]).find((p) => p.ok === false && !p.pending).text, 'The changes clash with your project');
-  assert.equal(CS.railLine(CS.railOf('looks_good')), 'Read what changed below, then press “Looks good”.');
+  // Removed on purpose: the rail already marks "Looks good" as Next and the button says it, so no line repeats it.
+  assert.equal(CS.railLine(CS.railOf('looks_good')), null);
   assert.equal(CS.railLine(CS.railOf('keep')), 'Press “Keep these changes” to save them in Nexus’s copy.');
   assert.equal(CS.railLine(CS.railOf('add')), 'Press “Add to my project” to put them in your files.');
   assert.equal(CS.railLine(null), null);
@@ -1335,7 +1337,7 @@ test('V9n the review page: what the AI helper did, plain proof with ticks (no ha
   assert.ok(!rv.includes('Version {r.versionNo}'), 'no version number in the list row');
   assert.ok(rv.indexOf('What the AI helper did') < rv.indexOf('>Proof<') && rv.indexOf('>Proof<') < rv.indexOf('<h3 className="nx-cs__sub">What changed</h3>') && rv.indexOf('<h3 className="nx-cs__sub">What changed</h3>') < rv.indexOf('<div className="nx-cs__bar">'), 'the decision bar comes last');
   assert.ok(rv.includes('<details className="nx-cs__details">') && !rv.includes('<details className="nx-cs__details" open'), 'technical facts are behind one closed disclosure');
-  assert.ok(rv.includes('Technical details (for developers)') && rv.includes('All of these must pass before you can press “Looks good”.'));
+  assert.ok(rv.includes('Technical details (for developers)') && rv.includes('All must pass before “Looks good”.'), 'the proof still says it gates "Looks good" (shortened)');
   assert.ok(rv.includes("useNexusUi((x) => x.audience) === 'technical'") && rv.includes('Show what changed'), 'what changed is closed for a newcomer, open for a technical person');
   assert.ok(fs.readFileSync(path.join(NEXUS, 'styles', 'execution.css'), 'utf8').includes('.nx-cs__bar { position: sticky; bottom: 0;'));
   assert.ok(fs.readFileSync(path.join(NEXUS, 'styles', 'execution.css'), 'utf8').includes('.nx-review.nx-surface { padding-bottom: 0; }'), 'the sticky decision bar sits at the very bottom of the page, not above the project page bottom room');

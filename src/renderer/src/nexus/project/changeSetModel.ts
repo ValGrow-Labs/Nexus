@@ -356,11 +356,11 @@ export function previewProof(validations: readonly ValidationResultView[] | null
     : { ok: false, text: 'The app did not start or answer when you previewed it' };
 }
 
-/** The ONE instruction under the step rail: what to do now. */
+/** The ONE instruction under the step rail: what to do now. None for "Looks good": the rail marks it Next and the button says it. */
 export function railLine(rail: readonly RailStep[] | null): string | null {
   if (!rail) return null;
   const cur = rail.find((x) => x.state === 'current');
   if (!cur) return 'These changes are in your project.';
-  return cur.id === 'looks_good' ? 'Read what changed below, then press “Looks good”.'
+  return cur.id === 'looks_good' ? null
     : cur.id === 'keep' ? 'Press “Keep these changes” to save them in Nexus’s copy.' : 'Press “Add to my project” to put them in your files.';
 }

@@ -113,7 +113,7 @@ export function MergeBlock({ projectId, model, onDone }: { projectId: string; mo
           <div className="nx-passport__actions">
             <Button variant="primary" disabled={busy} onClick={() => { void merge(); }}>{busy ? 'Waiting for you to confirm in the other window…' : model.button.label}</Button>
           </div>
-          <p className="nx-muted">Nexus asks you to confirm in a separate window. Your project’s main version and its files change only if you confirm. New files you have not saved, and your other versions, are not touched.</p>
+          <p className="nx-muted">Your files change only if you confirm, in a separate window. Files you have not saved are not touched.</p>
         </>
       )}
       {model.sentence && <p className="nx-muted" role="status">{model.sentence}</p>}
@@ -180,9 +180,9 @@ export function ChangeSetReview({ versionId, projectId, status, name, withEviden
     setBusy(null);
     if (r.ok) {
       setLocal(decision); setAsking(null); setComment('');
-      setNote({ text: decision === 'approve' ? 'Looks good: done. Next: press “Keep these changes”. They are saved in Nexus’s copy, and your own files are not touched yet.'
+      setNote({ text: decision === 'approve' ? 'Next: press “Keep these changes”. Your files are not touched yet.'
         : decision === 'reject' ? 'You said no to these changes. Nothing was kept.'
-          : r.data.job ? 'Sent to the AI helper. It works on the changes in the same conversation; follow it in the AI helper panel.' : 'Your request for different changes was saved.', alert: false });
+          : r.data.job ? 'Sent to the AI helper.' : 'Your request for different changes was saved.', alert: false });
     } else setNote({ text: agentFailText(r), alert: true });
     refresh();
   };
@@ -246,7 +246,7 @@ export function ChangeSetReview({ versionId, projectId, status, name, withEviden
       {(proof.length > 0 || previewLine) && (
         <div className="nx-cs__block">
           <h3 className="nx-cs__sub">Proof</h3>
-          <p className="nx-muted">All of these must pass before you can press “Looks good”.</p>
+          <p className="nx-muted">All must pass before “Looks good”.</p>
           <ul className="nx-cs__proof" aria-label="Proof">
             {proof.map((p) => <li key={p.id} data-ok={p.ok ? 'true' : 'false'}><span aria-hidden="true">{p.pending ? '…' : p.ok ? '✓' : '✗'}</span> {p.text}</li>)}
           </ul>
@@ -283,7 +283,7 @@ export function ChangeSetReview({ versionId, projectId, status, name, withEviden
         {view.buttons.includes('approve') && (
           <div className="nx-cs__use">
             <Button variant="primary" disabled={busy !== null} onClick={() => { void useThese(); }}>{busy === 'flow' ? 'Working… confirm in the other window if it opens' : 'Use these changes'}</Button>
-            <p className="nx-muted">One press: looks good, keep these changes, and add them to your project. You confirm once, in a separate window. Or use the steps below one at a time.</p>
+            <p className="nx-muted">All three steps at once. You confirm once, in a separate window.</p>
           </div>
         )}
         {view.buttons.length > 0 && (
@@ -323,7 +323,7 @@ function ChangeSetList({ projectId, rows }: { projectId: string; rows: ChangeSet
   return (
     <section className="nx-cs__list" aria-labelledby="nx-cs-title">
       <h2 id="nx-cs-title" className="nx-cs__title nx-visually-hidden">Suggested changes</h2>
-      <p className="nx-review__note">The AI helper made each suggestion in a safe copy of your project. Nothing here touches your files until you press “Add to my project”.</p>
+      <p className="nx-review__note">Nothing here touches your files until you press “Add to my project”.</p>
       {merge && <MergeBlock projectId={projectId} model={merge} onDone={repo.reload} />}
       <ul className="nx-cs__rows">
         {shown.map((r) => {
