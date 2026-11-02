@@ -324,6 +324,8 @@ function Workbench({ project, tool }: { project: Project; tool: ProjectTool }) {
   const hasSde = (idx.byProject.get(project.id) ?? []).some((r) => r.status === 'active' && r.workspaceId === 'sde');
   // A Machine learning project is worked on with data, not code: its rail has no code editor, no terminal and no Try it (that runs npm commands).
   const isMl = (idx.byProject.get(project.id) ?? []).some((r) => r.status === 'active' && r.isPrimary && r.workspaceId === 'ml');
+  // On a Machine learning project the Software steps are shown only when one of them needs attention (its saved items stay listed either way).
+  const shownRails = useMemo(() => (isMl ? new Map([...rails].filter(([ws, r]) => ws === 'ml' || r.steps.some((s) => s.state === 'failed'))) : rails), [isMl, rails]);
   // The newest suggested change that is waiting for a decision or kept but not added yet: Try it can run it as well as the project as it stands.
   const tryChange = useMemo(() => { const r = changeSetRows(artifacts).find((x) => x.status === 'candidate' || x.status === 'active'); return r ? { versionId: r.versionId, name: r.name } : null; }, [artifacts]);
   // The newest suggested change whose checks failed: the building page says the helper DID make changes, but they did not pass.
@@ -351,10 +353,10 @@ function Workbench({ project, tool }: { project: Project; tool: ProjectTool }) {
     <ExecutionUiContext.Provider value={execUi}>
     <div className="nx-workbench">
       {mobile && <MobileRuns projectId={project.id} />}
-      <ProjectHeader name={project.name} kind={groups[0]?.label ?? 'Project'} git={git} />
+      <ProjectHeader name={project.name} kind={groups[0]?.label ?? 'Project'} />
       <ProgressSection>
         <Spine groups={groups} selectedId={tool === 'completion' || tool === 'runs' ? '' : node.id} onSelect={onSelect}
-          line={line} onRetryLine={reloadArtifacts} truncated={artifactsTruncated} focusRequest={focusRequest} onFocused={focused} checks={checks} rails={rails} />
+          line={line} onRetryLine={reloadArtifacts} truncated={artifactsTruncated} focusRequest={focusRequest} onFocused={focused} checks={checks} rails={shownRails} />
       </ProgressSection>
       <div className="nx-pbody">
         <div className="nx-pmain">

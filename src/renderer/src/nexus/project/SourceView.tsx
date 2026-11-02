@@ -41,7 +41,8 @@ export function SourceView({ project, node, git, onRetry }: { project: Project; 
   const entries = project.entryPoints.slice(0, 6);
   const suites = project.testSuites;
   const docs = project.documentationFiles;
-  const empty = !langs.length && !project.frameworks.length && !entries.length && !suites.length && !docs.length;
+  // "Nothing found" means something only for a project of code (a data project has no languages or tests to find).
+  const empty = ws?.id === 'sde' && !langs.length && !project.frameworks.length && !entries.length && !suites.length && !docs.length;
   return (
     <section className="nx-surface" aria-labelledby="nx-surface-title">
       <header className="nx-surface__head">
@@ -54,7 +55,7 @@ export function SourceView({ project, node, git, onRetry }: { project: Project; 
         <ProvenanceMark slot={ws ? ws.hueSlot : null} />
         <Provenance node={node} git={git} onRetry={onRetry} />
       </div>
-      {empty && <p className="nx-muted">Nexus did not find any programming languages, frameworks, main files, tests or notes in this folder yet.</p>}
+      {empty && <p className="nx-muted">No code, tests or notes found in this folder yet.</p>}
       {langs.length > 0 && (
         <Fact title="Languages">
           <ul className="nx-fact__list">{langs.map((l) => <li key={l.language}>{l.language}{l.fileCount > 0 ? <span className="nx-muted"> {l.fileCount} {l.fileCount === 1 ? 'file' : 'files'}</span> : null}</li>)}</ul>

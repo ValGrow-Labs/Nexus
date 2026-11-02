@@ -194,8 +194,9 @@ export function checkingReason(r: Pick<RailRecords, 'liveDeploymentStatuses'>): 
   return st.length === 0 || st.includes('starting') ? 'the test run of your app is starting' : 'waiting for your app to answer';
 }
 
-/** The compact line under a Spine group: counts of the rail's own steps (no other number). */
-export function railSummary(r: RailView): string {
+/** The compact line under a Spine group: counts of the rail's own steps (no other number). `later: false` leaves out the count of
+ *  steps that come later (the Spine draws only the steps that work now). */
+export function railSummary(r: RailView, opts: { later?: boolean } = {}): string {
   if (r.availability) return r.availability;
   const inRelease = r.steps.filter((s) => !s.future);
   const done = inRelease.filter((s) => s.state === 'done').length;
@@ -209,6 +210,6 @@ export function railSummary(r: RailView): string {
   if (checking > 0) parts.push(`${checking} checking`);
   const checkable = inRelease.filter((s) => s.state === 'awaiting_check').length;
   if (checkable > 0) parts.push(`${checkable} ready to check`);
-  if (later > 0) parts.push(`${later} coming later`);
+  if (later > 0 && opts.later !== false) parts.push(`${later} coming later`);
   return parts.join('; ');
 }

@@ -8,8 +8,8 @@ const now = 10_000_000_000;
 const src = (over) => ({ kind: 'source', id: 'source', vcs: 'git', branch: 'main', head: { shortSha: 'abc1234', subject: 'Fix totals' }, ...over });
 const ready = (over) => ({ status: 'ready', isRepo: true, branch: 'main', head: { sha: 'abc1234ff', shortSha: 'abc1234', subject: 'Fix totals', time: now / 1000 - 7200 }, changed: [], ...over });
 
-test('git provenance states branch, commit and age', () => {
-  assert.equal(provenanceLine(src(), ready(), now), 'Current line of work: main. Last saved version: abc1234 Fix totals, 2h ago.');
+test('git provenance states the last saved version and its age (the branch and short id are shown next to the title)', () => {
+  assert.equal(provenanceLine(src(), ready(), now), 'Last saved: Fix totals, 2h ago.');
 });
 
 test('a failed branch or log read is unknown, never "detached" or "no commits"', () => {

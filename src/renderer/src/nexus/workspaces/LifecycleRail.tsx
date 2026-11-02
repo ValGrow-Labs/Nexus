@@ -9,16 +9,19 @@ export function LifecycleRail({ rail, compact = false }: { rail: RailView; compa
     return <p className={compact ? 'nx-lrail__line' : 'nx-lrail__note'}>{rail.availability ?? 'Not yet a supported workflow'}</p>;
   }
   if (compact) {
+    // The Spine's one-line form draws only the steps that work now: a row of "Coming later" steps says nothing a person can act on.
+    const now = rail.steps.filter((s) => !s.future);
+    if (now.length === 0) return null;
     return (
       <div className="nx-lrail nx-lrail--compact">
         <ol className="nx-lrail__bar" aria-label={`${rail.label} steps`}>
-          {rail.steps.map((s) => (
+          {now.map((s) => (
             <li key={s.id} data-future={s.future ? 'true' : undefined} data-state={s.state ?? undefined} title={`${s.label}: ${s.word}`}>
               <span className="nx-visually-hidden">{s.label}: {s.word}</span>
             </li>
           ))}
         </ol>
-        <p className="nx-lrail__line">{railSummary(rail)}</p>
+        <p className="nx-lrail__line">{railSummary(rail, { later: false })}</p>
       </div>
     );
   }

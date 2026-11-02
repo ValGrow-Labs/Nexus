@@ -157,6 +157,9 @@ test('LR2 the compact summary counts only the rail\'s own steps', () => {
   assert.equal(L.railSummary(r), '2 of 12 steps done');
   assert.equal(L.railSummary(L.railFor(viewAt('sde', 'B2a'), rec({ versions: [{ kind: 'test_suite', status: 'candidate', validators: PASSED }] }))), '2 of 9 steps done; 3 coming later');
   assert.match(L.railSummary(rail('qa', rec())), /coming later$/, 'a domain with FUTURE steps still says so');
+  // The Spine's compact rail draws only the steps that work now, so its line leaves the later count out (the full rail keeps it).
+  assert.equal(L.railSummary(L.railFor(viewAt('sde', 'B2a'), rec({ versions: [{ kind: 'test_suite', status: 'candidate', validators: PASSED }] })), { later: false }), '2 of 9 steps done');
+  assert.match(src('workspaces/LifecycleRail.tsx'), /const now = rail\.steps\.filter\(\(s\) => !s\.future\);\s*if \(now\.length === 0\) return null;/);
   assert.equal(L.railSummary(rail('data-scientist')), 'Coming later: a project cannot take part in it yet');
   // Steps that need attention or are moving are counted too (fix round 1).
   const busy = L.railFor(view('sde'), rec({ versions: [{ kind: 'test_suite', status: 'candidate', validators: { 'suite.discovered': 'passed', 'sde.tests_pass': 'failed' } },

@@ -7,7 +7,7 @@ export function ProgressSection({ children }: { children: ReactNode }) {
   return (
     <section className="nx-prog" aria-label="Project progress">
       <button type="button" className="nx-prog__toggle" aria-expanded={open} aria-controls={id} onClick={() => setOpen((o) => !o)}>
-        <span aria-hidden="true">{open ? '▾' : '▸'}</span> Project progress <span className="nx-muted">{open ? '(hide)' : '(show the steps and what has been saved)'}</span>
+        <span aria-hidden="true">{open ? '▾' : '▸'}</span> Project progress
       </button>
       <div id={id} className="nx-prog__body" hidden={!open}>{children}</div>
     </section>
