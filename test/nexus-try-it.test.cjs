@@ -215,7 +215,7 @@ test('TR8 the dock answers a run request itself (no helper turn), with one butto
   assert.equal(routes.formatRoute({ name: 'project', id: 'proj-1', tool: 'try' }), '#/p/proj-1/try');
   assert.match(read('src/renderer/src/nexus/project/FocusSurface.tsx'), /if \(tool === 'try'\) return <ProjectTry projectId=\{project\.id\} change=\{tryChange\} \/>;/);
   assert.match(read('src/renderer/src/nexus/project/ToolRail.tsx'), /\{ tool: 'try', label: 'Try it', icon: 'rocket' \}/);
-  assert.match(read('src/renderer/src/nexus/project/ProjectBench.tsx'), /canTry=\{hasSde && !card\}/);
+  assert.match(read('src/renderer/src/nexus/project/ProjectBench.tsx'), /canTry=\{hasSde && !card && !isMl\}/);
   assert.match(read('src/renderer/src/nexus/project/ProjectBench.tsx'), /find\(\(x\) => x\.status === 'candidate' \|\| x\.status === 'active'\)/, 'Try it offers a change that is waiting for review or kept but not added yet (a kept change is not "reviewable" any more)');
   const pt = read('src/renderer/src/nexus/project/ProjectTry.tsx');
   assert.ok(pt.includes("<TryIt key={versionId ?? 'project'} projectId={projectId} versionId={versionId} heading={false} />"), 'one Try it panel, not a second one');
