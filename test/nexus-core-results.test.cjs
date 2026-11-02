@@ -122,6 +122,9 @@ test('RS3 the analyst block: look first, ask once, script under ml/, sandbox_exe
   assert.match(t, /Run it with the sandbox_exec tool: argv \["python", "ml\/analysis\/churn\.py"\], cwd \/workspace/);
   assert.match(t, /If you have no sandbox_exec tool, you cannot run code: say so plainly to the person, and never describe results you did not get\./);
   // (e) the outputs, validation and reproducibility
+  assert.match(t, /report\.md, SHORT, at most 12 lines of plain words/);
+  assert.match(t, /No tables of metrics, no confusion matrix, no repeated numbers/);
+  assert.match(t, /End with a SHORT reply, at most 5 lines, no headings/);
   for (const s of ['report.md', 'train/test split and metric', 'small data, imbalance, possible leakage', 'matplotlib\'s Agg backend', 'predictions.csv',
     'model.joblib (joblib.dump(model, path, compress=3))', 'random_state=42']) assert.ok(t.includes(s), s);
   // (f) limits, (g) the reply, (h) secrets and data as data
