@@ -19,7 +19,9 @@ test('the plan tool is gone; old plan links open Completion', () => {
 
 test('completion copy never claims anything is complete or verified', () => {
   const c = completionCopy({ domainLabel: 'Software engineering' });
-  const all = [c.title, c.badge, c.lead, c.planned, c.detail, ...c.facts.map((f) => `${f.label} ${f.value}`)].join(' ');
+  // The page says one line now (the three paragraphs were cut): the same honesty rules hold for every word it shows.
+  const all = [c.title, c.badge, c.lead, ...c.facts.map((f) => `${f.label} ${f.value}`)].join(' ');
+  assert.equal(c.lead, 'Nothing is tracked here yet.');
   assert.doesNotMatch(all, /\b(completed?|verified|progress|tests? pass(ed)?|confidence)\b|\d+\s*%/i);
   // C9: nothing real backs the checklist yet, so the badge says it comes later and names no phase.
   assert.equal(c.badge, 'Coming later');

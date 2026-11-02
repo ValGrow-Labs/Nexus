@@ -13,6 +13,9 @@ test('TR1 Tasks is out of the rail unless shown; it is in Details; the route and
   const rail = src('src/renderer/src/nexus/project/ToolRail.tsx');
   assert.match(rail, /\(r\.tool !== 'runs' \|\| tool === 'runs'\)/, 'the Tasks icon only shows while that page is the one open');
   for (const t of ['bench', 'changes', 'completion', 'try']) assert.ok(rail.includes(`tool: '${t}'`), `${t} is still in the rail`);
+  // The checklist has nothing on it yet: like Tasks, its icon shows only while that page is the one open (its route stays).
+  assert.match(rail, /\(r\.tool !== 'completion' \|\| tool === 'completion'\)/);
+  assert.ok(loadTs('src/renderer/src/nexus/router/routes.ts').PROJECT_TOOLS.includes('completion'), 'the checklist page and its route still exist');
   const bench = src('src/renderer/src/nexus/project/ProjectBench.tsx');
   assert.match(bench, /See all tasks/);
   assert.match(bench, /tool: 'runs' \}\); \}\}>See all tasks/, 'Details opens the task list');

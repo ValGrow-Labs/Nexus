@@ -5,9 +5,8 @@
 export interface CompletionCopy {
   title: string;
   badge: string;
+  /** The one line the page says: nothing is tracked yet. */
   lead: string;
-  planned: string;
-  detail: string;
   facts: Array<{ label: string; value: string }>;
 }
 
@@ -15,9 +14,7 @@ export function completionCopy(i: { domainLabel?: string | null }): CompletionCo
   return {
     title: 'Checklist',
     badge: 'Coming later',
-    lead: 'The checklist will show what each workspace in this project still needs before its work is accepted.',
-    planned: 'It is coming later. Each workspace will have its own list, and every item will link to the work and the proof behind it.',
-    detail: 'Nexus does not keep track of that yet, so there is nothing to show here. Nothing is counted as done just because checks ran or files exist.',
+    lead: 'Nothing is tracked here yet.',
     facts: [{ label: 'Workspace', value: i.domainLabel || 'Unassigned' }]
   };
 }

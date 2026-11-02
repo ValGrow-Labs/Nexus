@@ -16,7 +16,9 @@ const ROUTES: { tool: ProjectTool; label: string; icon: NexusIconName }[] = [
 export function ToolRail({ projectId, rootPath, tool, hasChanges, canTry = true, codeTools = true, onOpenTerminal, extra }: { extra?: ReactNode; canTry?: boolean; codeTools?: boolean; projectId: string; rootPath: string; tool: ProjectTool; hasChanges: boolean; onOpenTerminal: () => void }) {
   const actions = useShellActions();
   // The task list is engine output a person rarely needs: it is out of the rail unless it is the page being shown (it is in Details, and a running request links to it).
-  const items = ROUTES.filter((r) => (r.tool !== 'changes' || hasChanges || tool === 'changes') && (r.tool !== 'try' || canTry || tool === 'try') && (r.tool !== 'runs' || tool === 'runs'));
+  // The checklist has nothing on it yet (it comes later): it is out of the rail too, unless it is the page being shown (an old plan link opens it).
+  const items = ROUTES.filter((r) => (r.tool !== 'changes' || hasChanges || tool === 'changes') && (r.tool !== 'try' || canTry || tool === 'try') && (r.tool !== 'runs' || tool === 'runs')
+    && (r.tool !== 'completion' || tool === 'completion'));
   return (
     <nav className="nx-rail" aria-label="Project tools">
       {items.map((r) => (
