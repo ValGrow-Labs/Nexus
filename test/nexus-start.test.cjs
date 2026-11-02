@@ -3,7 +3,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const loadTs = require('./load-ts.cjs');
 
-const { detectEnvironment, IDEAS, buildStartRequest, chosenEnvironment, startBlocker } = loadTs('src/renderer/src/nexus/start/startModel.ts');
+const { detectEnvironment, IDEAS, PLAIN_IDEAS, buildStartRequest, chosenEnvironment, startBlocker, startTarget, startDomainId } = loadTs('src/renderer/src/nexus/start/startModel.ts');
 const { parseHash, formatRoute } = loadTs('src/renderer/src/nexus/router/routes.ts');
 const { WORKSPACES } = loadTs('src/renderer/src/nexus/workspaces/registry.ts');
 
@@ -45,6 +45,7 @@ test('detect: only ever returns a workspace that exists', () => {
 test('ideas: each chip fills a request that detects to its own environment', () => {
   assert.ok(IDEAS.length >= 5);
   for (const idea of IDEAS) assert.equal(id(idea.prompt), idea.expect, idea.label);
+  for (const idea of PLAIN_IDEAS) assert.equal(id(idea.prompt), idea.expect, idea.label);
 });
 
 test('request: the context header names environment and project; the text is unchanged', () => {
@@ -63,15 +64,37 @@ test('environment: detection follows the words until the person picks one', () =
   assert.equal(chosenEnvironment('anything', 'not-a-workspace'), null);
 });
 
-test('start: one reason at a time, in the order the person fills the screen', () => {
-  const ok = { text: 'Train a model', envId: 'ml', hasProject: true, assistant: 'ready' };
-  assert.equal(startBlocker(ok), null);
-  assert.equal(startBlocker({ ...ok, assistant: 'starting' }), null);
-  assert.match(startBlocker({ ...ok, text: '   ' }), /Describe/);
-  assert.match(startBlocker({ ...ok, envId: null }), /environment/);
-  assert.match(startBlocker({ ...ok, hasProject: false }), /project/);
-  assert.match(startBlocker({ ...ok, assistant: 'unavailable' }), /lead agent/);
-  assert.match(startBlocker({ text: '', envId: null, hasProject: false, assistant: 'unavailable' }), /Describe/);
+test('start: Start is ready with a request and a project; the two reasons are plain; nothing else (not the environment, not the old lead agent) blocks it', () => {
+  assert.equal(startBlocker({ text: 'Train a model', hasProject: true }), null);
+  assert.equal(startBlocker({ text: 'Train a model', hasProject: true, assistant: 'unavailable', envId: null }), null, 'the old lead agent and an unmatched environment never block');
+  assert.equal(startBlocker({ text: '   ', hasProject: true }), 'Type what you want.');
+  assert.equal(startBlocker({ text: 'Train a model', hasProject: false }), 'Choose a project or a folder.');
+  assert.equal(startBlocker({ text: '', hasProject: false }), 'Type what you want.', 'one reason at a time, the request first');
+});
+
+test('start: Machine learning is delivered (a new folder becomes a Machine learning project); a workspace that is not delivered starts as Software, with one plain line, and the text is carried over unchanged', () => {
+  assert.deepEqual(startTarget('sde', 'Software'), { workspaceId: 'sde', note: null });
+  assert.deepEqual(startTarget(null, null), { workspaceId: 'sde', note: null });
+  assert.deepEqual(startTarget('ml', 'Machine learning'), { workspaceId: 'ml', note: null }, 'Machine learning is delivered: data upload and results exist');
+  assert.equal(startDomainId('ml'), 'ai-ml');
+  assert.equal(startDomainId('sde'), 'software-engineering');
+  const dl = startTarget('dl', 'Deep learning');
+  assert.equal(dl.workspaceId, 'sde');
+  assert.equal(dl.note, 'Deep learning projects are coming later. Nexus will start this as a Software project.');
+  const fs0 = require('node:fs'); const pg = fs0.readFileSync(require('node:path').join(__dirname, '..', 'src', 'renderer', 'src', 'nexus', 'start', 'StartPage.tsx'), 'utf8');
+  assert.ok(pg.includes('startDomainId(startAt.workspaceId)') && !pg.includes("const domainId = 'software-engineering'"), 'a new folder takes its kind from where the work starts');
+  assert.ok(pg.includes("nexusClient.participationAttach(res.project.id, 'sde')"), 'a new Machine learning project joins the workspace the AI helper works in, so the helper can start without a setup step');
+  const fs = require('node:fs'); const page = fs.readFileSync(require('node:path').join(__dirname, '..', 'src', 'renderer', 'src', 'nexus', 'start', 'StartPage.tsx'), 'utf8');
+  assert.ok(page.includes('useNexusUi.getState().setDraft(text.trim());') && page.includes('useNexusUi.getState().focusIntent();'), 'the typed words are put in the AI helper’s request box and focused, not sent');
+  assert.ok(!page.includes("status.state === 'unavailable' ?") && !page.includes('Start with the lead agent') && !page.includes('Lead agent ·') && !page.includes('Ctrl + Enter'), 'no state depends on the old lead agent; no keyboard hint');
+  assert.ok(page.includes('disabled={busy || !!blocker}') && page.includes('Nexus will set up Git in this new folder so it can track changes.'));
+  assert.ok(page.includes('Your request goes to the AI helper') && page.includes("The project opens so you can follow the AI helper's work"));
+  assert.ok(!page.includes('Send to the lead AI helper instead') && !page.includes('useAssistant'), 'a request never goes to the old lead agent from Start');
+  assert.equal((page.match(/<span>Start<\/span>/g) ?? []).length, 1, 'exactly one Start button on the page');
+  assert.ok(page.includes("'Choose folder'") && !page.includes('nx-wb__cta'), 'one Start (the composer’s); the right side has the folder button instead of a second Start');
+  assert.ok(page.includes('usePendingStart.getState().hand(target.id, text);'), 'Start begins the build: the project page sends the words to its AI helper once it can take them');
+  assert.ok(!/useAssistant|assistant\/|port\.send|queuedMessage|lead AI helper|lead agent/i.test(page), 'Start has no path to the old lead helper');
+  assert.ok(page.includes('markHandoff();'), 'Start hands focus to the request box that opens on the project page');
 });
 
 test('routes: the old environment picker is gone; #/browse opens the Workspaces list, and Start links there', () => {

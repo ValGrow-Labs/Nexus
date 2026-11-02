@@ -13,24 +13,50 @@
 
 /* Left: the request */
 .nx-wb__doc { display: grid; align-content: start; gap: var(--nx-s6); padding: var(--nx-s12) clamp(24px, 5vw, 72px); min-width: 0; }
-.nx-wb__eyebrow { margin: 0; font: 500 11px/1 var(--nx-font-id); letter-spacing: 0.12em; text-transform: uppercase; color: var(--nx-text-3); outline: none; }
-.nx-wb__req {
-  width: 100%; min-height: 1.4em; resize: none; field-sizing: content; max-height: 40vh;
-  border: 0; border-bottom: 1px solid var(--nx-line); padding: 0 0 var(--nx-s4); background: transparent; color: var(--nx-ink);
-  font: 600 clamp(26px, 2.8vw, 38px)/1.2 var(--nx-font-display); letter-spacing: -0.02em; text-wrap: balance;
-  transition: border-color var(--nx-t-fast) var(--nx-ease-in);
+.nx-wb__intro { display: grid; gap: var(--nx-s3); }
+.nx-wb__eyebrow { font: 500 11px/1 var(--nx-font-id); letter-spacing: 0.12em; text-transform: uppercase; color: var(--nx-text-3); }
+.nx-wb__title { margin: 0; font: 600 clamp(30px, 3.2vw, 44px)/1.08 var(--nx-font-display); letter-spacing: -0.025em; text-wrap: balance; color: var(--nx-ink); outline: none; }
+
+/* The composer: one card holding the request, the workspace chip and Start. Its edge takes the
+   workspace's hue while you type, so where the work goes is visible without reading. */
+.nx-wb__composer {
+  display: grid; max-width: 760px; border: 1px solid var(--nx-line-strong); border-radius: 14px; background: var(--nx-surface);
+  box-shadow: 0 1px 0 color-mix(in oklab, var(--nx-ink) 4%, transparent), 0 10px 28px -18px color-mix(in oklab, var(--nx-ink) 30%, transparent);
+  transition: border-color var(--nx-t-base) var(--nx-ease-in), box-shadow var(--nx-t-base) var(--nx-ease-in);
 }
-.nx-wb__req::placeholder { color: var(--nx-text-3); font-weight: 500; }
-.nx-wb__req:focus { outline: none; border-bottom-color: var(--wb-env); }
-.nx-wb__req:focus-visible { box-shadow: 0 2px 0 0 var(--wb-env); }
+.nx-wb__composer:focus-within { border-color: var(--wb-env); box-shadow: 0 0 0 3px var(--wb-env-soft), 0 10px 28px -18px color-mix(in oklab, var(--nx-ink) 30%, transparent); }
+.nx-wb__req {
+  width: 100%; min-height: 3.6em; max-height: 40vh; resize: none; field-sizing: content;
+  border: 0; padding: 20px 22px 8px; background: transparent; color: var(--nx-ink);
+  font: 500 clamp(18px, 1.6vw, 22px)/1.45 var(--nx-font);
+}
+.nx-wb__req::placeholder { color: var(--nx-text-3); font-weight: 400; }
+.nx-wb__composer .nx-wb__req:focus, .nx-wb__composer .nx-wb__req:focus-visible { outline: none; box-shadow: none; }
+
+.nx-wb__bar { display: flex; align-items: center; gap: var(--nx-s3); padding: 10px 10px 10px 22px; border-top: 1px solid var(--nx-line); min-width: 0; }
+.nx-wb__chip { margin: 0; flex: 1 1 auto; min-width: 0; display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; font: 400 13.5px/1.4 var(--nx-font); color: var(--nx-text-2); }
+.nx-wb__chip i { width: 9px; height: 9px; border-radius: 50%; background: var(--wb-env); flex: none; }
+.nx-wb__chip b { color: var(--wb-env); font-weight: 600; }
+.nx-wb__conf { font: 600 11.5px/1 var(--nx-font); padding: 4px 7px; border-radius: 999px; background: var(--wb-env-soft); color: var(--nx-text-2); }
+.nx-wb__conf--strong { color: var(--nx-ok); }
+.nx-wb__conf--weak { color: var(--nx-warn); }
+.nx-wb__words { font: 400 12.5px/1 var(--nx-font-code); color: var(--nx-text-3); }
+.nx-wb__none { color: var(--nx-text-3); }
+.nx-wb__keys { flex: none; font: 400 12px/1 var(--nx-font-id); color: var(--nx-text-3); }
+.nx-wb__send {
+  flex: none; display: inline-flex; align-items: center; gap: 8px; height: 40px; padding: 0 14px 0 18px;
+  border: 0; border-radius: 10px; background: var(--nx-ink); color: var(--nx-on-ink); font: 600 14.5px/1 var(--nx-font); cursor: pointer;
+  transition: opacity var(--nx-t-fast) var(--nx-ease-in), transform var(--nx-t-fast) var(--nx-ease-in);
+}
+.nx-wb__send svg { width: 16px; height: 16px; }
+.nx-wb__send path { fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+.nx-wb__send:hover:not(:disabled) { opacity: 0.9; transform: translateX(1px); }
+.nx-wb__send[aria-disabled="true"] { opacity: 0.45; }
+.nx-wb__send:disabled { opacity: 0.35; cursor: not-allowed; }
 
 .nx-wb__ideas { display: flex; flex-wrap: wrap; align-items: center; gap: var(--nx-s2); font: 400 14px/1 var(--nx-font); color: var(--nx-text-3); }
-.nx-wb__idea { height: 32px; padding: 0 12px; border: 1px solid var(--nx-line); border-radius: var(--nx-r-ctl); background: var(--nx-surface); color: var(--nx-text-2); font: 500 13.5px/1 var(--nx-font); cursor: pointer; }
+.nx-wb__idea { height: 32px; padding: 0 12px; border: 1px solid var(--nx-line); border-radius: 999px; background: var(--nx-surface); color: var(--nx-text-2); font: 500 13.5px/1 var(--nx-font); cursor: pointer; }
 .nx-wb__idea:hover { border-color: var(--nx-line-strong); color: var(--nx-ink); }
-
-.nx-wb__why { margin: 0; font: 400 15px/1.5 var(--nx-font); color: var(--nx-text-2); }
-.nx-wb__why b { color: var(--wb-env); font-weight: 600; }
-.nx-wb__words { font: 400 13.5px/1 var(--nx-font-code); color: var(--nx-ink); background: var(--wb-env-soft); padding: 2px 6px; border-radius: 3px; }
 
 .nx-wb__h2 { margin: 0; font: 600 13px/1.2 var(--nx-font); color: var(--nx-ink); }
 .nx-wb__plan { display: grid; gap: var(--nx-s3); max-width: 62ch; }
@@ -96,6 +122,9 @@
 .nx-wb__cta:hover { opacity: 0.9; }
 .nx-wb__cta[aria-disabled="true"] { opacity: 0.55; }
 .nx-wb__cta:disabled { cursor: progress; opacity: 0.7; }
+.nx-wb__pick { height: 46px; border: 1px solid var(--nx-border-strong); border-radius: var(--nx-r-obj); background: transparent; color: var(--nx-ink); font: 600 15px/1 var(--nx-font); cursor: pointer; }
+.nx-wb__pick:hover { background: var(--nx-hover, rgba(127, 127, 127, 0.1)); }
+.nx-wb__pick:disabled { cursor: progress; opacity: 0.7; }
 .nx-wb__hint { font: 400 12px/1 var(--nx-font); color: var(--nx-text-3); }
 
 .nx-wb :is(button, input, textarea, summary):focus-visible { outline: 2px solid var(--wb-env); outline-offset: 2px; }
@@ -108,7 +137,18 @@
 }
 @media (max-width: 479px) {
   .nx-wb__envs { grid-template-columns: minmax(0, 1fr); }
+  .nx-wb__keys { display: none; }
 }
 @media (prefers-reduced-motion: reduce) {
   .nx-wb *, .nx-wb__req { transition: none !important; }
+  .nx-wb__send:hover:not(:disabled) { transform: none; }
 }
+
+/* A project row: the choice (which project the next request is for) and, beside it, a plain Open button that goes into the project. */
+.nx-wb__projrow { display: flex; align-items: stretch; border-bottom: 1px solid var(--nx-line, #d9dee3); }
+.nx-wb__projrow:last-child { border-bottom: 0; }
+.nx-wb__projrow .nx-wb__proj { flex: 1; min-width: 0; border-bottom: 0; }
+.nx-wb__open { padding: 0 16px; white-space: nowrap; align-self: center; min-height: 42px; }
+
+/* The one-line reason under the box while Start is grey. */
+.nx-wb__why { margin: 0; font: 400 13px/1.4 var(--nx-font); color: var(--nx-text-2); }

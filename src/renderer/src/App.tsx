@@ -10,6 +10,8 @@ import { useHive } from '@/hooks/useHive';
 import { AddAgentModal } from '@/components/AddAgentModal';
 import { OnboardingWizard } from '@/components/OnboardingWizard';
 import { HivePicker } from '@/components/HivePicker';
+import { WelcomeIntro } from '@/nexus/pages/WelcomePage';
+import { useNexusUi } from '@/nexus/state/uiStore';
 import { QuitWarningModal, type ClosingTimeState } from '@/components/QuitWarningModal';
 import { CompletionToast } from '@/realtime/CompletionToast';
 import { UpdateToast } from '@/components/UpdateToast';
@@ -45,6 +47,8 @@ export function App() {
   const [importOpen, setImportOpen] = useState(false);
   const [projectDashboardOpen, setProjectDashboardOpen] = useState(false);
   const [config, setConfig] = useState<HarnessConfig | null>(null);
+  const introSeen = useNexusUi((s) => s.introSeen);
+  const seeIntro = useNexusUi((s) => s.seeIntro);
   // Whether the user has passed the launch-time hive picker this session. Starts
   // true (skip the picker) right after a hive SWITCH — changeHome relaunches and
   // leaves a one-shot localStorage flag so we don't bounce back onto the picker for
@@ -224,6 +228,11 @@ export function App() {
 
   if (!config) {
     return <div style={{ width: '100vw', height: '100vh', background: 'var(--nx-ground)' }} />;
+  }
+
+  // Every launch starts on the Welcome intro; Get started goes on to the config picker (or onboarding).
+  if (!introSeen) {
+    return <div className="nx-launch"><WelcomeIntro onStart={seeIntro} /></div>;
   }
 
   if (!config.onboardingComplete) {

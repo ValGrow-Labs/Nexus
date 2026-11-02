@@ -1,29 +1,81 @@
 /* ── Welcome ─────────────────────────────────────────────────────────────────
-   What Nexus is, shown with the real routing. Hero: the request on the left,
-   the Sorter rack (a Hairline figure) on the right. Below: the flow, the
-   workspaces, and what runs today. The only colour is a workspace's
-   provenance hue (--ws-h, set by provenanceStyle). */
+   The intro, in three steps. Intro: the pitch with one big Get started on the
+   left, the Agents figure (Hairline) big and unboxed on the right. Then two
+   centred step cards: "Which sounds like you?" and "What are you working on?".
+   The only colour is a workspace's provenance hue (--ws-h, set by
+   provenanceStyle). */
 
 .nx-welcome {
   --wl-env: oklch(var(--nx-ws-l) var(--nx-ws-c) var(--ws-h, 250));
-  display: grid; gap: var(--nx-s12); max-width: 1120px; margin: 0 auto;
-  padding: var(--nx-s12) clamp(20px, 4vw, 56px) 64px; color: var(--nx-ink);
+  max-width: 1480px; margin: 0 auto; color: var(--nx-ink);
+  padding: var(--nx-s12) clamp(20px, 4vw, 56px) 64px;
 }
-
-.nx-welcome__hero { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.05fr); gap: var(--nx-s12); align-items: center; }
-.nx-welcome__pitch { display: grid; gap: var(--nx-s4); min-width: 0; }
 .nx-welcome__eyebrow { font: 500 11px/1 var(--nx-font-id); letter-spacing: 0.12em; text-transform: uppercase; color: var(--nx-text-3); }
-.nx-welcome h1 { margin: 0; font: 600 clamp(36px, 4.6vw, 58px)/1.02 var(--nx-font-display); letter-spacing: -0.025em; text-wrap: balance; outline: none; }
-.nx-welcome__lede { margin: 0; max-width: 34em; font: 400 16px/1.55 var(--nx-font); color: var(--nx-text-2); }
+.nx-welcome h1 { margin: 0; font: 600 clamp(36px, 4.4vw, 60px)/1.04 var(--nx-font-display); letter-spacing: -0.025em; text-wrap: balance; outline: none; }
+.nx-welcome__lede { margin: 0; max-width: 36em; font: 400 17px/1.55 var(--nx-font); color: var(--nx-text-2); }
 
-.nx-welcome__ask { display: grid; gap: var(--nx-s3); margin-top: var(--nx-s4); }
-.nx-welcome__ask label { font: 500 13px/1 var(--nx-font); color: var(--nx-text-2); }
-.nx-welcome__ask input {
-  width: 100%; min-width: 0; height: 44px; padding: 0 14px; border: 1px solid var(--nx-line-strong); border-radius: var(--nx-r-obj);
-  background: var(--nx-surface); color: var(--nx-ink); font: 400 15.5px/1 var(--nx-font);
+/* the big button */
+.nx-welcome__go {
+  justify-self: start; height: 60px; padding: 0 36px; margin-top: var(--nx-s4);
+  border: 0; border-radius: var(--nx-r-obj); background: var(--nx-ink); color: var(--nx-on-ink);
+  font: 600 19px/1 var(--nx-font); letter-spacing: -0.005em; cursor: pointer;
+  transition: transform var(--nx-t-fast) var(--nx-ease-in), opacity var(--nx-t-fast) var(--nx-ease-in);
 }
-.nx-welcome__ask input:focus { outline: 2px solid var(--nx-ink); outline-offset: 2px; }
-.nx-welcome__verdict { margin: 0; min-height: 26px; display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; font: 400 13.5px/1.4 var(--nx-font); color: var(--nx-text-2); }
+.nx-welcome__go:hover:not(:disabled) { transform: translateY(-1px); opacity: 0.92; }
+.nx-welcome__go:focus-visible { outline: 2px solid var(--nx-ink); outline-offset: 3px; }
+.nx-welcome__go:disabled { opacity: 0.4; cursor: not-allowed; }
+.nx-welcome__go--sm { height: 44px; padding: 0 22px; margin-top: 0; font-size: 15px; }
+
+/* the launch screen: the intro on its own, before the config picker and the shell */
+.nx-launch { height: 100vh; overflow: auto; background: var(--nx-ground); }
+.nx-launch .nx-welcome--intro { min-height: 100vh; }
+
+/* intro */
+.nx-welcome--intro {
+  display: grid; grid-template-columns: minmax(0, 0.75fr) minmax(0, 1.45fr); gap: var(--nx-s8); align-items: center;
+  min-height: calc(100dvh - var(--nx-bar-h) - 48px);
+}
+.nx-welcome__pitch { display: grid; gap: var(--nx-s4); min-width: 0; }
+.nx-welcome__figure { margin: 0; min-width: 0; }
+.nx-welcome__plate { display: grid; justify-items: center; margin: -56px -64px 0 -24px; }
+.nx-welcome__stage {
+  width: 100%;
+  --hairline-plate: var(--nx-ground);
+  /* heavier and darker than Hairline's defaults, so the figure holds its own on the page */
+  --hairline-stroke: 1.3;
+  --hairline-hi: var(--nx-ink);
+  --hairline-edge: var(--nx-text-3);
+  --hairline-mid: var(--nx-line-strong);
+  --hairline-lo: color-mix(in oklab, var(--nx-line-strong) 60%, var(--nx-line));
+}
+.nx-welcome__tag { margin-top: -6%; font: 500 12px/1 var(--nx-font-id); letter-spacing: 0.04em; color: var(--nx-text-2); white-space: nowrap; }
+
+/* steps */
+.nx-welcome--step { display: grid; place-items: center; min-height: calc(100dvh - var(--nx-bar-h) - 48px); }
+.nx-welcome__card { width: 100%; max-width: 720px; display: grid; gap: var(--nx-s4); }
+.nx-welcome__card h1 { font-size: clamp(30px, 3.4vw, 44px); }
+
+.nx-welcome__choices { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--nx-s3); margin-top: var(--nx-s4); }
+.nx-welcome__choice {
+  display: grid; gap: var(--nx-s2); align-content: start; text-align: left; min-width: 0; min-height: 150px; padding: 24px;
+  border: 1px solid var(--nx-line-strong); border-radius: var(--nx-r-obj); background: var(--nx-surface); color: var(--nx-ink); cursor: pointer;
+  transition: border-color var(--nx-t-base) var(--nx-ease-in), transform var(--nx-t-fast) var(--nx-ease-in);
+}
+.nx-welcome__choice b { font: 600 21px/1.2 var(--nx-font-display); }
+.nx-welcome__choice span { font: 400 14.5px/1.5 var(--nx-font); color: var(--nx-text-2); }
+.nx-welcome__choice:hover { border-color: var(--nx-ink); transform: translateY(-1px); }
+.nx-welcome__choice.is-on { border-color: var(--nx-ink); box-shadow: inset 0 0 0 1px var(--nx-ink); }
+.nx-welcome__choice:focus-visible { outline: 2px solid var(--nx-ink); outline-offset: 3px; }
+
+.nx-welcome__req {
+  width: 100%; min-width: 0; height: 60px; margin-top: var(--nx-s2); padding: 0 18px;
+  border: 1px solid var(--nx-line-strong); border-radius: var(--nx-r-obj); background: var(--nx-surface); color: var(--nx-ink);
+  font: 500 19px/1 var(--nx-font);
+}
+.nx-welcome__req::placeholder { color: var(--nx-text-3); font-weight: 400; }
+.nx-welcome__req:focus { outline: 2px solid var(--nx-ink); outline-offset: 2px; }
+
+.nx-welcome__verdict { margin: 0; min-height: 26px; display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; font: 400 14px/1.4 var(--nx-font); color: var(--nx-text-2); }
 .nx-welcome__verdict i { width: 9px; height: 9px; border-radius: 50%; background: var(--wl-env); }
 .nx-welcome__verdict b { color: var(--wl-env); font-weight: 600; }
 .nx-welcome__verdict code { font: 400 12px/1 var(--nx-font-code); color: var(--nx-ink); padding: 4px 7px; border: 1px solid var(--nx-line); border-radius: 999px; background: var(--nx-surface); }
@@ -31,65 +83,20 @@
 .nx-welcome__conf--strong { color: var(--nx-ok); }
 .nx-welcome__conf--weak { color: var(--nx-warn); }
 .nx-welcome__ideas { display: flex; flex-wrap: wrap; gap: var(--nx-s2); }
-.nx-welcome__actions { display: flex; flex-wrap: wrap; gap: var(--nx-s2); margin-top: var(--nx-s2); }
 
-.nx-welcome__figure { margin: 0; display: grid; gap: var(--nx-s3); min-width: 0; }
-.nx-welcome__figure figcaption { font: 400 12.5px/1.5 var(--nx-font); color: var(--nx-text-3); }
-.nx-welcome__plate { position: relative; border: 1px solid var(--nx-line); border-radius: var(--nx-r-obj); background: var(--nx-surface); }
-.nx-welcome__stage {
-  --hairline-plate: var(--nx-surface);
-  --hairline-hi: var(--nx-ink);
-  --hairline-edge: var(--nx-line-strong);
-  --hairline-mid: color-mix(in oklab, var(--nx-line-strong) 55%, var(--nx-line));
-  --hairline-lo: var(--nx-line);
-  max-width: 100%;
-}
-.nx-welcome__tag { position: absolute; top: 14px; left: 16px; z-index: 1; font: 400 11px/1 var(--nx-font-id); color: var(--nx-text-3); pointer-events: none; }
-.nx-welcome__tag--read { left: auto; right: 16px; color: var(--nx-ink); font-variant-numeric: tabular-nums; }
-
-.nx-welcome__section { display: grid; gap: var(--nx-s6); padding-top: var(--nx-s12); border-top: 1px solid var(--nx-line); }
-.nx-welcome__head { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.3fr); gap: var(--nx-s8); align-items: start; }
-.nx-welcome__head h2 { margin: 0; font: 600 clamp(22px, 2.4vw, 30px)/1.12 var(--nx-font-display); letter-spacing: -0.015em; text-wrap: balance; }
-.nx-welcome__head p { margin: 0; max-width: 38em; font: 400 15px/1.55 var(--nx-font); color: var(--nx-text-2); }
-
-.nx-welcome__steps { margin: 0; padding: 0; list-style: none; counter-reset: wl; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); border: 1px solid var(--nx-line); border-radius: var(--nx-r-obj); background: var(--nx-surface); }
-.nx-welcome__steps li { counter-increment: wl; display: grid; align-content: start; gap: var(--nx-s2); padding: 20px; min-width: 0; }
-.nx-welcome__steps li + li { border-left: 1px solid var(--nx-line); }
-.nx-welcome__steps li::before { content: counter(wl); font: 500 11px/1 var(--nx-font-id); color: var(--nx-text-3); }
-.nx-welcome__steps h3 { margin: 0; font: 600 17px/1.2 var(--nx-font-display); }
-.nx-welcome__steps p { margin: 0; font: 400 13.5px/1.5 var(--nx-font); color: var(--nx-text-2); }
-
-.nx-welcome__ws { margin: 0; padding: 0; list-style: none; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: var(--nx-s3); }
-.nx-welcome__ws li { min-width: 0; }
-.nx-welcome__ws button {
-  width: 100%; height: 100%; display: grid; gap: 4px; justify-items: start; text-align: left; padding: 16px;
-  border: 1px solid var(--nx-line); border-radius: var(--nx-r-obj); background: var(--nx-surface); color: var(--nx-ink); cursor: pointer;
-  transition: border-color var(--nx-t-base) var(--nx-ease-in);
-}
-.nx-welcome__ws button:hover, .nx-welcome__ws button.is-on { border-color: var(--nx-line-strong); }
-.nx-welcome__ws button.is-on { box-shadow: inset 0 0 0 1px var(--wl-env); }
-.nx-welcome__ws button:focus-visible { outline: 2px solid var(--nx-ink); outline-offset: 2px; }
-.nx-welcome__wslabel { display: inline-flex; align-items: center; gap: 8px; font: 600 12.5px/1 var(--nx-font); color: var(--wl-env); }
-.nx-welcome__wslabel i { width: 8px; height: 8px; border-radius: 50%; background: var(--wl-env); }
-.nx-welcome__ws b { font: 600 16px/1.25 var(--nx-font-display); }
-.nx-welcome__ws small { font: 400 12.5px/1.4 var(--nx-font); color: var(--nx-text-3); }
-
-.nx-welcome__split { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--nx-s3); }
-.nx-welcome__split > div { min-width: 0; padding: 20px 22px; border: 1px solid var(--nx-line); border-radius: var(--nx-r-obj); background: var(--nx-surface); }
-.nx-welcome__split h3 { margin: 0; font: 600 16px/1.2 var(--nx-font-display); }
-.nx-welcome__split ul { margin: var(--nx-s3) 0 0; padding-left: 18px; display: grid; gap: 6px; font: 400 14px/1.5 var(--nx-font); color: var(--nx-text-2); }
+.nx-welcome__nav { display: flex; flex-wrap: wrap; align-items: center; gap: var(--nx-s2); margin-top: var(--nx-s4); padding-top: var(--nx-s4); border-top: 1px solid var(--nx-line); }
+.nx-welcome__spacer { flex: 1 1 auto; }
 
 @media (max-width: 1279px) {
-  .nx-welcome__hero, .nx-welcome__head { grid-template-columns: minmax(0, 1fr); gap: var(--nx-s6); }
-  .nx-welcome__steps { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .nx-welcome__steps li:nth-child(3) { border-left: 0; }
-  .nx-welcome__steps li:nth-child(n + 3) { border-top: 1px solid var(--nx-line); }
-  .nx-welcome__ws { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .nx-welcome--intro { grid-template-columns: minmax(0, 1fr); min-height: 0; }
+  .nx-welcome__figure { max-width: 900px; width: 100%; justify-self: center; }
+  .nx-welcome__plate { margin: -32px -16px 0; }
 }
 @media (max-width: 767px) {
-  .nx-welcome__steps, .nx-welcome__split { grid-template-columns: minmax(0, 1fr); }
-  .nx-welcome__steps li + li { border-left: 0; border-top: 1px solid var(--nx-line); }
+  .nx-welcome__choices { grid-template-columns: minmax(0, 1fr); }
+  .nx-welcome__choice { min-height: 0; }
 }
 @media (prefers-reduced-motion: reduce) {
-  .nx-welcome__ws button { transition: none; }
+  .nx-welcome__go, .nx-welcome__choice { transition: none; }
+  .nx-welcome__go:hover:not(:disabled), .nx-welcome__choice:hover { transform: none; }
 }

@@ -3,6 +3,9 @@ import { browserStorage, readPref, writePref } from './prefs';
 import type { Selection } from '../intent/intentContext';
 import { DEFAULT_HANDOFF_VIEW, type HandoffView } from '../handoffs/handoffModel';
 
+export type Audience = 'nontechnical' | 'technical';
+const readAudience = (v: string | null): Audience | null => (v === 'nontechnical' || v === 'technical' ? v : null);
+
 export type SentRequest = { id: string; agentId: string; queuedMessageId: string; text: string; projectId: string | null; selectionLabel: string | null; sentAt: number };
 
 interface NexusUi {
@@ -15,6 +18,15 @@ interface NexusUi {
   lastProject: string | null;
   setLastProject: (id: string) => void;
   setupDismissed: boolean;
+  /** Whether the Welcome intro has been passed this session (not persisted): every launch starts on Welcome. */
+  /** Whether the launch intro's Get started has been pressed this session (not persisted). */
+  introSeen: boolean;
+  seeIntro: () => void;
+  welcomed: boolean;
+  finishWelcome: () => void;
+  /** The answer to Welcome's "Which sounds like you?" (persisted); null until answered. */
+  audience: Audience | null;
+  setAudience: (a: Audience) => void;
   dismissSetup: () => void;
   draft: string;
   /** A request carried over to Start (from Welcome); Start takes it once (not persisted). */
@@ -52,6 +64,13 @@ export const useNexusUi = create<NexusUi>((set) => ({
   setLastProject: (id) => { writePref(storage, 'lastProject', id); set({ lastProject: id }); },
   setupDismissed: readPref(storage, 'setupDismissed') === '1',
   dismissSetup: () => { writePref(storage, 'setupDismissed', '1'); set({ setupDismissed: true }); },
+  introSeen: false,
+  seeIntro: () => set({ introSeen: true }),
+  // Kept between launches: once Welcome is finished, later launches go straight to Start instead of asking the same questions again.
+  welcomed: readPref(storage, 'welcomed') === '1',
+  finishWelcome: () => { writePref(storage, 'welcomed', '1'); set({ welcomed: true }); },
+  audience: readAudience(readPref(storage, 'audience')),
+  setAudience: (a) => { writePref(storage, 'audience', a); set({ audience: a }); },
   draft: '',
   startPrefill: null,
   setStartPrefill: (s) => set({ startPrefill: s }),

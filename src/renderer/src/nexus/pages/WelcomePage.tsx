@@ -1,129 +1,130 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { WORKSPACES } from '../workspaces/registry';
-import type { WorkspaceId } from '../workspaces/types';
 import { provenanceStyle } from '../ui/ProvenanceMark';
 import { navigate } from '../router/useRoute';
-import { useNexusUi } from '../state/uiStore';
-import { detectEnvironment, IDEAS } from '../start/startModel';
-import { SorterStage } from '../hairline/SorterStage';
+import { useNexusUi, type Audience } from '../state/uiStore';
+import { detectEnvironment, IDEAS, PLAIN_IDEAS } from '../start/startModel';
+import { AgentsStage } from '../hairline/AgentsStage';
 
-const STEPS = [
-  { title: 'Describe', body: 'Type one sentence on the Start page. Nothing runs until you press Start.' },
-  { title: 'Route', body: 'Clue words score each workspace. Four points or more picks it, one to three picks it and asks you to check, zero lets you choose.' },
-  { title: 'Agents work', body: 'A lead agent plans in its own terminal and sends helpers messages, delivered locally every 1.5 seconds. Helpers edit files and run tests.' },
-  { title: 'Review', body: 'You see a before and after of every changed line, from git, and decide what stays.' }
+const CHOICES: { id: Audience; title: string; body: string }[] = [
+  { id: 'technical', title: "I'm technical", body: "I'm comfortable with code, terminals and git, and I want to see every change." },
+  { id: 'nontechnical', title: "I'm not technical", body: 'I describe what I want in plain words. Nexus and its agents take care of the code.' }
 ];
 
-/** Welcome: what Nexus is, shown with the real routing. The request box runs
- *  the Start page's own keyword score; the rack routes the note to the
- *  workspace it picks. Nothing is sent from here: "Continue on Start" carries
- *  the sentence over, and Start is where it runs. */
-export function WelcomePage() {
-  const [text, setText] = useState('Train a model to classify support emails');
+type Step = 'intro' | 'about' | 'work';
+
+/** The first screen of every launch: the pitch, the agents at work, and one big
+ *  Get started. App shows it before the config picker; Welcome shows it again
+ *  when reopened from the menu. */
+export function WelcomeIntro({ onStart }: { onStart: () => void }) {
+  const heading = useRef<HTMLHeadingElement>(null);
+  useEffect(() => { heading.current?.focus(); }, []);
+  return (
+    <div className="nx-page nx-welcome nx-welcome--intro">
+      <div className="nx-welcome__pitch">
+        <span className="nx-welcome__eyebrow">Welcome to Nexus</span>
+        <h1 ref={heading} tabIndex={-1}>Say what you want built.<br />A team of agents builds it.</h1>
+        <p className="nx-welcome__lede">
+          Describe your work in one sentence. Nexus picks the right workspace, a lead agent plans it, helpers do the work
+          on this computer, and you approve every change before it is kept.
+        </p>
+        <button type="button" className="nx-welcome__go" onClick={onStart}>Get started</button>
+      </div>
+      <figure className="nx-welcome__figure">
+        <AgentsStage />
+      </figure>
+    </div>
+  );
+}
+
+/** Welcome: the intro, in three steps. A big Get started, then "Which sounds
+ *  like you?", then "What are you working on?" with examples for that answer.
+ *  Every launch opens on the intro (shown by App, before the config picker);
+ *  Home then continues here from `startAt`. The menu reopens it from the intro.
+ *  Once finished, Home is Start for that session.
+ *  Nothing is sent from here: the sentence is carried over to Start. */
+export function WelcomePage({ startAt = 'intro' }: { startAt?: Step }) {
+  const [step, setStep] = useState<Step>(startAt);
+  const [text, setText] = useState('');
+  const audience = useNexusUi((s) => s.audience);
+  const setAudience = useNexusUi((s) => s.setAudience);
   const setPrefill = useNexusUi((s) => s.setStartPrefill);
-  const setLast = useNexusUi((s) => s.setLastWorkspace);
+  const finishWelcome = useNexusUi((s) => s.finishWelcome);
+  const heading = useRef<HTMLHeadingElement>(null);
+  const input = useRef<HTMLInputElement>(null);
+
+  // each step takes focus on its heading, or on the request box on the last step
+  useEffect(() => { (step === 'work' ? input.current : heading.current)?.focus(); }, [step]);
 
   const detection = useMemo(() => detectEnvironment(text), [text]);
-  const index = detection.id ? WORKSPACES.findIndex((w) => w.id === detection.id) : -1;
-  const ws = index >= 0 ? WORKSPACES[index] : null;
+  const ws = detection.id ? WORKSPACES.find((w) => w.id === detection.id) ?? null : null;
+  const plain = audience !== 'technical';
 
-  const toStart = () => { setPrefill(text.trim()); navigate({ name: 'home' }); };
-  const openWorkspace = (id: WorkspaceId) => { setLast(id); navigate({ name: 'workspace', id }); };
+  const finish = () => { setPrefill(text.trim() || null); finishWelcome(); navigate({ name: 'home' }); };
+  const choose = (a: Audience) => { setAudience(a); setStep('work'); };
 
-  return (
-    <div className="nx-page nx-welcome">
-      <div className="nx-welcome__hero">
-        <div className="nx-welcome__pitch">
-          <span className="nx-welcome__eyebrow">Welcome to Nexus</span>
-          <h1 tabIndex={-1}>One sentence in.<br />A reviewed diff out.</h1>
-          <p className="nx-welcome__lede">
-            Nexus reads your request, routes it to the right workspace, and hands it to a team of real coding agents
-            running in terminals on this machine. You review every changed line before anything is kept.
-          </p>
+  // A person who already answered "Which sounds like you?" is not asked again: Get started goes straight on.
+  if (step === 'intro') return <WelcomeIntro onStart={() => setStep(audience ? 'work' : 'about')} />;
 
-          <form className="nx-welcome__ask" onSubmit={(e) => { e.preventDefault(); if (text.trim()) toStart(); }}>
-            <label htmlFor="nx-welcome-req">What are you working on?</label>
-            <input id="nx-welcome-req" type="text" value={text} spellCheck={false} autoComplete="off" onChange={(e) => setText(e.target.value)} />
-            <p className="nx-welcome__verdict" aria-live="polite" style={ws ? provenanceStyle(ws.hueSlot) : undefined}>
-              {!text.trim() ? 'Describe what you want to work on.'
-                : !ws ? 'No clue words yet, so no workspace is picked. On Start you would choose one.'
-                : <>
-                    <i aria-hidden="true" />
-                    <b>{ws.name}</b>
-                    <span className={`nx-welcome__conf nx-welcome__conf--${detection.confidence}`}>{detection.confidence === 'strong' ? 'strong match' : 'weak match, check it'}</span>
-                    {detection.matched.map((w, i) => <code key={`${w}-${i}`}>{w}</code>)}
-                  </>}
-            </p>
-            <div className="nx-welcome__ideas" aria-label="Examples">
-              {IDEAS.map((idea) => (
-                <button key={idea.label} type="button" className="nx-wb__idea" onClick={() => setText(idea.prompt)}>{idea.label}</button>
-              ))}
-            </div>
-            <div className="nx-welcome__actions">
-              <button type="submit" className="nx-btn nx-btn--primary" disabled={!text.trim()}>Continue on Start</button>
-              <button type="button" className="nx-btn" onClick={() => navigate({ name: 'browse' })}>Browse environments</button>
-            </div>
-          </form>
-        </div>
-
-        <figure className="nx-welcome__figure">
-          <SorterStage pick={index} />
-          <figcaption>Eight cubbies, one per workspace. The one your request routes to takes the note. Point at a cubby to try it by hand.</figcaption>
-        </figure>
-      </div>
-
-      <section className="nx-welcome__section" aria-labelledby="nx-welcome-how">
-        <div className="nx-welcome__head">
-          <h2 id="nx-welcome-how">Nexus routes the work. The agents write the code.</h2>
-          <p>Nexus never writes code itself, and nothing in the app is simulated. What you review is the real git diff.</p>
-        </div>
-        <ol className="nx-welcome__steps">
-          {STEPS.map((s) => <li key={s.title}><h3>{s.title}</h3><p>{s.body}</p></li>)}
-        </ol>
-      </section>
-
-      <section className="nx-welcome__section" aria-labelledby="nx-welcome-ws">
-        <div className="nx-welcome__head">
-          <h2 id="nx-welcome-ws">Eight kinds of work, each with its own place.</h2>
-          <p>Projects are filed under the workspace that matches them, and each workspace keeps one colour, so you can tell where something came from.</p>
-        </div>
-        <ul className="nx-welcome__ws">
-          {WORKSPACES.map((w, i) => (
-            <li key={w.id} style={provenanceStyle(w.hueSlot)}>
-              <button type="button" className={i === index ? 'is-on' : undefined} onClick={() => openWorkspace(w.id)} aria-label={`Open ${w.name}`}>
-                <span className="nx-welcome__wslabel"><i aria-hidden="true" />{w.label}</span>
-                <b>{w.name}</b>
-                <small>{w.tagline}</small>
+  if (step === 'about') {
+    return (
+      <div className="nx-page nx-welcome nx-welcome--step">
+        <div className="nx-welcome__card">
+          <span className="nx-welcome__eyebrow">Step 1 of 2</span>
+          <h1 ref={heading} tabIndex={-1}>Which sounds like you?</h1>
+          <p className="nx-welcome__lede">This only changes the examples and wording you see. You can use every part of Nexus either way.</p>
+          <div className="nx-welcome__choices" role="group" aria-label="Which sounds like you?">
+            {CHOICES.map((c) => (
+              <button key={c.id} type="button" className={`nx-welcome__choice${audience === c.id ? ' is-on' : ''}`} onClick={() => choose(c.id)}>
+                <b>{c.title}</b>
+                <span>{c.body}</span>
               </button>
-            </li>
-          ))}
-        </ul>
-      </section>
+            ))}
+          </div>
+          <div className="nx-welcome__nav">
+            <button type="button" className="nx-btn nx-btn--quiet" onClick={() => setStep('intro')}>Back</button>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
-      <section className="nx-welcome__section" aria-labelledby="nx-welcome-status">
-        <div className="nx-welcome__head">
-          <h2 id="nx-welcome-status">What runs today, and what comes next.</h2>
-          <p>Planned features show as labelled placeholders, never as fake output. Where an agent doesn't report a plan or a review, Nexus says "Not reported by this agent".</p>
+  const ideas = plain ? PLAIN_IDEAS : IDEAS;
+  return (
+    <div className="nx-page nx-welcome nx-welcome--step">
+      <form className="nx-welcome__card" onSubmit={(e) => { e.preventDefault(); if (text.trim()) finish(); }}>
+        <span className="nx-welcome__eyebrow">Step 2 of 2</span>
+        <h1 ref={heading} tabIndex={-1}>What are you working on?</h1>
+        <p className="nx-welcome__lede">
+          {plain ? 'Write it the way you would tell a colleague. One sentence is enough.' : 'One sentence. Clue words pick the workspace, and you can change it on the next screen.'}
+        </p>
+        <label className="nx-visually-hidden" htmlFor="nx-welcome-req">What are you working on?</label>
+        <input id="nx-welcome-req" ref={input} className="nx-welcome__req" type="text" value={text} spellCheck={false} autoComplete="off"
+          placeholder={plain ? 'For example: a website for my bakery' : 'For example: train a model to classify support emails'}
+          onChange={(e) => setText(e.target.value)} />
+        <p className="nx-welcome__verdict" aria-live="polite" style={ws ? provenanceStyle(ws.hueSlot) : undefined}>
+          {!text.trim() ? (plain ? 'Not sure? Pick an example below.' : 'Describe what you want to work on.')
+            : !ws ? (plain ? 'Add a few more words about what you want, or pick an example.' : 'No clue words yet, so no workspace is picked. You can choose one on the next screen.')
+            : plain ? <><i aria-hidden="true" />This goes to the <b>{ws.name}</b> workspace.</>
+            : <>
+                <i aria-hidden="true" />
+                <b>{ws.name}</b>
+                <span className={`nx-welcome__conf nx-welcome__conf--${detection.confidence}`}>{detection.confidence === 'strong' ? 'strong match' : 'weak match, check it'}</span>
+                {detection.matched.map((w, i) => <code key={`${w}-${i}`}>{w}</code>)}
+              </>}
+        </p>
+        <div className="nx-welcome__ideas" aria-label="Examples">
+          {ideas.map((idea) => (
+            <button key={idea.label} type="button" className="nx-wb__idea" onClick={() => { setText(idea.prompt); input.current?.focus(); }}>{idea.label}</button>
+          ))}
         </div>
-        <div className="nx-welcome__split">
-          <div>
-            <h3>Today</h3>
-            <ul>
-              <li>Workspaces and projects, with each local folder analysed and filed</li>
-              <li>Claude Code, Codex and other CLI agents in real terminals, coordinated by a lead agent</li>
-              <li>Artifacts and handoffs between workspaces</li>
-              <li>Files, terminals, git history, skills and MCP servers</li>
-            </ul>
-          </div>
-          <div>
-            <h3>Planned</h3>
-            <ul>
-              <li>Turn into App, builds and deployments</li>
-              <li>A sandboxed agent runtime</li>
-            </ul>
-          </div>
+        <div className="nx-welcome__nav">
+          <button type="button" className="nx-btn nx-btn--quiet" onClick={() => setStep('about')}>Back</button>
+          <span className="nx-welcome__spacer" />
+          <button type="button" className="nx-btn nx-btn--quiet" onClick={() => { finishWelcome(); navigate({ name: 'home' }); }}>Skip for now</button>
+          <button type="submit" className="nx-welcome__go nx-welcome__go--sm" disabled={!text.trim()}>Continue</button>
         </div>
-      </section>
+      </form>
     </div>
   );
 }

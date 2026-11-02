@@ -54,6 +54,17 @@ export const IDEAS = [
   { label: 'UI design', prompt: 'Design a landing page prototype for our product', expect: 'uiux' }
 ] as const;
 
+/** The same, in plain words, for people who said they are not technical.
+ *  Each still detects to the environment it names (checked by a test). */
+export const PLAIN_IDEAS = [
+  { label: 'A website', prompt: 'A website for my small business', expect: 'sde' },
+  { label: 'Sales dashboard', prompt: 'A dashboard of my monthly sales', expect: 'data' },
+  { label: 'Customer forecast', prompt: 'Predict which customers will come back', expect: 'ml' },
+  { label: 'Competitor research', prompt: 'Research what our competitors charge', expect: 'research' },
+  { label: 'Landing page', prompt: 'Design a landing page for our product', expect: 'uiux' },
+  { label: 'Check my app', prompt: 'Test our app before we launch', expect: 'qa' }
+] as const;
+
 /** The message the lead agent receives: the person's words, unchanged,
  *  under a one-line header naming the environment and project folder. */
 export function buildStartRequest(input: { text: string; workspaceLabel: string; project: { name: string; rootPath: string } }) {
@@ -71,13 +82,28 @@ export function chosenEnvironment(text: string, pickedId: string | null): string
   return detectEnvironment(text).id;
 }
 
-/** Why Start cannot run yet, or null when it can. One reason at a time, in
- *  the order the screen is filled in. A starting lead agent is fine: the
- *  request queues until it is ready. */
-export function startBlocker(input: { text: string; envId: string | null; hasProject: boolean; assistant: 'ready' | 'starting' | 'unavailable' }): string | null {
-  if (!input.text.trim()) return 'Describe what you want to work on.';
-  if (!input.envId) return 'Pick an environment for this work.';
-  if (!input.hasProject) return 'Choose a project, or a folder for a new one.';
-  if (input.assistant === 'unavailable') return 'No lead agent is running. Start one in Agents.';
+/** The workspaces that are delivered today. A request that matches another one is carried over to Software, unchanged. */
+export const DELIVERED_WORKSPACES: readonly string[] = ['sde', 'ml'];
+
+/** Where the work really starts: the matched workspace when it is delivered, otherwise Software, with one plain line saying so. */
+export function startTarget(envId: string | null, envName: string | null): { workspaceId: string; note: string | null } {
+  if (!envId) return { workspaceId: 'sde', note: null };
+  if (DELIVERED_WORKSPACES.includes(envId)) return { workspaceId: envId, note: null };
+  return { workspaceId: 'sde', note: `${envName ?? 'That kind of'} projects are coming later. Nexus will start this as a Software project.` };
+}
+
+/** The kind of project a new folder becomes: a Machine learning project when the work starts there (it gets data upload and results), otherwise Software. */
+export function startDomainId(workspaceId: string): 'ai-ml' | 'software-engineering' {
+  return workspaceId === 'ml' ? 'ai-ml' : 'software-engineering';
+}
+
+/**
+ * Why Start cannot run yet, or null when it can: only the two things Start really needs, a request and a project (or a folder for
+ * a new one). Nothing else blocks it: not the environment (a request that matches none starts in Software), and never whether
+ * the old lead agent is running (the request goes to the AI helper of the project).
+ */
+export function startBlocker(input: { text: string; hasProject: boolean }): string | null {
+  if (!input.text.trim()) return 'Type what you want.';
+  if (!input.hasProject) return 'Choose a project or a folder.';
   return null;
 }

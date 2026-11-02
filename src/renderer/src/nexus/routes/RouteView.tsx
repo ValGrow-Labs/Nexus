@@ -13,9 +13,13 @@ import { ArtifactsPage } from '../pages/ArtifactsPage';
 import { HandoffsPage } from '../pages/HandoffsPage';
 import { WelcomePage } from '../pages/WelcomePage';
 import { StartPage } from '../start/StartPage';
+import { useNexusUi } from '../state/uiStore';
 
 export function RouteView({ config }: { config: HarnessConfig }) {
   const route = useRoute();
+  const welcomed = useNexusUi((s) => s.welcomed);
+  const introSeen = useNexusUi((s) => s.introSeen);
+  const audience = useNexusUi((s) => s.audience);
   const key = formatRoute(route);
   const mainRef = useRef<HTMLElement | null>(null);
   useEffect(() => {
@@ -23,7 +27,7 @@ export function RouteView({ config }: { config: HarnessConfig }) {
     mainRef.current?.querySelector<HTMLElement>('h1')?.focus?.();
     document.title = `${routeTitle(route)} · Nexus`;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [key]);
+  }, [key, welcomed]);
   let page;
   switch (route.name) {
     case 'agents': page = <AgentsPage config={config} />; break;
@@ -35,7 +39,8 @@ export function RouteView({ config }: { config: HarnessConfig }) {
     case 'artifacts': page = <ArtifactsPage id={route.id ?? null} />; break;
     case 'handoffs': page = <HandoffsPage id={route.id ?? null} />; break;
     case 'deployments': page = <PlannedPage which="deployments" />; break;
-    case 'home': page = <StartPage />; break;
+    // Until Get started is pressed once, Home is the Welcome intro.
+    case 'home': page = welcomed ? <StartPage /> : <WelcomePage startAt={introSeen ? (audience ? 'work' : 'about') : 'intro'} />; break;
     case 'welcome': page = <WelcomePage />; break;
   }
   return <main ref={mainRef} className={`nx-main${route.name === 'agents' || route.name === 'project' ? ' nx-main--flush' : ''}`} id="nx-main" tabIndex={-1}>{page}</main>;

@@ -7,10 +7,14 @@ import { useParticipationIndex } from '../data/useParticipations';
 import { recentProjects } from '../data/selectors';
 import { navigate } from '../router/useRoute';
 import { useNexusUi } from '../state/uiStore';
-import { useAssistant } from '../assistant/useAssistant';
 import { provenanceStyle } from '../ui/ProvenanceMark';
 import { emblemPath } from '../launcher/emblems';
-import { detectEnvironment, IDEAS, buildStartRequest, chosenEnvironment, startBlocker } from './startModel';
+import { detectEnvironment, IDEAS, PLAIN_IDEAS, buildStartRequest, chosenEnvironment, DELIVERED_WORKSPACES, startBlocker, startDomainId, startTarget } from './startModel';
+import { nexusClient } from '../data/nexusClient';
+import { markHandoff } from '../intent/IntentLine';
+import { usePendingStart } from '../agent/pendingStart';
+import { withIntent } from '../data/useExecution';
+import { usePlatform } from '../data/platformStore';
 
 type Folder = { path: string; name: string };
 /** Which project the request goes to: an existing one, a new folder, or
@@ -34,7 +38,7 @@ export function StartPage() {
   const setProjects = useStore((s) => s.setProjects);
   const setActiveProject = useStore((s) => s.setActiveProject);
   const setLast = useNexusUi((s) => s.setLastWorkspace);
-  const port = useAssistant();
+  const plain = useNexusUi((s) => s.audience) === 'nontechnical';
 
   // A request carried over from Welcome is taken once, then cleared.
   const [text, setText] = useState(() => {
@@ -66,8 +70,9 @@ export function StartPage() {
     : null;
   const folder = pick.kind === 'new' ? pick.folder : null;
 
-  const status = port.status;
-  const blocker = startBlocker({ text, envId, hasProject: !!project || !!folder, assistant: status.state });
+  const blocker = startBlocker({ text, hasProject: !!project || !!folder });
+  const target = startTarget(envId, ws?.name ?? null);
+  const startAt = target;
   const request = ws && project ? buildStartRequest({ text, workspaceLabel: ws.label, project: { name: project.name, rootPath: project.rootPath } }) : null;
 
   const chooseFolder = async () => {
@@ -84,24 +89,34 @@ export function StartPage() {
   /** Creates the project first when a new folder was chosen, then sends. */
   const start = async () => {
     setTried(true);
-    if (blocker || !ws) return;
+    if (blocker) return;
     setBusy(true); setError(null);
     try {
       let target = project;
       if (!target && folder) {
-        const domainId = (ws.defaultDomainId ?? 'software-engineering') as DomainId;
+        // A Machine learning request makes a Machine learning project; a workspace that is not delivered yet starts as Software, with the text carried over unchanged.
+        const domainId = startDomainId(startAt.workspaceId) as DomainId;
         const res = await window.cth.projectCreate({ name: folder.name.trim() || 'New project', rootPath: folder.path, domainId, description: text.trim() || undefined });
         if (!res.ok || !res.project) throw new Error(res.error || 'The project could not be created.');
         setProjects(await window.cth.projectList());
         target = res.project;
         setPick({ kind: 'existing', id: res.project.id });
+        // The AI helper works through the Software workspace, so a new Machine learning project joins it right away (the same step the setup card offers).
+        if (startAt.workspaceId !== 'sde') { const joined = await nexusClient.participationAttach(res.project.id, 'sde').catch(() => null); if (joined && joined.ok) usePlatform.getState().bumpRev(); }
+        // A new folder is set up to track changes (the line above the button said so), and its starting point is saved, so the AI helper can start.
+        const made = await window.cth.gitInitProject(res.project.id).catch(() => null);
+        if (made && made.ok) await withIntent(`start:snapshot:${res.project.id}`, (intentId) => nexusClient.jobStart({ projectId: res.project!.id, workspaceId: 'sde', actionId: 'sde.repository.snapshot', inputs: [], params: {}, intentId })).catch(() => null);
       }
       if (!target) return;
-      const req = buildStartRequest({ text, workspaceLabel: ws.label, project: { name: target.name, rootPath: target.rootPath } });
-      const sent = port.send({ text: req.text, contextHeader: req.contextHeader });
-      if (!sent.ok) throw new Error(sent.error);
       try { const p = await window.cth.projectSetActive(target.id); if (p) setActiveProject(p); } catch { /* opening still works */ }
-      setLast(ws.id);
+      if (ws) setLast(ws.id);
+      // The typed words go into the AI helper's request box on the project page (prefilled, focused, NOT sent: the person presses Ask).
+      useNexusUi.getState().setDraft(text.trim());
+      useNexusUi.getState().focusIntent();
+      markHandoff();
+      // Start begins the build: the project page sends these words to its AI helper as soon as it can take them (right away when it is ready,
+      // otherwise after the setup card is done), once.
+      usePendingStart.getState().hand(target.id, text);
       navigate({ name: 'project', id: target.id, tool: 'bench' });
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -110,48 +125,62 @@ export function StartPage() {
     }
   };
 
-  const agentLine = status.state === 'unavailable' ? 'No lead agent is running'
-    : status.state === 'starting' ? `Lead agent · ${status.target.name} (starting; your request waits in its queue)`
-    : `Lead agent · ${status.target.name}${status.deliveryPaused ? ' (delivery paused; release it in Agents)' : ''}`;
-
   return (
     <div className="nx-wb" style={ws ? provenanceStyle(ws.hueSlot) : undefined}>
       {/* Left: the request and what will happen */}
       <section className="nx-wb__doc" aria-labelledby="nx-wb-h">
-        <h1 id="nx-wb-h" className="nx-wb__eyebrow" tabIndex={-1}>New work</h1>
-        <label className="nx-visually-hidden" htmlFor="nx-wb-req">Describe what you want to work on</label>
-        <textarea
-          id="nx-wb-req" ref={input} className="nx-wb__req" rows={1} value={text}
-          placeholder="What are you working on?"
-          onChange={(e) => { setText(e.target.value); setError(null); }}
-          onKeyDown={(e) => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); void start(); } }}
-        />
+        <div className="nx-wb__intro">
+          <span className="nx-wb__eyebrow">New work</span>
+          <h1 id="nx-wb-h" className="nx-wb__title" tabIndex={-1}>{plain ? 'What do you want to build?' : 'What are you working on?'}</h1>
+        </div>
 
-        {!text.trim() ? (
-          <div className="nx-wb__ideas" aria-label="Examples">
-            <span>Try</span>
-            {IDEAS.map((idea) => (
-              <button key={idea.label} type="button" className="nx-wb__idea" onClick={() => { setText(idea.prompt); setPicked(null); input.current?.focus(); }}>{idea.label}</button>
-            ))}
+        {/* The composer: the request, the workspace it is going to, and Start, in one card */}
+        <div className="nx-wb__composer">
+          <label className="nx-visually-hidden" htmlFor="nx-wb-req">Describe what you want to work on</label>
+          <textarea
+            id="nx-wb-req" ref={input} className="nx-wb__req" rows={2} value={text}
+            placeholder={plain ? 'Describe it in plain words, the way you would tell a colleague' : 'For example: train a model to classify support emails'}
+            onChange={(e) => { setText(e.target.value); setError(null); }}
+            onKeyDown={(e) => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); void start(); } }}
+          />
+          <div className="nx-wb__bar">
+            <p className="nx-wb__chip" aria-live="polite">
+              {ws ? <>
+                  <i aria-hidden="true" />
+                  <b>{ws.name}</b>
+                  {picked ? <span className="nx-wb__conf">chosen by you</span>
+                    : <span className={`nx-wb__conf nx-wb__conf--${detection.confidence}`}>{detection.confidence === 'strong' ? 'matched' : 'check it'}</span>}
+                  {!picked && !plain && detection.matched.length > 0 && <span className="nx-wb__words">{detection.matched.join(' · ')}</span>}
+                </>
+                : <span className="nx-wb__none">{text.trim() ? 'No workspace matched yet. Pick one on the right.' : 'The workspace appears here as you type'}</span>}
+            </p>
+            <button type="button" className="nx-wb__send" disabled={busy || !!blocker} data-ready={blocker ? undefined : 'true'} onClick={start}
+              aria-label="Start" title={blocker ?? 'Start'}>
+              <span>Start</span>
+              <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3 8h10M9 4l4 4-4 4" /></svg>
+            </button>
           </div>
-        ) : (
-          <p className="nx-wb__why" aria-live="polite">
-            {picked && ws ? <>Going to <b>{ws.name}</b>, chosen by you.</>
-              : ws ? <>Matched <b>{ws.name}</b> from <span className="nx-wb__words">{detection.matched.join(' · ')}</span>.</>
-              : <>No environment matched these words yet. Pick one on the right.</>}
-          </p>
-        )}
+        </div>
+
+        {blocker && <p className="nx-wb__why" role="status">{blocker}</p>}
+
+        <div className="nx-wb__ideas" aria-label="Examples">
+          <span>Try</span>
+          {(plain ? PLAIN_IDEAS : IDEAS).map((idea) => (
+            <button key={idea.label} type="button" className="nx-wb__idea" onClick={() => { setText(idea.prompt); setPicked(null); input.current?.focus(); }}>{idea.label}</button>
+          ))}
+        </div>
 
         <div className="nx-wb__plan">
           <h2 className="nx-wb__h2">When you press Start</h2>
           <ol>
-            <li><span>{folder ? <>A new project is created in <code>{folder.path}</code></> : project ? <>The work happens in <b>{project.name}</b></> : <>The work happens in the project you choose</>}</span></li>
-            <li><span>Your request goes to the lead agent{status.state === 'unavailable' ? ' (none is running yet)' : ''}</span></li>
-            <li><span>The project opens so you can follow the agent's work</span></li>
+            <li><span>{folder ? <>A new project is created in <code>{folder.path}</code>. Nexus will set up Git in this new folder so it can track changes.</> : project ? <>The work happens in <b>{project.name}</b></> : <>The work happens in the project you choose</>}</span></li>
+            <li><span>Your request goes to the AI helper</span></li>
+            <li><span>The project opens so you can follow the AI helper's work</span></li>
           </ol>
         </div>
 
-        {ws && ws.plannedModules.length > 0 && (
+        {ws && ws.plannedModules.length > 0 && !DELIVERED_WORKSPACES.includes(ws.id) && (
           <div className="nx-wb__planned">
             <h2 className="nx-wb__h2">Coming to {ws.label}</h2>
             <p>{ws.plannedModules.join(' · ')} <span className="nx-wb__tag">Planned</span></p>
@@ -189,39 +218,39 @@ export function StartPage() {
 
         <div className="nx-wb__group">
           <h2 className="nx-wb__h2">Project</h2>
+          <p className="nx-wb__note">Pick the project the next request is for, or press Open to go into one.</p>
           <div className="nx-wb__projects" role="radiogroup" aria-label="Project">
             {[...ordered.here, ...ordered.rest].slice(0, 6).map((p) => (
-              <button key={p.id} type="button" role="radio" aria-checked={project?.id === p.id && !folder}
-                className={`nx-wb__proj${project?.id === p.id && !folder ? ' is-on' : ''}`}
-                onClick={() => setPick({ kind: 'existing', id: p.id })}>
-                <span className="nx-wb__dot" aria-hidden="true" />
-                <span className="nx-wb__pname">{p.name}</span>
-                <code className="nx-wb__path" title={p.rootPath}>{p.rootPath}</code>
-              </button>
+              <div key={p.id} className="nx-wb__projrow">
+                <button type="button" role="radio" aria-checked={project?.id === p.id && !folder}
+                  className={`nx-wb__proj${project?.id === p.id && !folder ? ' is-on' : ''}`}
+                  onClick={() => setPick({ kind: 'existing', id: p.id })}
+                  onDoubleClick={() => navigate({ name: 'project', id: p.id, tool: 'bench' })}>
+                  <span className="nx-wb__dot" aria-hidden="true" />
+                  <span className="nx-wb__pname">{p.name}</span>
+                  <code className="nx-wb__path" title={p.rootPath}>{p.rootPath}</code>
+                </button>
+                <button type="button" className="nx-wb__link nx-wb__open" aria-label={`Open ${p.name}`}
+                  onClick={() => navigate({ name: 'project', id: p.id, tool: 'bench' })}>Open</button>
+              </div>
             ))}
-            {folder ? (
+            {folder && (
               <div className="nx-wb__proj is-on nx-wb__new" role="radio" aria-checked="true">
                 <span className="nx-wb__dot" aria-hidden="true" />
                 <label className="nx-visually-hidden" htmlFor="nx-wb-name">New project name</label>
                 <input id="nx-wb-name" className="nx-wb__input" value={folder.name} onChange={(e) => setPick({ kind: 'new', folder: { ...folder, name: e.target.value } })} />
-                <button type="button" className="nx-wb__link" onClick={chooseFolder}>Change folder</button>
               </div>
-            ) : (
-              <button type="button" className="nx-wb__proj nx-wb__choose" onClick={chooseFolder}>+ New project in a folder…</button>
             )}
           </div>
           {ws && !ws.defaultDomainId && folder && <p className="nx-wb__note">There is no {ws.label} domain yet, so the new project is filed under Software Engineering.</p>}
         </div>
 
         <div className="nx-wb__go">
-          <p className={`nx-wb__agent nx-wb__agent--${status.state}`}><i aria-hidden="true" />{agentLine}</p>
-          {(error || (tried && blocker)) && <p className="nx-wb__err" role="alert">{error ?? blocker}</p>}
-          {status.state === 'unavailable'
-            ? <button type="button" className="nx-wb__cta" onClick={port.openConversation}>Open Agents to start a lead agent</button>
-            : <button type="button" className="nx-wb__cta" disabled={busy} aria-disabled={!!blocker} onClick={start}>
-                {busy ? (folder ? 'Creating project…' : 'Sending…') : 'Start with the lead agent'}
-              </button>}
-          {status.state !== 'unavailable' && <span className="nx-wb__hint">Ctrl + Enter from the request also starts</span>}
+          {target.note && <p className="nx-wb__note" role="status">{target.note}</p>}
+          {error && <p className="nx-wb__err" role="status">{error}</p>}
+          <button type="button" className="nx-wb__pick" disabled={busy} onClick={chooseFolder}>
+            {folder ? 'Choose a different folder' : 'Choose folder'}
+          </button>
         </div>
       </aside>
     </div>
