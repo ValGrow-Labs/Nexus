@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import React, { useState } from 'react';
 import { GITHUB_REPO_URL } from '../data/navigation';
 import { ProvenanceMark } from './ProvenanceMark';
 

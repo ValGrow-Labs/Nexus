@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { WORKSPACES } from '../data/workspaces';
 import { GITHUB_REPO_URL } from '../data/navigation';
 import { ProvenanceMark } from './ProvenanceMark';

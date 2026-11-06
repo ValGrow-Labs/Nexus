@@ -1,3 +1,4 @@
+import React from 'react';
 import { TELEMETRY_ALLOWLIST, TELEMETRY_EVENTS } from '../data/telemetry';
 
 export function LocalFirstSection() {

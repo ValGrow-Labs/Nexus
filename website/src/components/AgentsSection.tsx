@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import React, { useState } from 'react';
 import { AGENT_FEATURES, DEMO_AGENT_SESSION } from '../data/agents';
 
 export function AgentsSection() {

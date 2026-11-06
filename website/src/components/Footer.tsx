@@ -1,3 +1,4 @@
+import React from 'react';
 import { GITHUB_REPO_URL } from '../data/navigation';
 
 export function Footer() {

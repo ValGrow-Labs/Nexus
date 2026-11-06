@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { NAV_LINKS, GITHUB_REPO_URL } from '../data/navigation';
 
 interface NavbarProps {
