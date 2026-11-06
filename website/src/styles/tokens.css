@@ -1,0 +1,93 @@
+/* ==========================================================================
+   Nexus Spine Design Tokens
+   Preserves the mathematically rigorous Spine token system (OKLCH color space)
+   ========================================================================== */
+
+:root {
+  --nx-font-display: "Bricolage Grotesque Variable", -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  --nx-font: "Instrument Sans Variable", -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  --nx-font-id: "Martian Mono", "JetBrains Mono", ui-monospace, monospace;
+  --nx-font-code: "JetBrains Mono", ui-monospace, Consolas, monospace;
+
+  /* Base Light Theme Tokens */
+  --nx-ground: oklch(0.972 0.004 205);
+  --nx-surface: oklch(0.993 0.002 205);
+  --nx-surface-raised: oklch(1 0 0);
+  --nx-sunken: oklch(0.948 0.006 205);
+  --nx-ink: oklch(0.23 0.014 225);
+  --nx-text-2: oklch(0.40 0.014 225);
+  --nx-text-3: oklch(0.49 0.012 225);
+  --nx-line: oklch(0.885 0.006 210);
+  --nx-line-strong: oklch(0.64 0.010 215);
+  --nx-on-ink: oklch(0.985 0.002 205);
+  --nx-ok: oklch(0.50 0.11 158);
+  --nx-warn: oklch(0.54 0.12 68);
+  --nx-bad: oklch(0.52 0.17 28);
+  --nx-hatch: color-mix(in oklab, var(--nx-ink) 12%, transparent);
+  --nx-ws-l: 0.56;
+  --nx-ws-c: 0.13;
+  --nx-shadow-float: 0 16px 40px -8px color-mix(in oklab, var(--nx-ink) 14%, transparent);
+  --nx-shadow-subtle: 0 2px 10px -2px color-mix(in oklab, var(--nx-ink) 6%, transparent);
+
+  /* Geometry & Rhythm */
+  --nx-r-ctl: 6px;
+  --nx-r-obj: 10px;
+  --nx-r-lg: 16px;
+  --nx-s1: 4px;
+  --nx-s2: 8px;
+  --nx-s3: 12px;
+  --nx-s4: 16px;
+  --nx-s6: 24px;
+  --nx-s8: 32px;
+  --nx-s12: 48px;
+  --nx-s16: 64px;
+  --nx-s24: 96px;
+
+  /* Durations & Motion */
+  --nx-t-fast: 120ms;
+  --nx-t-base: 200ms;
+  --nx-t-shift: 320ms;
+  --nx-ease-in: cubic-bezier(0.2, 0, 0, 1);
+  --nx-ease-out: cubic-bezier(0.4, 0, 1, 1);
+
+  /* Brand Accents */
+  --nx-brand-accent: oklch(0.65 0.18 275);
+  --nx-brand-accent-glow: oklch(0.65 0.18 275 / 15%);
+}
+
+/* Dark Theme Overrides */
+:root[data-theme="dark"],
+body[data-theme="dark"] {
+  --nx-ground: oklch(0.175 0.008 225);
+  --nx-surface: oklch(0.215 0.009 225);
+  --nx-surface-raised: oklch(0.25 0.010 225);
+  --nx-sunken: oklch(0.145 0.008 225);
+  --nx-ink: oklch(0.94 0.006 210);
+  --nx-text-2: oklch(0.80 0.008 210);
+  --nx-text-3: oklch(0.71 0.008 210);
+  --nx-line: oklch(0.31 0.010 225);
+  --nx-line-strong: oklch(0.54 0.012 225);
+  --nx-on-ink: oklch(0.18 0.008 225);
+  --nx-ok: oklch(0.76 0.12 158);
+  --nx-warn: oklch(0.80 0.12 75);
+  --nx-bad: oklch(0.74 0.14 28);
+  --nx-hatch: color-mix(in oklab, var(--nx-ink) 18%, transparent);
+  --nx-ws-l: 0.74;
+  --nx-ws-c: 0.12;
+  --nx-shadow-float: 0 20px 48px -12px rgba(0, 0, 0, 0.6);
+  --nx-shadow-subtle: 0 4px 14px -4px rgba(0, 0, 0, 0.4);
+
+  --nx-brand-accent: oklch(0.75 0.16 275);
+  --nx-brand-accent-glow: oklch(0.75 0.16 275 / 15%);
+}
+
+/* Provenance dynamic hue rule */
+.nx-prov {
+  --ws-h: 265;
+  color: oklch(var(--nx-ws-l) var(--nx-ws-c) var(--ws-h));
+}
+
+.nx-prov--none {
+  color: var(--nx-line-strong);
+}
+
